@@ -12,6 +12,10 @@ requests = "*"
 selenium = "*"
 python-dotenv = "*"
 discord = "*"
+multidict = "*"
+wheel = "*"
+yarl = "~=1.0"
+aiohttp = "*"
 
 [requires]
 python_version = "3.7"
