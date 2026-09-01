@@ -1,9 +1,10 @@
 // Core simulation for City Manager: grid state, construction staging,
 // material stockpile with storage caps, industrial goods production,
-// building upgrades, power/road adjacency, and RCI demand/economy.
-// No DOM, no canvas, no timers — safe to run under plain Node for tests
-// (engine.test.js) and loaded as a plain <script> by index.html, which
-// owns all rendering/input/camera/cosmetic-traffic code on top of this.
+// building upgrades, road service radius, material clustering, and
+// RCI demand/economy. No DOM, no canvas, no timers — safe to run under
+// plain Node for tests (engine.test.js) and loaded as a plain <script>
+// by index.html, which owns all rendering/input/camera/cosmetic-traffic
+// code on top of this.
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     module.exports = factory();
@@ -17,26 +18,39 @@
   const POWER_RADIUS = 8;
   const MAX_LEVEL = 3;
   const CAP_PER_LEVEL = 10; // population or jobs added per level
-  const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day (before upgrades)
+  const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day (before upgrades/clustering)
+
+  // A zoned tile doesn't need to touch a road directly — it just needs one
+  // within this radius (bigger with road upgrades), like a real city block
+  // set back from its frontage road.
+  const ROAD_BASE_RADIUS = 3;
+  const ROAD_UPGRADE_STEP = 2; // extra radius per road upgrade tier
+
+  // Lumber Yards/Quarries producing side-by-side (an "industrial cluster")
+  // each get a flat bonus per same-type built neighbor (8-neighborhood) —
+  // this is what makes tile placement/layout matter, not just raw counts.
+  const CLUSTER_BONUS_PER_NEIGHBOR = 0.25;
 
   // Storage: raw materials and finished Goods are capped so they can't
-  // grow forever. Warehouses raise every cap; Industrial zones are the
-  // only thing that turns raw materials into Goods, and Goods auto-export
-  // for cash at a flat rate — so a developed industrial base constantly
-  // drains the stockpile instead of just letting it climb.
+  // grow forever. Warehouses raise every cap AND raise how much Goods can
+  // be exported per day — they're the export terminal, not just a shelf.
   const STORAGE_BASE = { lumber: 100, concrete: 100, goods: 60 };
   const WAREHOUSE_BONUS = { lumber: 80, concrete: 80, goods: 80 };
-  const GOODS_EXPORT_RATE = 5; // units/day auto-sold regardless of warehouse count
-  const GOODS_PRICE = 3; // $ per unit sold
+  const GOODS_EXPORT_BASE = 3; // units/day exportable with zero warehouses
+  const GOODS_EXPORT_PER_WAREHOUSE = 6; // extra export capacity per built warehouse
+  const GOODS_PRICE = 8; // $ per unit sold — the main income lever
   const IND_INPUT_PER_LEVEL = 1; // lumber AND concrete consumed, per zone level, per day
   const IND_OUTPUT_PER_LEVEL = 2; // goods produced, per zone level, per day
 
-  // Power Plants, Lumber Yards, and Quarries can each be upgraded twice:
-  // more output/radius per tier, and lower upkeep (efficiency). Roads have
-  // no capacity mechanic yet (traffic is cosmetic only), so there's
-  // deliberately no road upgrade — see README.
+  // Tax is deliberately a minor trickle now, not a viable income strategy
+  // on its own — Goods export (production + warehouses) is meant to carry
+  // the treasury. See README for the reasoning.
+  const TAX = { res: 0.12, com: 0.2, ind: 0.15 };
+
+  // Power Plants, Lumber Yards, Quarries, and Roads can each be upgraded
+  // twice: more output/radius per tier, and lower upkeep (efficiency).
   const UPGRADE_MAX_LEVEL = 2;
-  const UPGRADEABLE_TYPES = ["power", "lumber", "quarry"];
+  const UPGRADEABLE_TYPES = ["power", "lumber", "quarry", "road"];
 
   const BUILD = {
     road:      { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
@@ -51,7 +65,6 @@
   };
   const BULLDOZE_COST = 5;
   const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5, warehouse: 1 };
-  const TAX = { res: 0.5, com: 1, ind: 0.8 };
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function inBounds(x, y) { return x >= 0 && y >= 0 && x < GRID_W && y < GRID_H; }
@@ -91,6 +104,7 @@
         lumber: 30, concrete: 15, goods: 0,
         lumberCap: STORAGE_BASE.lumber, concreteCap: STORAGE_BASE.concrete, goodsCap: STORAGE_BASE.goods
       },
+      warehouses: 0,
       day: 1,
       population: 0,
       jobs: 0,
@@ -103,6 +117,9 @@
     return inBounds(x, y) && game.board[y][x].type === "road" && game.board[y][x].status === "built";
   }
 
+  // Strict 1-tile adjacency — used for the road *network graph* (delivery
+  // truck pathing), which needs a literal unbroken chain of road tiles,
+  // unlike a zone's service radius below.
   function hasAdjacentRoad(game, x, y) {
     const deltas = [[1,0],[-1,0],[0,1],[0,-1]];
     for (const [dx, dy] of deltas) {
@@ -118,6 +135,44 @@
       if (isBuiltRoad(game, nx, ny)) return [nx, ny];
     }
     return null;
+  }
+
+  function effectiveRoadRadius(tile) {
+    return ROAD_BASE_RADIUS + ROAD_UPGRADE_STEP * (tile.upgradeLevel || 0);
+  }
+
+  // Whether (x,y) is within *some* built road's service radius — not
+  // necessarily touching it. Each road's own upgrade tier decides how far
+  // its coverage reaches, so a scan has to check every nearby road rather
+  // than just the road nearest to (x,y).
+  function hasRoadService(game, x, y) {
+    const maxR = ROAD_BASE_RADIUS + ROAD_UPGRADE_STEP * UPGRADE_MAX_LEVEL;
+    for (let dy = -maxR; dy <= maxR; dy++) {
+      for (let dx = -maxR; dx <= maxR; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (!isBuiltRoad(game, nx, ny)) continue;
+        const road = game.board[ny][nx];
+        if (Math.max(Math.abs(dx), Math.abs(dy)) <= effectiveRoadRadius(road)) return true;
+      }
+    }
+    return false;
+  }
+
+  // Counts built same-type tiles in the 8-neighborhood — the industrial
+  // "clustering" bonus: Lumber Yards/Quarries built next to each other
+  // each produce more, rewarding a deliberate district layout.
+  function countClusterNeighbors(game, x, y, type) {
+    let count = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = x + dx, ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const t = game.board[ny][nx];
+        if (t.type === type && t.status === "built") count++;
+      }
+    }
+    return count;
   }
 
   // Upgrade tiers scale both cost and effect. A tile at upgradeLevel L
@@ -144,6 +199,12 @@
     return 1 - 0.15 * (tile.upgradeLevel || 0);
   }
 
+  // Export capacity scales with built Warehouses — they're the terminal
+  // Goods actually ship out from, not just extra shelf space.
+  function effectiveExportRate(game) {
+    return GOODS_EXPORT_BASE + (game.warehouses || 0) * GOODS_EXPORT_PER_WAREHOUSE;
+  }
+
   function computePower(game) {
     const { board } = game;
     for (let y = 0; y < GRID_H; y++)
@@ -165,10 +226,10 @@
     }
   }
 
-  // Recomputes storage caps from built Warehouses. Called before anything
-  // that produces/consumes stock this tick, so caps reflect completions
-  // from the *previous* tick — consistent with how computePower and
-  // hasAdjacentRoad also only see prior-tick completions.
+  // Recomputes storage caps and warehouse count from built Warehouses.
+  // Called before anything that produces/consumes stock this tick, so it
+  // reflects completions from the *previous* tick — consistent with how
+  // computePower and road service also only see prior-tick completions.
   function recomputeCaps(game) {
     let warehouses = 0;
     for (let y = 0; y < GRID_H; y++) {
@@ -177,6 +238,7 @@
         if (t.type === "warehouse" && t.status === "built") warehouses++;
       }
     }
+    game.warehouses = warehouses;
     game.stock.lumberCap = STORAGE_BASE.lumber + warehouses * WAREHOUSE_BONUS.lumber;
     game.stock.concreteCap = STORAGE_BASE.concrete + warehouses * WAREHOUSE_BONUS.concrete;
     game.stock.goodsCap = STORAGE_BASE.goods + warehouses * WAREHOUSE_BONUS.goods;
@@ -285,7 +347,7 @@
     if (!inBounds(x, y)) return undefined;
     const t = game.board[y][x];
     if (!UPGRADEABLE_TYPES.includes(t.type) || t.status !== "built") {
-      return "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.";
+      return "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.";
     }
     if (t.upgrading) return "Already upgrading.";
     if ((t.upgradeLevel || 0) >= UPGRADE_MAX_LEVEL) return "Already at max level.";
@@ -341,7 +403,7 @@
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built" || (t.type !== "res" && t.type !== "com" && t.type !== "ind")) continue;
-        const eligible = t.powered && hasAdjacentRoad(game, x, y);
+        const eligible = t.powered && hasRoadService(game, x, y);
         const d = game.demand[t.type];
         if (eligible && d > 0 && t.level < MAX_LEVEL) {
           if (Math.random() < 0.3) t.level += 1;
@@ -355,8 +417,16 @@
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
-        if (t.type === "lumber") stock.lumber = Math.min(stock.lumber + effectiveRate(LUMBER_RATE, t), stock.lumberCap);
-        if (t.type === "quarry") stock.concrete = Math.min(stock.concrete + effectiveRate(CONCRETE_RATE, t), stock.concreteCap);
+        if (t.type === "lumber") {
+          const cluster = countClusterNeighbors(game, x, y, "lumber");
+          const rate = effectiveRate(LUMBER_RATE, t) * (1 + CLUSTER_BONUS_PER_NEIGHBOR * cluster);
+          stock.lumber = Math.min(stock.lumber + rate, stock.lumberCap);
+        }
+        if (t.type === "quarry") {
+          const cluster = countClusterNeighbors(game, x, y, "quarry");
+          const rate = effectiveRate(CONCRETE_RATE, t) * (1 + CLUSTER_BONUS_PER_NEIGHBOR * cluster);
+          stock.concrete = Math.min(stock.concrete + rate, stock.concreteCap);
+        }
       }
     }
 
@@ -384,7 +454,8 @@
 
     recomputeTotals(game);
 
-    const exported = Math.min(stock.goods || 0, GOODS_EXPORT_RATE);
+    const exportRate = effectiveExportRate(game);
+    const exported = Math.min(stock.goods || 0, exportRate);
     stock.goods = (stock.goods || 0) - exported;
 
     let income = game.population * TAX.res + game.jobs * TAX.com * 0.6 + exported * GOODS_PRICE;
@@ -393,7 +464,7 @@
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
-        if (t.type === "road") upkeep += UPKEEP.road;
+        if (t.type === "road") upkeep += UPKEEP.road * upkeepMultiplier(t);
         else if (t.type === "res" || t.type === "com" || t.type === "ind") upkeep += UPKEEP.zone * t.level;
         else if (t.type === "power") upkeep += UPKEEP.power * upkeepMultiplier(t);
         else if (t.type === "park") upkeep += UPKEEP.park;
@@ -428,13 +499,14 @@
 
   return {
     GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, CAP_PER_LEVEL,
+    ROAD_BASE_RADIUS, ROAD_UPGRADE_STEP, CLUSTER_BONUS_PER_NEIGHBOR,
     LUMBER_RATE, CONCRETE_RATE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
-    STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_RATE, GOODS_PRICE,
+    STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_BASE, GOODS_EXPORT_PER_WAREHOUSE, GOODS_PRICE,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
     UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, upgradeCost,
-    effectiveRate, effectivePowerRadius, upkeepMultiplier,
+    effectiveRate, effectivePowerRadius, effectiveRoadRadius, effectiveExportRate, upkeepMultiplier,
     clamp, inBounds, newTile, newSite, createGame,
-    isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad,
+    isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad, hasRoadService, countClusterNeighbors,
     computePower, recomputeCaps, recomputeTotals, bfsPath,
     advanceSite, stepConstruction, startUpgrade, stepUpgrades,
     simTick, placeTile

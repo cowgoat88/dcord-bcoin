@@ -79,6 +79,7 @@
       <div><span>Lumber</span><span id="stLumber">0</span></div>
       <div><span>Concrete</span><span id="stConcrete">0</span></div>
       <div><span>Goods</span><span id="stGoods">0</span></div>
+      <div><span>Export cap./day</span><span id="stExport">0</span></div>
     </div>
 
     <h2>Demand (R / C / I)</h2>
@@ -114,7 +115,7 @@
 
     <div id="msg"></div>
     <div id="help">
-      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash. Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry to spend money+materials on higher output/radius and lower upkeep (2 tiers). Zoned tiles only grow once built, adjacent to a road, and powered. Use Pan + Zoom to work at a comfortable tile size on a small screen.
+      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash — Warehouses also raise export capacity, so they're the real income lever, not taxes. Lumber Yards/Quarries built next to each other each produce more (clustering). Zoned tiles grow once built and powered, as long as they're within a road's service radius (not necessarily touching it — bigger with road upgrades). Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry/Road to spend money+materials on higher output/radius and lower upkeep (2 tiers). Use Pan + Zoom to work at a comfortable tile size on a small screen.
     </div>
   </div>
 </div>
@@ -344,6 +345,15 @@
       ctx.setLineDash([]);
     }
 
+    if (selectedTool === "road" && inBounds(hoverX, hoverY)) {
+      ctx.strokeStyle = "rgba(255,213,79,0.4)";
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc((hoverX + 0.5) * TILE, (hoverY + 0.5) * TILE, E.ROAD_BASE_RADIUS * TILE, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
   }
 
@@ -358,6 +368,7 @@
     document.getElementById("stLumber").textContent = Math.floor(game.stock.lumber) + " / " + game.stock.lumberCap;
     document.getElementById("stConcrete").textContent = Math.floor(game.stock.concrete) + " / " + game.stock.concreteCap;
     document.getElementById("stGoods").textContent = Math.floor(game.stock.goods) + " / " + game.stock.goodsCap;
+    document.getElementById("stExport").textContent = E.effectiveExportRate(game) + " units · $" + (E.effectiveExportRate(game) * E.GOODS_PRICE) + " max";
 
     setBar("barR", game.demand.res);
     setBar("barC", game.demand.com);
@@ -463,17 +474,20 @@
     if (id === "bulldoze") return `Clears a tile. Cost $${BULLDOZE_COST}.`;
     if (id === "upgrade") {
       const c0 = E.upgradeCost(0), c1 = E.upgradeCost(1);
-      return `Tap a built Power Plant / Lumber Yard / Quarry to upgrade it (max ${E.UPGRADE_MAX_LEVEL} tiers). `
+      return `Tap a built Power Plant / Lumber Yard / Quarry / Road to upgrade it (max ${E.UPGRADE_MAX_LEVEL} tiers). `
         + `Tier 1: $${c0.cost} · ${c0.lumber} Lumber · ${c0.concrete} Concrete · ${c0.ticks} days. `
-        + `Tier 2: $${c1.cost} · ${c1.lumber} Lumber · ${c1.concrete} Concrete · ${c1.ticks} days.`;
+        + `Tier 2: $${c1.cost} · ${c1.lumber} Lumber · ${c1.concrete} Concrete · ${c1.ticks} days. `
+        + `Road: +${E.ROAD_UPGRADE_STEP} service radius/tier. Power: +radius. Yard/Quarry: +50% output/tier.`;
     }
     const s = BUILD[id];
     const parts = [`$${s.cost}`];
     if (s.lumber) parts.push(`${s.lumber} Lumber`);
     if (s.concrete) parts.push(`${s.concrete} Concrete`);
     parts.push(`${s.ticks} day${s.ticks === 1 ? "" : "s"} to build`);
+    if (id === "road") parts.push(`zones within ${E.ROAD_BASE_RADIUS} tiles count as connected, not just adjacent`);
+    if (id === "lumber" || id === "quarry") parts.push(`+${Math.round(E.CLUSTER_BONUS_PER_NEIGHBOR * 100)}% output per adjacent built ${BUILD[id].label}`);
     if (id === "ind") parts.push("converts Lumber+Concrete into exportable Goods once built");
-    if (id === "warehouse") parts.push("raises Lumber/Concrete/Goods storage caps");
+    if (id === "warehouse") parts.push("raises storage caps AND export capacity (main income lever)");
     return parts.join(" · ");
   }
 

@@ -214,8 +214,8 @@ test("a built, leveled Industrial zone converts raw materials into capped Goods"
   const expectedOutput = 2 * E.IND_OUTPUT_PER_LEVEL;
   assert.equal(game.stock.lumber, 50 - expectedInput);
   assert.equal(game.stock.concrete, 50 - expectedInput);
-  // GOODS_EXPORT_RATE auto-sells some of the same tick's output.
-  assert.equal(game.stock.goods, Math.max(0, expectedOutput - E.GOODS_EXPORT_RATE));
+  // With zero warehouses, export capacity is just the flat base rate.
+  assert.equal(game.stock.goods, Math.max(0, expectedOutput - E.GOODS_EXPORT_BASE));
 });
 
 test("Industrial goods output throttles to zero once Goods storage is full, without wasting input", () => {
@@ -224,24 +224,90 @@ test("Industrial goods output throttles to zero once Goods storage is full, with
   game.board[5][5] = { type: "ind", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
   const lumberBefore = game.stock.lumber;
   E.simTick(game);
-  // Only GOODS_EXPORT_RATE worth of room opens up (from the export step),
-  // so consumption must be near zero, never the full per-level want.
-  assert.ok(game.stock.lumber > lumberBefore - 0.5, "a full warehouse must not let industry burn raw material for nothing");
+  // Only a little export capacity opens up Goods room for that tick (no
+  // warehouses here, so just GOODS_EXPORT_BASE), so consumption must be
+  // near zero, never the full per-level want.
+  assert.ok(game.stock.lumber > lumberBefore - 0.5, "full Goods storage must not let industry burn raw material for nothing");
 });
 
 test("exported Goods convert to income at GOODS_PRICE", () => {
   const game = E.createGame();
-  Object.assign(game.stock, { goods: E.GOODS_EXPORT_RATE * 2 });
+  Object.assign(game.stock, { goods: E.GOODS_EXPORT_BASE * 2 });
   E.simTick(game);
-  assert.ok(game.lastNet >= E.GOODS_EXPORT_RATE * E.GOODS_PRICE - 1, "export income must show up in the day's net");
+  assert.ok(game.lastNet >= E.GOODS_EXPORT_BASE * E.GOODS_PRICE - 1, "export income must show up in the day's net");
+});
+
+test("export capacity scales with built Warehouses, not just the flat base rate", () => {
+  const game = E.createGame();
+  assert.equal(E.effectiveExportRate(game), E.GOODS_EXPORT_BASE);
+  game.warehouses = 2;
+  assert.equal(E.effectiveExportRate(game), E.GOODS_EXPORT_BASE + 2 * E.GOODS_EXPORT_PER_WAREHOUSE);
+});
+
+test("tax income is a minor trickle relative to Goods export, not a viable strategy alone", () => {
+  // Regression guard for the "too easy, just tax" complaint: a sizeable
+  // city's tax income must stay well under what a modest export operation
+  // brings in, so export/production is doing the economic heavy lifting.
+  const game = E.createGame();
+  const taxIncomeAt100Pop = 100 * E.TAX.res;
+  const exportIncomeWithOneWarehouse = (E.GOODS_EXPORT_BASE + E.GOODS_EXPORT_PER_WAREHOUSE) * E.GOODS_PRICE;
+  assert.ok(taxIncomeAt100Pop < exportIncomeWithOneWarehouse,
+    "100 population's res tax must not out-earn one warehouse's worth of export income");
+});
+
+test("hasRoadService allows building within radius, not just directly adjacent", () => {
+  const game = E.createGame();
+  buildAndFinishRoadRow(game, 10, 10, 10); // single built road tile at (10,10)
+  assert.equal(E.hasRoadService(game, 10 + E.ROAD_BASE_RADIUS, 10), true, "within base radius");
+  assert.equal(E.hasRoadService(game, 10 + E.ROAD_BASE_RADIUS + 1, 10), false, "just outside base radius");
+});
+
+test("upgrading a road extends its service radius", () => {
+  const game = E.createGame();
+  buildAndFinishRoadRow(game, 10, 10, 10);
+  const farX = 10 + E.ROAD_BASE_RADIUS + E.ROAD_UPGRADE_STEP;
+  assert.equal(E.hasRoadService(game, farX, 10), false, "beyond base radius before upgrading");
+
+  game.money = 100000;
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
+  assert.equal(E.startUpgrade(game, 10, 10), undefined);
+  runTicks(game, E.upgradeCost(0).ticks);
+  assert.equal(game.board[10][10].upgradeLevel, 1);
+  assert.equal(E.hasRoadService(game, farX, 10), true, "reachable once the road's radius grows with its upgrade tier");
+});
+
+test("countClusterNeighbors counts only built same-type neighbors", () => {
+  // Uses newSite() so the site tile has real construction bookkeeping —
+  // this game is never ticked, just read directly.
+  const game = E.createGame();
+  game.board[5][5] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[5][6] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[5][4] = E.newSite("lumber"); // status "site" — must not count
+  assert.equal(E.countClusterNeighbors(game, 5, 5, "lumber"), 1, "an adjacent site (not built) must not count");
+});
+
+test("clustering boosts yard output: adjacent built yards each out-produce an isolated one", () => {
+  const isolated = E.createGame();
+  isolated.board[15][15] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  Object.assign(isolated.stock, { lumber: 0 });
+  E.simTick(isolated);
+  const isolatedGain = isolated.stock.lumber;
+
+  const clustered = E.createGame();
+  clustered.board[5][5] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  clustered.board[5][6] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  Object.assign(clustered.stock, { lumber: 0 });
+  E.simTick(clustered);
+  const clusteredGain = clustered.stock.lumber; // two adjacent built lumber yards, each getting the other's bonus
+  assert.ok(clusteredGain / 2 > isolatedGain, "a clustered yard must out-produce an isolated one of the same tier");
 });
 
 test("startUpgrade rejects non-upgradeable, unbuilt, already-upgrading, and max-level tiles", () => {
   const game = E.createGame();
-  assert.equal(E.startUpgrade(game, 1, 1), "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.");
+  assert.equal(E.startUpgrade(game, 1, 1), "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.");
 
   E.placeTile(game, 2, 2, "lumber");
-  assert.equal(E.startUpgrade(game, 2, 2), "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.", "still a site, not built");
+  assert.equal(E.startUpgrade(game, 2, 2), "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.", "still a site, not built");
 
   game.board[2][2].status = "built";
   Object.assign(game.stock, { lumber: 1000, concrete: 1000 });

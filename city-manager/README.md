@@ -33,18 +33,31 @@ exercises directly.
   steady income instead of letting the stockpile just climb.
 - **Upgrades**: the Upgrade tool spends money + materials (over several
   days, 2 tiers, cost rising each tier) on any built Power Plant, Lumber
-  Yard, or Quarry to raise its output/radius and lower its upkeep — an
-  upgrading building stays fully operational at its current tier the whole
-  time, it's not taken offline. This is the other main materials sink:
-  growing the city means spending materials on both production output
-  (upgrades) and on new construction, not just accumulating them. Roads
-  aren't upgradeable yet — there's no capacity mechanic for them to improve
-  (see Known simplifications).
+  Yard, Quarry, or **Road** to raise its output/radius/service-radius and
+  lower its upkeep — an upgrading building stays fully operational at its
+  current tier the whole time, it's not taken offline. This is the other
+  main materials sink: growing the city means spending materials on both
+  production output (upgrades) and new construction, not just
+  accumulating them.
+- **Clustering**: Lumber Yards and Quarries built next to each other (8
+  neighbors) each get a flat output bonus per adjacent same-type built
+  tile — a deliberate district of yards outproduces the same number of
+  yards scattered around the map.
+- **Road service radius**: a zoned tile doesn't need to touch a road
+  directly — it grows as long as a road is within radius (3 tiles by
+  default, +2 per road upgrade tier) and it's powered. This lets you build
+  blocks set back from the frontage road, and upgrading a road extends how
+  far its coverage reaches.
 - Zoned tiles only grow through their 3 density levels once **built**,
-  adjacent to a built road, and within a built power plant's radius.
-  Demand for R/C/I is computed each simulated day from population vs. jobs.
-- Treasury tracks tax income (plus Goods export revenue) against per-tile
-  upkeep; net/day shown live.
+  within a built road's service radius, and within a built power plant's
+  radius. Demand for R/C/I is computed each simulated day from population
+  vs. jobs.
+- **Income is now mostly Goods export, not tax**: tax rates are a minor
+  trickle (barely covers upkeep on their own at any real population).
+  Warehouses raise export *capacity* as well as storage caps, so building
+  up an industrial base (raw material production → Industrial zones →
+  Goods → Warehouses to export more of it) is the actual path to a
+  growing treasury, not just zoning residential and waiting.
 - Existing tiles can't be overwritten by picking a different tool — bulldoze
   first. This also makes click/tap-drag painting safe: it only fills empty
   tiles it passes over.
@@ -56,8 +69,8 @@ exercises directly.
 
 - Pick a tool from the panel, then click/tap or drag on the grid to place it
   on an empty tile.
-- **Upgrade** tool: tap an existing built Power Plant/Lumber Yard/Quarry
-  (rather than an empty tile) to spend money+materials improving it.
+- **Upgrade** tool: tap an existing built Power Plant/Lumber Yard/Quarry/
+  Road (rather than an empty tile) to spend money+materials improving it.
 - Bulldoze clears any tile, including one mid-construction (no refund).
 - Zoom (1x–4x) and the Pan toggle control the camera — Pan mode drags the
   view instead of painting, which is the fix for tiles being too small to
@@ -73,17 +86,17 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. Covers placement rules (occupied-tile rejection, cost
-deduction), construction staging (multi-tick completion, stalling on
-short materials), the Lumber Yard/Quarry material-reservation guarantee,
-power radius, road/power/built-status gating of zone growth, the RCI
-demand bootstrap, storage caps (production clamping, Warehouse cap boost),
-Industrial goods production/export, and the Upgrade mechanic (rejection
-cases, cost deduction, effect on output/radius/upkeep). The material-
-reservation and RCI-bootstrap tests are direct regressions for bugs found
-in play: a shared-stockpile deadlock where simultaneous construction
-could permanently starve the only tiles that produce more material, and
-a demand-formula regression that left `population`/`jobs` stuck at zero
+needed, Node 18+. 26 cases covering placement rules, construction staging,
+the Lumber Yard/Quarry material-reservation guarantee, power radius,
+zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
+boost, Industrial goods production/export, the Upgrade mechanic (all
+four upgradeable types, rejection cases, cost deduction, effects), the
+road service radius (base + upgraded), the clustering output bonus, and
+the tax-vs-export income balance. The material-reservation and
+RCI-bootstrap tests are direct regressions for bugs found in play: a
+shared-stockpile deadlock where simultaneous construction could
+permanently starve the only tiles that produce more material, and a
+demand-formula regression that left `population`/`jobs` stuck at zero
 forever. Run this after any change to `engine.js` before touching
 `index.html`'s rendering/input code on top of it.
 
@@ -92,7 +105,6 @@ forever. Run this after any change to `engine.js` before touching
 No real logistics (material delivery is a global stockpile, not routed
 per-site — delivery trucks are cosmetic only), no disasters, no land
 value/pollution, no multi-tile buildings, no pinch-to-zoom gesture (buttons
-only), no road upgrades (no capacity mechanic exists for roads yet — traffic
-is cosmetic), and Goods export is a flat rate rather than tied to
+only), and Goods export capacity scales with Warehouse count rather than
 Commercial capacity. These are straightforward to layer onto the existing
 tile/state model in `index.html` if the prototype needs to grow.
