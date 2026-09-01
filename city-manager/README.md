@@ -13,7 +13,7 @@ exercises directly.
 ## Mechanics
 
 - Grid of tiles: road, residential/commercial/industrial zones, power plant,
-  park, lumber yard, quarry, warehouse.
+  park, lumber yard, quarry, warehouse, farm.
 - Placing a tile costs money up front and starts a **construction site**:
   it consumes Lumber/Concrete from the shared stockpile over several
   simulated days before it becomes functional. Short on materials and the
@@ -33,12 +33,21 @@ exercises directly.
   steady income instead of letting the stockpile just climb.
 - **Upgrades**: the Upgrade tool spends money + materials (over several
   days, 2 tiers, cost rising each tier) on any built Power Plant, Lumber
-  Yard, Quarry, or **Road** to raise its output/radius/service-radius and
+  Yard, Quarry, Road, or Farm to raise its output/radius/service-radius and
   lower its upkeep — an upgrading building stays fully operational at its
   current tier the whole time, it's not taken offline. This is the other
   main materials sink: growing the city means spending materials on both
   production output (upgrades) and new construction, not just
   accumulating them.
+- **Farms feed Residential — the population bottleneck**: a Farm's output
+  decays linearly with distance, full strength at the farm down to zero at
+  its radius (6 tiles by default). A res zone sums whatever every nearby
+  farm contributes; if that total falls short of what its current density
+  needs, it stops growing (orange outline) even if fully powered, road-
+  served, and in demand. Only Residential needs food — jobs don't eat.
+  This means population growth has its own bottleneck independent of
+  power/road/materials: a city needs farm coverage spread across its
+  housing, not just one farm somewhere on the map.
 - **Clustering**: Lumber Yards and Quarries built next to each other (8
   neighbors) each get a flat output bonus per adjacent same-type built
   tile — a deliberate district of yards outproduces the same number of
@@ -70,7 +79,7 @@ exercises directly.
 - Pick a tool from the panel, then click/tap or drag on the grid to place it
   on an empty tile.
 - **Upgrade** tool: tap an existing built Power Plant/Lumber Yard/Quarry/
-  Road (rather than an empty tile) to spend money+materials improving it.
+  Road/Farm (rather than an empty tile) to spend money+materials improving it.
 - Bulldoze clears any tile, including one mid-construction (no refund).
 - Zoom (1x–4x) and the Pan toggle control the camera — Pan mode drags the
   view instead of painting, which is the fix for tiles being too small to
@@ -86,13 +95,14 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 26 cases covering placement rules, construction staging,
+needed, Node 18+. 31 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
-four upgradeable types, rejection cases, cost deduction, effects), the
-road service radius (base + upgraded), the clustering output bonus, and
-the tax-vs-export income balance. The material-reservation and
+five upgradeable types, rejection cases, cost deduction, effects), the
+road service radius (base + upgraded), the clustering output bonus, the
+tax-vs-export income balance, and the food mechanic (distance falloff,
+res-only gating, growth unblocked once fed). The material-reservation and
 RCI-bootstrap tests are direct regressions for bugs found in play: a
 shared-stockpile deadlock where simultaneous construction could
 permanently starve the only tiles that produce more material, and a

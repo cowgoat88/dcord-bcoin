@@ -76,6 +76,7 @@
       <div><span>Net / day</span><span id="stNet">$0</span></div>
       <div><span>Population</span><span id="stPop">0</span></div>
       <div><span>Jobs (C+I)</span><span id="stJobs">0</span></div>
+      <div><span>Food (supply/need)</span><span id="stFood">0 / 0</span></div>
       <div><span>Lumber</span><span id="stLumber">0</span></div>
       <div><span>Concrete</span><span id="stConcrete">0</span></div>
       <div><span>Goods</span><span id="stGoods">0</span></div>
@@ -115,7 +116,7 @@
 
     <div id="msg"></div>
     <div id="help">
-      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash — Warehouses also raise export capacity, so they're the real income lever, not taxes. Lumber Yards/Quarries built next to each other each produce more (clustering). Zoned tiles grow once built and powered, as long as they're within a road's service radius (not necessarily touching it — bigger with road upgrades). Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry/Road to spend money+materials on higher output/radius and lower upkeep (2 tiers). Use Pan + Zoom to work at a comfortable tile size on a small screen.
+      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash — Warehouses also raise export capacity, so they're the real income lever, not taxes. Lumber Yards/Quarries built next to each other each produce more (clustering). Zoned tiles grow once built and powered, as long as they're within a road's service radius (not necessarily touching it — bigger with road upgrades). Houses also need a nearby Farm: food fades with distance from the farm (orange outline = house isn't getting enough), so population growth is capped by farm coverage, not just power/road/demand. Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry/Road/Farm to spend money+materials on higher output/radius and lower upkeep (2 tiers). Use Pan + Zoom to work at a comfortable tile size on a small screen.
     </div>
   </div>
 </div>
@@ -128,7 +129,7 @@
   const { GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, BUILD, BULLDOZE_COST, clamp, inBounds } = E;
   const CANVAS_W = GRID_W * TILE, CANVAS_H = GRID_H * TILE;
 
-  const TOOLS = ["road", "res", "com", "ind", "power", "park", "lumber", "quarry", "warehouse", "upgrade", "bulldoze"];
+  const TOOLS = ["road", "res", "com", "ind", "power", "park", "lumber", "quarry", "warehouse", "farm", "upgrade", "bulldoze"];
 
   let game = E.createGame();
   let selectedTool = "road";
@@ -237,6 +238,7 @@
     if (t.type === "lumber") return "#8d6e63";
     if (t.type === "quarry") return "#78909c";
     if (t.type === "warehouse") return "#a1887f";
+    if (t.type === "farm") return "#c9a227";
     const base = { res: [76,175,80], com: [66,165,245], ind: [255,183,77] }[t.type];
     const shade = 0.35 + (t.level / MAX_LEVEL) * 0.65;
     return `rgb(${Math.round(base[0]*shade)},${Math.round(base[1]*shade)},${Math.round(base[2]*shade)})`;
@@ -312,6 +314,11 @@
         if (t.status === "built" && (t.type === "res" || t.type === "com" || t.type === "ind") && !t.powered) {
           ctx.strokeStyle = "rgba(224,102,90,0.6)";
           ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
+        } else if (t.status === "built" && t.type === "res" && t.foodSupply < E.foodNeedFor(t)) {
+          // Distinct color from the "not powered" outline so a starving
+          // house (needs a farm) reads differently from an unpowered one.
+          ctx.strokeStyle = "rgba(255,152,0,0.7)";
+          ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
         }
         if (t.upgrading) drawUpgradeOverlay(x, y, t);
         else if (t.upgradeLevel > 0) drawUpgradeBadge(x, y, t);
@@ -354,6 +361,15 @@
       ctx.setLineDash([]);
     }
 
+    if (selectedTool === "farm" && inBounds(hoverX, hoverY)) {
+      ctx.strokeStyle = "rgba(201,162,39,0.5)";
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.arc((hoverX + 0.5) * TILE, (hoverY + 0.5) * TILE, E.FOOD_RADIUS * TILE, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     ctx.restore();
   }
 
@@ -365,6 +381,7 @@
     netEl.className = game.lastNet >= 0 ? "pos" : "neg";
     document.getElementById("stPop").textContent = game.population.toLocaleString();
     document.getElementById("stJobs").textContent = game.jobs.toLocaleString();
+    document.getElementById("stFood").textContent = Math.round(game.foodSupply) + " / " + Math.round(game.foodDemand);
     document.getElementById("stLumber").textContent = Math.floor(game.stock.lumber) + " / " + game.stock.lumberCap;
     document.getElementById("stConcrete").textContent = Math.floor(game.stock.concrete) + " / " + game.stock.concreteCap;
     document.getElementById("stGoods").textContent = Math.floor(game.stock.goods) + " / " + game.stock.goodsCap;
@@ -474,10 +491,10 @@
     if (id === "bulldoze") return `Clears a tile. Cost $${BULLDOZE_COST}.`;
     if (id === "upgrade") {
       const c0 = E.upgradeCost(0), c1 = E.upgradeCost(1);
-      return `Tap a built Power Plant / Lumber Yard / Quarry / Road to upgrade it (max ${E.UPGRADE_MAX_LEVEL} tiers). `
+      return `Tap a built Power Plant / Lumber Yard / Quarry / Road / Farm to upgrade it (max ${E.UPGRADE_MAX_LEVEL} tiers). `
         + `Tier 1: $${c0.cost} · ${c0.lumber} Lumber · ${c0.concrete} Concrete · ${c0.ticks} days. `
         + `Tier 2: $${c1.cost} · ${c1.lumber} Lumber · ${c1.concrete} Concrete · ${c1.ticks} days. `
-        + `Road: +${E.ROAD_UPGRADE_STEP} service radius/tier. Power: +radius. Yard/Quarry: +50% output/tier.`;
+        + `Road: +${E.ROAD_UPGRADE_STEP} service radius/tier. Power: +radius. Yard/Quarry/Farm: +50% output/tier.`;
     }
     const s = BUILD[id];
     const parts = [`$${s.cost}`];
@@ -488,6 +505,8 @@
     if (id === "lumber" || id === "quarry") parts.push(`+${Math.round(E.CLUSTER_BONUS_PER_NEIGHBOR * 100)}% output per adjacent built ${BUILD[id].label}`);
     if (id === "ind") parts.push("converts Lumber+Concrete into exportable Goods once built");
     if (id === "warehouse") parts.push("raises storage caps AND export capacity (main income lever)");
+    if (id === "farm") parts.push(`feeds Residential within ${E.FOOD_RADIUS} tiles, output fades with distance — required for houses to grow`);
+    if (id === "res") parts.push("needs nearby Farm coverage to grow past level 0, in addition to power/road");
     return parts.join(" · ");
   }
 
@@ -540,6 +559,8 @@
     const fresh = E.createGame();
     game = Object.assign(fresh, loaded, { stock: Object.assign(fresh.stock, loaded.stock) });
     E.recomputeCaps(game);
+    E.computePower(game);
+    E.computeFood(game);
     cars = []; deliveryTrucks = [];
     updateUI();
     flash("Loaded.");
@@ -568,6 +589,7 @@
   }
 
   E.computePower(game);
+  E.computeFood(game);
   camera.zoom = window.innerWidth < 720 ? 3 : 1;
   camera.x = (CANVAS_W - CANVAS_W / camera.zoom) / 2;
   camera.y = (CANVAS_H - CANVAS_H / camera.zoom) / 2;

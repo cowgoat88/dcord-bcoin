@@ -1,10 +1,10 @@
 // Core simulation for City Manager: grid state, construction staging,
 // material stockpile with storage caps, industrial goods production,
-// building upgrades, road service radius, material clustering, and
-// RCI demand/economy. No DOM, no canvas, no timers — safe to run under
-// plain Node for tests (engine.test.js) and loaded as a plain <script>
-// by index.html, which owns all rendering/input/camera/cosmetic-traffic
-// code on top of this.
+// building upgrades, road service radius, material clustering, farm-fed
+// food coverage, and RCI demand/economy. No DOM, no canvas, no timers —
+// safe to run under plain Node for tests (engine.test.js) and loaded as
+// a plain <script> by index.html, which owns all rendering/input/camera/
+// cosmetic-traffic code on top of this.
 (function (root, factory) {
   if (typeof module !== "undefined" && module.exports) {
     module.exports = factory();
@@ -31,6 +31,16 @@
   // this is what makes tile placement/layout matter, not just raw counts.
   const CLUSTER_BONUS_PER_NEIGHBOR = 0.25;
 
+  // Farms feed Residential growth: a farm's output decays linearly with
+  // distance to zero at FOOD_RADIUS (an isolated house near the field gets
+  // full benefit; one at the edge of range gets almost none), and a res
+  // zone needs food proportional to its current density to grow further.
+  // This is the bottleneck on population growth — food is a coverage
+  // value recomputed every tick, not a stockpile.
+  const FOOD_RADIUS = 6;
+  const FOOD_RATE = 6; // per farm, at distance 0 (before upgrades)
+  const FOOD_PER_LEVEL = 4; // food a res zone needs per (level+1) to grow further
+
   // Storage: raw materials and finished Goods are capped so they can't
   // grow forever. Warehouses raise every cap AND raise how much Goods can
   // be exported per day — they're the export terminal, not just a shelf.
@@ -47,11 +57,6 @@
   // the treasury. See README for the reasoning.
   const TAX = { res: 0.12, com: 0.2, ind: 0.15 };
 
-  // Power Plants, Lumber Yards, Quarries, and Roads can each be upgraded
-  // twice: more output/radius per tier, and lower upkeep (efficiency).
-  const UPGRADE_MAX_LEVEL = 2;
-  const UPGRADEABLE_TYPES = ["power", "lumber", "quarry", "road"];
-
   const BUILD = {
     road:      { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
     res:       { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#4caf50", label: "Residential" },
@@ -61,10 +66,26 @@
     park:      { cost: 20,  lumber: 3,  concrete: 0,  ticks: 2, color: "#2e7d32", label: "Park" },
     lumber:    { cost: 100, lumber: 5,  concrete: 0,  ticks: 4, color: "#8d6e63", label: "Lumber Yard" },
     quarry:    { cost: 100, lumber: 5,  concrete: 5,  ticks: 4, color: "#78909c", label: "Quarry" },
-    warehouse: { cost: 150, lumber: 10, concrete: 10, ticks: 5, color: "#a1887f", label: "Warehouse" }
+    warehouse: { cost: 150, lumber: 10, concrete: 10, ticks: 5, color: "#a1887f", label: "Warehouse" },
+    farm:      { cost: 80,  lumber: 3,  concrete: 0,  ticks: 3, color: "#c9a227", label: "Farm" }
   };
   const BULLDOZE_COST = 5;
-  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5, warehouse: 1 };
+  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5, warehouse: 1, farm: 0.5 };
+
+  // Power Plants, Lumber Yards, Quarries, Roads, and Farms can each be
+  // upgraded twice: more output/radius per tier, and lower upkeep.
+  const UPGRADE_MAX_LEVEL = 2;
+  const UPGRADEABLE_TYPES = ["power", "lumber", "quarry", "road", "farm"];
+
+  function formatList(items) {
+    if (items.length <= 1) return items.join("");
+    if (items.length === 2) return items.join(" or ");
+    return items.slice(0, -1).join(", ") + ", or " + items[items.length - 1];
+  }
+  // Generated from UPGRADEABLE_TYPES so adding a new upgradeable building
+  // can't leave this message silently out of date (it happened twice).
+  const UPGRADE_REJECTION_MESSAGE =
+    "Select a built " + formatList(UPGRADEABLE_TYPES.map((t) => BUILD[t].label)) + " to upgrade.";
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function inBounds(x, y) { return x >= 0 && y >= 0 && x < GRID_W && y < GRID_H; }
@@ -108,6 +129,8 @@
       day: 1,
       population: 0,
       jobs: 0,
+      foodSupply: 0,
+      foodDemand: 0,
       demand: { res: 50, com: 20, ind: 20 },
       lastNet: 0
     };
@@ -226,6 +249,40 @@
     }
   }
 
+  // Splats each built Farm's output outward with linear distance falloff
+  // (full strength at the farm, zero past FOOD_RADIUS), accumulating into
+  // every tile's foodSupply. Mirrors computePower's structure, but sums a
+  // weighted value instead of setting a flag, since food is graded rather
+  // than in/out of range.
+  function computeFood(game) {
+    const { board } = game;
+    for (let y = 0; y < GRID_H; y++)
+      for (let x = 0; x < GRID_W; x++) board[y][x].foodSupply = 0;
+
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const farm = board[y][x];
+        if (farm.type !== "farm" || farm.status !== "built") continue;
+        const rate = effectiveRate(FOOD_RATE, farm);
+        for (let dy = -FOOD_RADIUS; dy <= FOOD_RADIUS; dy++) {
+          for (let dx = -FOOD_RADIUS; dx <= FOOD_RADIUS; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const dist = Math.max(Math.abs(dx), Math.abs(dy));
+            if (dist > FOOD_RADIUS) continue;
+            board[ny][nx].foodSupply += rate * (1 - dist / FOOD_RADIUS);
+          }
+        }
+      }
+    }
+  }
+
+  // How much food a res zone needs (from all farms in range combined) to
+  // be eligible to grow past its current level.
+  function foodNeedFor(tile) {
+    return FOOD_PER_LEVEL * (tile.level + 1);
+  }
+
   // Recomputes storage caps and warehouse count from built Warehouses.
   // Called before anything that produces/consumes stock this tick, so it
   // reflects completions from the *previous* tick — consistent with how
@@ -246,18 +303,24 @@
 
   function recomputeTotals(game) {
     const { board } = game;
-    let population = 0, comJobs = 0, indJobs = 0;
+    let population = 0, comJobs = 0, indJobs = 0, foodSupply = 0, foodDemand = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
-        if (t.type === "res") population += t.level * CAP_PER_LEVEL;
+        if (t.type === "res") { population += t.level * CAP_PER_LEVEL; foodDemand += foodNeedFor(t); }
         if (t.type === "com") comJobs += t.level * CAP_PER_LEVEL;
         if (t.type === "ind") indJobs += t.level * CAP_PER_LEVEL;
+        if (t.type === "farm") foodSupply += effectiveRate(FOOD_RATE, t);
       }
     }
     game.population = population;
     game.jobs = comJobs + indJobs;
+    // City-wide totals for display only — actual growth eligibility below
+    // uses each res zone's own local foodSupply (from computeFood), since
+    // food doesn't pool globally the way Lumber/Concrete/Goods do.
+    game.foodSupply = foodSupply;
+    game.foodDemand = foodDemand;
 
     // Treat zero jobs as one phantom job so res demand starts slightly
     // positive instead of exactly 0 — otherwise res never grows (needs
@@ -347,7 +410,7 @@
     if (!inBounds(x, y)) return undefined;
     const t = game.board[y][x];
     if (!UPGRADEABLE_TYPES.includes(t.type) || t.status !== "built") {
-      return "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.";
+      return UPGRADE_REJECTION_MESSAGE;
     }
     if (t.upgrading) return "Already upgrading.";
     if ((t.upgradeLevel || 0) >= UPGRADE_MAX_LEVEL) return "Already at max level.";
@@ -395,6 +458,7 @@
   function simTick(game, onProgress) {
     const { board, stock } = game;
     computePower(game);
+    computeFood(game);
     recomputeCaps(game);
     stepConstruction(game, onProgress);
     stepUpgrades(game);
@@ -403,7 +467,11 @@
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built" || (t.type !== "res" && t.type !== "com" && t.type !== "ind")) continue;
-        const eligible = t.powered && hasRoadService(game, x, y);
+        // Food only gates Residential — jobs don't need to eat. This is
+        // the population bottleneck: a house can be powered, road-served,
+        // and in demand, and still not grow if no farm reaches it.
+        const fed = t.type !== "res" || t.foodSupply >= foodNeedFor(t);
+        const eligible = t.powered && hasRoadService(game, x, y) && fed;
         const d = game.demand[t.type];
         if (eligible && d > 0 && t.level < MAX_LEVEL) {
           if (Math.random() < 0.3) t.level += 1;
@@ -470,6 +538,7 @@
         else if (t.type === "park") upkeep += UPKEEP.park;
         else if (t.type === "lumber" || t.type === "quarry") upkeep += UPKEEP.yard * upkeepMultiplier(t);
         else if (t.type === "warehouse") upkeep += UPKEEP.warehouse;
+        else if (t.type === "farm") upkeep += UPKEEP.farm * upkeepMultiplier(t);
       }
     }
     game.lastNet = Math.round(income - upkeep);
@@ -500,14 +569,15 @@
   return {
     GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, CAP_PER_LEVEL,
     ROAD_BASE_RADIUS, ROAD_UPGRADE_STEP, CLUSTER_BONUS_PER_NEIGHBOR,
+    FOOD_RADIUS, FOOD_RATE, FOOD_PER_LEVEL,
     LUMBER_RATE, CONCRETE_RATE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
     STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_BASE, GOODS_EXPORT_PER_WAREHOUSE, GOODS_PRICE,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
-    UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, upgradeCost,
+    UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, UPGRADE_REJECTION_MESSAGE, upgradeCost,
     effectiveRate, effectivePowerRadius, effectiveRoadRadius, effectiveExportRate, upkeepMultiplier,
     clamp, inBounds, newTile, newSite, createGame,
     isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad, hasRoadService, countClusterNeighbors,
-    computePower, recomputeCaps, recomputeTotals, bfsPath,
+    computePower, computeFood, foodNeedFor, recomputeCaps, recomputeTotals, bfsPath,
     advanceSite, stepConstruction, startUpgrade, stepUpgrades,
     simTick, placeTile
   };

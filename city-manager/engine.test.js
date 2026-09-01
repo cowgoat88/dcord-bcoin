@@ -106,15 +106,17 @@ test("Lumber Yards/Quarries never deadlock even when many builds start at once",
   assert.ok(game.stock.lumber > 0 || game.stock.concrete > 0, "stock must be flowing again, not frozen at a starved floor");
 });
 
-test("RCI bootstraps from zero: a built, powered, road-adjacent res zone eventually grows", () => {
+test("RCI bootstraps from zero: a built, powered, road-adjacent, fed res zone eventually grows", () => {
   const game = E.createGame();
   Object.assign(game.stock, { lumber: 200, concrete: 200 }); // isolate RCI growth from the material economy, covered separately above
   buildAndFinishRoadRow(game, 10, 0, 5);
   E.placeTile(game, 2, 9, "power");
   E.placeTile(game, 3, 9, "res");
-  runTicks(game, 8); // finish power (8 ticks) and res (3 ticks)
+  E.placeTile(game, 4, 9, "farm"); // food is required to grow past level 0 now
+  runTicks(game, 8); // finish power (8 ticks), res (3 ticks), and farm (3 ticks)
   assert.equal(game.board[9][2].status, "built");
   assert.equal(game.board[9][3].status, "built");
+  assert.equal(game.board[9][4].status, "built");
 
   assert.ok(game.demand.res > 0, "res demand must be positive at population=0/jobs=0 so growth can start (regression: jobs||1 fallback)");
 
@@ -304,10 +306,10 @@ test("clustering boosts yard output: adjacent built yards each out-produce an is
 
 test("startUpgrade rejects non-upgradeable, unbuilt, already-upgrading, and max-level tiles", () => {
   const game = E.createGame();
-  assert.equal(E.startUpgrade(game, 1, 1), "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.");
+  assert.equal(E.startUpgrade(game, 1, 1), E.UPGRADE_REJECTION_MESSAGE);
 
   E.placeTile(game, 2, 2, "lumber");
-  assert.equal(E.startUpgrade(game, 2, 2), "Select a built Power Plant, Lumber Yard, Quarry, or Road to upgrade.", "still a site, not built");
+  assert.equal(E.startUpgrade(game, 2, 2), E.UPGRADE_REJECTION_MESSAGE, "still a site, not built");
 
   game.board[2][2].status = "built";
   Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
@@ -354,4 +356,77 @@ test("a completed upgrade raises effective output/radius and lowers upkeep", () 
   assert.equal(E.effectivePowerRadius(basePlant), E.POWER_RADIUS);
   const upgradedPlant = { upgradeLevel: 1 };
   assert.ok(E.effectivePowerRadius(upgradedPlant) > E.POWER_RADIUS, "an upgraded Power Plant must cover more ground");
+});
+
+test("computeFood decays linearly with distance and stops at FOOD_RADIUS", () => {
+  const game = E.createGame();
+  game.board[10][10] = { type: "farm", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  E.computeFood(game);
+  const atFarm = game.board[10][10].foodSupply;
+  const halfway = game.board[10][10 + Math.floor(E.FOOD_RADIUS / 2)].foodSupply;
+  const atEdge = game.board[10][10 + E.FOOD_RADIUS].foodSupply;
+  const justPast = game.board[10][10 + E.FOOD_RADIUS + 1].foodSupply;
+  assert.equal(atFarm, E.FOOD_RATE, "full strength at the farm's own tile");
+  assert.ok(halfway > 0 && halfway < atFarm, "partial supply partway to the radius edge");
+  assert.ok(atEdge >= 0 && atEdge < halfway, "supply keeps decaying toward the edge");
+  assert.equal(justPast, 0, "zero beyond the radius");
+});
+
+test("a res zone without enough nearby food never grows even when powered and road-served", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 200, concrete: 200 });
+  buildAndFinishRoadRow(game, 10, 0, 5);
+  E.placeTile(game, 2, 9, "power");
+  E.placeTile(game, 3, 9, "res");
+  // No farm anywhere on the board.
+  runTicks(game, 100);
+  assert.equal(game.board[9][3].level, 0, "food-starved res zone must not grow despite demand/power/road all being satisfied");
+});
+
+test("a nearby farm feeds a res zone enough to let it grow", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 200, concrete: 200 });
+  buildAndFinishRoadRow(game, 10, 0, 5);
+  E.placeTile(game, 2, 9, "power");
+  E.placeTile(game, 3, 9, "res");
+  E.placeTile(game, 4, 9, "farm");
+  runTicks(game, 8);
+
+  let grew = false;
+  for (let i = 0; i < 200 && !grew; i++) {
+    E.simTick(game);
+    if (game.board[9][3].level > 0) grew = true;
+  }
+  assert.ok(grew, "a fed res zone must be able to grow");
+});
+
+test("food does not gate Commercial or Industrial growth, only Residential", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 200, concrete: 200 });
+  buildAndFinishRoadRow(game, 10, 0, 5);
+  E.placeTile(game, 2, 9, "power");
+  E.placeTile(game, 3, 9, "com");
+  E.placeTile(game, 4, 9, "ind");
+  // No farm anywhere — if food gated these too, neither would ever grow.
+  runTicks(game, 4); // finish construction
+  game.demand.com = 50;
+  game.demand.ind = 50;
+  let comGrew = false, indGrew = false;
+  for (let i = 0; i < 100 && !(comGrew && indGrew); i++) {
+    E.simTick(game);
+    game.demand.com = 50; // hold demand positive; recomputeTotals would otherwise swing it
+    game.demand.ind = 50;
+    if (game.board[9][3].level > 0) comGrew = true;
+    if (game.board[9][4].level > 0) indGrew = true;
+  }
+  assert.ok(comGrew, "Commercial growth must not require food");
+  assert.ok(indGrew, "Industrial growth must not require food");
+});
+
+test("foodNeedFor scales with a res zone's current level", () => {
+  const tile0 = { level: 0 };
+  const tile2 = { level: 2 };
+  assert.equal(E.foodNeedFor(tile0), E.FOOD_PER_LEVEL * 1);
+  assert.equal(E.foodNeedFor(tile2), E.FOOD_PER_LEVEL * 3);
+  assert.ok(E.foodNeedFor(tile2) > E.foodNeedFor(tile0), "a denser house needs more food to grow further");
 });
