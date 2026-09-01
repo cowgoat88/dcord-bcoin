@@ -21,7 +21,14 @@ exercises directly.
   stockpile — it does not fail, just waits.
 - Lumber Yards and Quarries produce materials per day once built; cosmetic
   delivery trucks path over the built road network from yard to active
-  site while it's receiving materials.
+  site while it's receiving materials. Production runs at the *start* of
+  each day, before construction/upgrades consume anything and before
+  Industrial converts materials into Goods — so new construction always
+  gets first claim on that day's output. (Previously Industrial ran later
+  in the same tick and could keep pace with a single Quarry's output
+  indefinitely, leaving new concrete-needing construction stuck at 0%
+  forever even with an active Quarry — a genuine deadlock, not just slow
+  progress.)
 - **Zero-producer safety net**: if every Lumber Yard (or every Quarry) is
   gone — bulldozed, or the starting stock got spent before one finished —
   a small trickle of that material (`EMERGENCY_TRICKLE`, below what even
@@ -103,20 +110,23 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 33 cases covering placement rules, construction staging,
+needed, Node 18+. 34 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
 five upgradeable types, rejection cases, cost deduction, effects), the
 road service radius (base + upgraded), the clustering output bonus, the
 tax-vs-export income balance, the food mechanic (distance falloff,
-res-only gating, growth unblocked once fed), and the zero-producer
-safety net. These are direct regressions for bugs found in play: a
-shared-stockpile deadlock where simultaneous construction could
-permanently starve the only tiles that produce more material; a
-demand-formula regression that left `population`/`jobs` stuck at zero
-forever; and hitting exactly 0 stock with no surviving Lumber Yard/Quarry
-being an unrecoverable dead end. Run this after any change to
+res-only gating, growth unblocked once fed), the zero-producer safety
+net, and construction's priority over Industrial consumption. These are
+direct regressions for bugs found in play: a shared-stockpile deadlock
+where simultaneous construction could permanently starve the only tiles
+that produce more material; a demand-formula regression that left
+`population`/`jobs` stuck at zero forever; hitting exactly 0 stock with
+no surviving Lumber Yard/Quarry being an unrecoverable dead end; and
+Industrial consumption able to keep pace with a single Quarry's output
+indefinitely, permanently starving new construction of the same
+material even with an active Quarry. Run this after any change to
 `engine.js` before touching `index.html`'s rendering/input code on top
 of it.
 

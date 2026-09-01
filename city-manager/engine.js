@@ -469,27 +469,15 @@
     computePower(game);
     computeFood(game);
     recomputeCaps(game);
-    stepConstruction(game, onProgress);
-    stepUpgrades(game);
 
-    for (let y = 0; y < GRID_H; y++) {
-      for (let x = 0; x < GRID_W; x++) {
-        const t = board[y][x];
-        if (t.status !== "built" || (t.type !== "res" && t.type !== "com" && t.type !== "ind")) continue;
-        // Food only gates Residential — jobs don't need to eat. This is
-        // the population bottleneck: a house can be powered, road-served,
-        // and in demand, and still not grow if no farm reaches it.
-        const fed = t.type !== "res" || t.foodSupply >= foodNeedFor(t);
-        const eligible = t.powered && hasRoadService(game, x, y) && fed;
-        const d = game.demand[t.type];
-        if (eligible && d > 0 && t.level < MAX_LEVEL) {
-          if (Math.random() < 0.3) t.level += 1;
-        } else if (d < -70 && t.level > 0) {
-          if (Math.random() < 0.15) t.level -= 1;
-        }
-      }
-    }
-
+    // Production runs before anything consumes stock, so construction and
+    // upgrades see *today's* fresh material instead of always trailing a
+    // full tick behind. This also gives them first claim on it ahead of
+    // Industrial consumption below — a half-built Power Plant is more
+    // urgent than incremental Goods output, and previously Industrial
+    // effectively got priority just by running later in tick order, which
+    // could leave new construction stuck at 0% indefinitely whenever
+    // Industrial consumption kept pace with a single Quarry's output.
     let builtLumberYards = 0, builtQuarries = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
@@ -512,6 +500,27 @@
     // See EMERGENCY_TRICKLE: guarantees recovery even from zero producers.
     if (builtLumberYards === 0) stock.lumber = Math.min(stock.lumber + EMERGENCY_TRICKLE, stock.lumberCap);
     if (builtQuarries === 0) stock.concrete = Math.min(stock.concrete + EMERGENCY_TRICKLE, stock.concreteCap);
+
+    stepConstruction(game, onProgress);
+    stepUpgrades(game);
+
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        if (t.status !== "built" || (t.type !== "res" && t.type !== "com" && t.type !== "ind")) continue;
+        // Food only gates Residential — jobs don't need to eat. This is
+        // the population bottleneck: a house can be powered, road-served,
+        // and in demand, and still not grow if no farm reaches it.
+        const fed = t.type !== "res" || t.foodSupply >= foodNeedFor(t);
+        const eligible = t.powered && hasRoadService(game, x, y) && fed;
+        const d = game.demand[t.type];
+        if (eligible && d > 0 && t.level < MAX_LEVEL) {
+          if (Math.random() < 0.3) t.level += 1;
+        } else if (d < -70 && t.level > 0) {
+          if (Math.random() < 0.15) t.level -= 1;
+        }
+      }
+    }
 
     // Industrial zones are the only material sink beyond upkeep: they
     // convert raw Lumber+Concrete into Goods (capped), throttled by

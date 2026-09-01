@@ -74,7 +74,11 @@ test("construction completes after its required number of ticks given enough sto
 test("construction stalls (without consuming stock) when materials run short", () => {
   const game = E.createGame();
   Object.assign(game.stock, { lumber: 0, concrete: 0 });
-  E.placeTile(game, 3, 3, "road");
+  // Power Plant's per-tick need (2.5 lumber, 3.75 concrete) exceeds even
+  // EMERGENCY_TRICKLE, so this must genuinely still stall — a cheap build
+  // like a road would now succeed immediately off the trickle alone,
+  // since production runs before construction each tick.
+  E.placeTile(game, 3, 3, "power");
   E.simTick(game);
   const t = game.board[3][3];
   assert.equal(t.status, "site");
@@ -463,4 +467,31 @@ test("EMERGENCY_TRICKLE stops applying once a real producer exists", () => {
   // A single built yard already produces more than the trickle alone
   // would, and the trickle must not additionally stack on top of it.
   assert.equal(game.stock.lumber, E.LUMBER_RATE);
+});
+
+test("new construction gets priority over Industrial consumption for the same day's production", () => {
+  // Regression for a reported bug: a level-3 Industrial zone's concrete
+  // draw (3/day) exactly matches a single Quarry's output (3/day), and a
+  // second built Warehouse keeps Industrial's Goods output permanently
+  // under the export cap (so it never self-throttles that way, isolating
+  // the actual mechanism under test). Under the old tick order —
+  // Industrial consumption running *after* production, ahead of the next
+  // tick's construction check — this was a genuine permanent deadlock:
+  // concrete confirmed stuck at exactly 0 for 60+ ticks in manual testing.
+  // Production now running before construction fixes it: the site should
+  // complete in exactly its minimum build time (5 ticks) since it gets
+  // first claim on each day's fresh concrete before Industrial touches it.
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 1000, concrete: 0 }); // lumber is never the bottleneck here
+  game.board[10][10] = { type: "quarry", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][11] = { type: "ind", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][13] = { type: "warehouse", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  E.placeTile(game, 12, 10, "warehouse"); // needs 10 concrete over 5 days
+
+  let completedAtTick = null;
+  for (let i = 0; i < 20 && completedAtTick === null; i++) {
+    E.simTick(game);
+    if (game.board[10][12].status === "built") completedAtTick = i + 1;
+  }
+  assert.equal(completedAtTick, 5, "new construction must finish in its minimum build time, not starve behind Industrial consumption");
 });
