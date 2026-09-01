@@ -73,14 +73,15 @@ test("construction completes after its required number of ticks given enough sto
 
 test("construction stalls (without consuming stock) when materials run short", () => {
   const game = E.createGame();
-  game.stock = { lumber: 0, concrete: 0 };
+  Object.assign(game.stock, { lumber: 0, concrete: 0 });
   E.placeTile(game, 3, 3, "road");
   E.simTick(game);
   const t = game.board[3][3];
   assert.equal(t.status, "site");
   assert.equal(t.stalled, true);
   assert.equal(t.progress, 0);
-  assert.deepEqual(game.stock, { lumber: 0, concrete: 0 }, "a stalled site must not partially consume stock");
+  assert.equal(game.stock.lumber, 0, "a stalled site must not partially consume stock");
+  assert.equal(game.stock.concrete, 0);
 });
 
 test("Lumber Yards/Quarries never deadlock even when many builds start at once", () => {
@@ -107,7 +108,7 @@ test("Lumber Yards/Quarries never deadlock even when many builds start at once",
 
 test("RCI bootstraps from zero: a built, powered, road-adjacent res zone eventually grows", () => {
   const game = E.createGame();
-  game.stock = { lumber: 200, concrete: 200 }; // isolate RCI growth from the material economy, covered separately above
+  Object.assign(game.stock, { lumber: 200, concrete: 200 }); // isolate RCI growth from the material economy, covered separately above
   buildAndFinishRoadRow(game, 10, 0, 5);
   E.placeTile(game, 2, 9, "power");
   E.placeTile(game, 3, 9, "res");
@@ -181,4 +182,110 @@ test("simTick's economy applies upkeep only to built tiles and advances the day 
   // for the site tick before it completed.
   assert.ok(game.lastNet <= 0);
   assert.ok(game.lastNet >= -E.UPKEEP.road - 0.01);
+});
+
+test("raw material stock never exceeds its cap even with surplus production", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: game.stock.lumberCap - 1, concrete: 0 });
+  game.board[5][5] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  runTicks(game, 10);
+  assert.equal(game.stock.lumber, game.stock.lumberCap, "production must clamp at the cap, not exceed it");
+});
+
+test("a built Warehouse raises every storage cap", () => {
+  const game = E.createGame();
+  const baseCap = game.stock.lumberCap;
+  E.placeTile(game, 8, 8, "warehouse");
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 }); // isolate cap effect from the material economy
+  runTicks(game, E.BUILD.warehouse.ticks);
+  assert.equal(game.board[8][8].status, "built");
+  E.recomputeCaps(game);
+  assert.equal(game.stock.lumberCap, baseCap + E.WAREHOUSE_BONUS.lumber);
+  assert.equal(game.stock.concreteCap, E.STORAGE_BASE.concrete + E.WAREHOUSE_BONUS.concrete);
+  assert.equal(game.stock.goodsCap, E.STORAGE_BASE.goods + E.WAREHOUSE_BONUS.goods);
+});
+
+test("a built, leveled Industrial zone converts raw materials into capped Goods", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 50, concrete: 50, goods: 0 });
+  game.board[5][5] = { type: "ind", status: "built", level: 2, powered: false, upgradeLevel: 0, upgrading: null };
+  E.simTick(game);
+  const expectedInput = 2 * E.IND_INPUT_PER_LEVEL;
+  const expectedOutput = 2 * E.IND_OUTPUT_PER_LEVEL;
+  assert.equal(game.stock.lumber, 50 - expectedInput);
+  assert.equal(game.stock.concrete, 50 - expectedInput);
+  // GOODS_EXPORT_RATE auto-sells some of the same tick's output.
+  assert.equal(game.stock.goods, Math.max(0, expectedOutput - E.GOODS_EXPORT_RATE));
+});
+
+test("Industrial goods output throttles to zero once Goods storage is full, without wasting input", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 50, concrete: 50, goods: game.stock.goodsCap });
+  game.board[5][5] = { type: "ind", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+  const lumberBefore = game.stock.lumber;
+  E.simTick(game);
+  // Only GOODS_EXPORT_RATE worth of room opens up (from the export step),
+  // so consumption must be near zero, never the full per-level want.
+  assert.ok(game.stock.lumber > lumberBefore - 0.5, "a full warehouse must not let industry burn raw material for nothing");
+});
+
+test("exported Goods convert to income at GOODS_PRICE", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { goods: E.GOODS_EXPORT_RATE * 2 });
+  E.simTick(game);
+  assert.ok(game.lastNet >= E.GOODS_EXPORT_RATE * E.GOODS_PRICE - 1, "export income must show up in the day's net");
+});
+
+test("startUpgrade rejects non-upgradeable, unbuilt, already-upgrading, and max-level tiles", () => {
+  const game = E.createGame();
+  assert.equal(E.startUpgrade(game, 1, 1), "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.");
+
+  E.placeTile(game, 2, 2, "lumber");
+  assert.equal(E.startUpgrade(game, 2, 2), "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.", "still a site, not built");
+
+  game.board[2][2].status = "built";
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
+  assert.equal(E.startUpgrade(game, 2, 2), undefined);
+  assert.equal(E.startUpgrade(game, 2, 2), "Already upgrading.");
+
+  game.board[2][2].upgrading = null;
+  game.board[2][2].upgradeLevel = E.UPGRADE_MAX_LEVEL;
+  assert.equal(E.startUpgrade(game, 2, 2), "Already at max level.");
+});
+
+test("startUpgrade rejects insufficient funds and deducts cost on success", () => {
+  const game = E.createGame();
+  E.placeTile(game, 2, 2, "quarry");
+  game.board[2][2].status = "built";
+  const spec = E.upgradeCost(0);
+  game.money = spec.cost - 1;
+  assert.equal(E.startUpgrade(game, 2, 2), "Not enough money.");
+
+  game.money = 100000;
+  const before = game.money;
+  assert.equal(E.startUpgrade(game, 2, 2), undefined);
+  assert.equal(game.money, before - spec.cost);
+});
+
+test("a completed upgrade raises effective output/radius and lowers upkeep", () => {
+  const game = E.createGame();
+  E.placeTile(game, 2, 2, "lumber");
+  game.board[2][2].status = "built";
+  game.money = 100000;
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
+
+  assert.equal(E.startUpgrade(game, 2, 2), undefined);
+  const spec = E.upgradeCost(0);
+  runTicks(game, spec.ticks);
+
+  const tile = game.board[2][2];
+  assert.equal(tile.upgradeLevel, 1);
+  assert.equal(tile.upgrading, null);
+  assert.equal(E.effectiveRate(E.LUMBER_RATE, tile), E.LUMBER_RATE * 1.5);
+  assert.ok(E.upkeepMultiplier(tile) < 1, "an upgraded building must be more efficient, not just bigger");
+
+  const basePlant = { upgradeLevel: 0 };
+  assert.equal(E.effectivePowerRadius(basePlant), E.POWER_RADIUS);
+  const upgradedPlant = { upgradeLevel: 1 };
+  assert.ok(E.effectivePowerRadius(upgradedPlant) > E.POWER_RADIUS, "an upgraded Power Plant must cover more ground");
 });

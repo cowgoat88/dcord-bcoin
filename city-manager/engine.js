@@ -1,5 +1,6 @@
 // Core simulation for City Manager: grid state, construction staging,
-// material stockpile, power/road adjacency, and RCI demand/economy.
+// material stockpile with storage caps, industrial goods production,
+// building upgrades, power/road adjacency, and RCI demand/economy.
 // No DOM, no canvas, no timers — safe to run under plain Node for tests
 // (engine.test.js) and loaded as a plain <script> by index.html, which
 // owns all rendering/input/camera/cosmetic-traffic code on top of this.
@@ -16,20 +17,40 @@
   const POWER_RADIUS = 8;
   const MAX_LEVEL = 3;
   const CAP_PER_LEVEL = 10; // population or jobs added per level
-  const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day
+  const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day (before upgrades)
+
+  // Storage: raw materials and finished Goods are capped so they can't
+  // grow forever. Warehouses raise every cap; Industrial zones are the
+  // only thing that turns raw materials into Goods, and Goods auto-export
+  // for cash at a flat rate — so a developed industrial base constantly
+  // drains the stockpile instead of just letting it climb.
+  const STORAGE_BASE = { lumber: 100, concrete: 100, goods: 60 };
+  const WAREHOUSE_BONUS = { lumber: 80, concrete: 80, goods: 80 };
+  const GOODS_EXPORT_RATE = 5; // units/day auto-sold regardless of warehouse count
+  const GOODS_PRICE = 3; // $ per unit sold
+  const IND_INPUT_PER_LEVEL = 1; // lumber AND concrete consumed, per zone level, per day
+  const IND_OUTPUT_PER_LEVEL = 2; // goods produced, per zone level, per day
+
+  // Power Plants, Lumber Yards, and Quarries can each be upgraded twice:
+  // more output/radius per tier, and lower upkeep (efficiency). Roads have
+  // no capacity mechanic yet (traffic is cosmetic only), so there's
+  // deliberately no road upgrade — see README.
+  const UPGRADE_MAX_LEVEL = 2;
+  const UPGRADEABLE_TYPES = ["power", "lumber", "quarry"];
 
   const BUILD = {
-    road:    { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
-    res:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#4caf50", label: "Residential" },
-    com:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#42a5f5", label: "Commercial" },
-    ind:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#ffb74d", label: "Industrial" },
-    power:   { cost: 500, lumber: 20, concrete: 30, ticks: 8, color: "#e0665a", label: "Power Plant" },
-    park:    { cost: 20,  lumber: 3,  concrete: 0,  ticks: 2, color: "#2e7d32", label: "Park" },
-    lumber:  { cost: 100, lumber: 5,  concrete: 0,  ticks: 4, color: "#8d6e63", label: "Lumber Yard" },
-    quarry:  { cost: 100, lumber: 5,  concrete: 5,  ticks: 4, color: "#78909c", label: "Quarry" }
+    road:      { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
+    res:       { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#4caf50", label: "Residential" },
+    com:       { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#42a5f5", label: "Commercial" },
+    ind:       { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#ffb74d", label: "Industrial" },
+    power:     { cost: 500, lumber: 20, concrete: 30, ticks: 8, color: "#e0665a", label: "Power Plant" },
+    park:      { cost: 20,  lumber: 3,  concrete: 0,  ticks: 2, color: "#2e7d32", label: "Park" },
+    lumber:    { cost: 100, lumber: 5,  concrete: 0,  ticks: 4, color: "#8d6e63", label: "Lumber Yard" },
+    quarry:    { cost: 100, lumber: 5,  concrete: 5,  ticks: 4, color: "#78909c", label: "Quarry" },
+    warehouse: { cost: 150, lumber: 10, concrete: 10, ticks: 5, color: "#a1887f", label: "Warehouse" }
   };
   const BULLDOZE_COST = 5;
-  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5 };
+  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5, warehouse: 1 };
   const TAX = { res: 0.5, com: 1, ind: 0.8 };
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -50,7 +71,9 @@
       ticksNeeded: spec.ticks,
       need: { lumber: spec.lumber, concrete: spec.concrete },
       delivered: { lumber: 0, concrete: 0 },
-      stalled: false
+      stalled: false,
+      upgradeLevel: 0,
+      upgrading: null
     };
   }
 
@@ -64,7 +87,10 @@
     return {
       board,
       money: 10000,
-      stock: { lumber: 30, concrete: 15 },
+      stock: {
+        lumber: 30, concrete: 15, goods: 0,
+        lumberCap: STORAGE_BASE.lumber, concreteCap: STORAGE_BASE.concrete, goodsCap: STORAGE_BASE.goods
+      },
       day: 1,
       population: 0,
       jobs: 0,
@@ -94,6 +120,30 @@
     return null;
   }
 
+  // Upgrade tiers scale both cost and effect. A tile at upgradeLevel L
+  // pays this to reach L+1.
+  function upgradeCost(level) {
+    return {
+      cost: 200 * (level + 1),
+      lumber: 15 * (level + 1),
+      concrete: 15 * (level + 1),
+      ticks: 5
+    };
+  }
+
+  function effectiveRate(base, tile) {
+    return base * (1 + 0.5 * (tile.upgradeLevel || 0));
+  }
+
+  function effectivePowerRadius(tile) {
+    return POWER_RADIUS + 3 * (tile.upgradeLevel || 0);
+  }
+
+  // Each upgrade tier also trims upkeep: more efficient, not just bigger.
+  function upkeepMultiplier(tile) {
+    return 1 - 0.15 * (tile.upgradeLevel || 0);
+  }
+
   function computePower(game) {
     const { board } = game;
     for (let y = 0; y < GRID_H; y++)
@@ -101,16 +151,35 @@
 
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
-        if (board[y][x].type !== "power" || board[y][x].status !== "built") continue;
-        for (let dy = -POWER_RADIUS; dy <= POWER_RADIUS; dy++) {
-          for (let dx = -POWER_RADIUS; dx <= POWER_RADIUS; dx++) {
+        const plant = board[y][x];
+        if (plant.type !== "power" || plant.status !== "built") continue;
+        const radius = effectivePowerRadius(plant);
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
             const nx = x + dx, ny = y + dy;
             if (!inBounds(nx, ny)) continue;
-            if (Math.max(Math.abs(dx), Math.abs(dy)) <= POWER_RADIUS) board[ny][nx].powered = true;
+            if (Math.max(Math.abs(dx), Math.abs(dy)) <= radius) board[ny][nx].powered = true;
           }
         }
       }
     }
+  }
+
+  // Recomputes storage caps from built Warehouses. Called before anything
+  // that produces/consumes stock this tick, so caps reflect completions
+  // from the *previous* tick — consistent with how computePower and
+  // hasAdjacentRoad also only see prior-tick completions.
+  function recomputeCaps(game) {
+    let warehouses = 0;
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = game.board[y][x];
+        if (t.type === "warehouse" && t.status === "built") warehouses++;
+      }
+    }
+    game.stock.lumberCap = STORAGE_BASE.lumber + warehouses * WAREHOUSE_BONUS.lumber;
+    game.stock.concreteCap = STORAGE_BASE.concrete + warehouses * WAREHOUSE_BONUS.concrete;
+    game.stock.goodsCap = STORAGE_BASE.goods + warehouses * WAREHOUSE_BONUS.goods;
   }
 
   function recomputeTotals(game) {
@@ -208,10 +277,65 @@
     for (const [x, y, t] of rest) advanceSite(game, x, y, t, reserveLumber, reserveConcrete, onProgress);
   }
 
-  function simTick(game, onProgress) {
+  // Returns undefined on success, or a user-facing message on rejection.
+  // Unlike a fresh build, an upgrading tile stays fully operational at its
+  // current tier the whole time — this only affects a tile that's already
+  // status==="built".
+  function startUpgrade(game, x, y) {
+    if (!inBounds(x, y)) return undefined;
+    const t = game.board[y][x];
+    if (!UPGRADEABLE_TYPES.includes(t.type) || t.status !== "built") {
+      return "Select a built Power Plant, Lumber Yard, or Quarry to upgrade.";
+    }
+    if (t.upgrading) return "Already upgrading.";
+    if ((t.upgradeLevel || 0) >= UPGRADE_MAX_LEVEL) return "Already at max level.";
+    const spec = upgradeCost(t.upgradeLevel || 0);
+    if (game.money < spec.cost) return "Not enough money.";
+    game.money -= spec.cost;
+    t.upgrading = {
+      progress: 0,
+      ticksNeeded: spec.ticks,
+      need: { lumber: spec.lumber, concrete: spec.concrete },
+      delivered: { lumber: 0, concrete: 0 }
+    };
+    return undefined;
+  }
+
+  // Runs after stepConstruction each tick, so it only ever spends whatever
+  // stock construction left behind that tick — no reservation needed since
+  // the two never execute concurrently.
+  function stepUpgrades(game) {
     const { board } = game;
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        const u = t.upgrading;
+        if (!u) continue;
+        const needLumber = Math.min(u.need.lumber / u.ticksNeeded, u.need.lumber - u.delivered.lumber);
+        const needConcrete = Math.min(u.need.concrete / u.ticksNeeded, u.need.concrete - u.delivered.concrete);
+        if (game.stock.lumber >= needLumber && game.stock.concrete >= needConcrete) {
+          game.stock.lumber -= needLumber;
+          game.stock.concrete -= needConcrete;
+          u.delivered.lumber += needLumber;
+          u.delivered.concrete += needConcrete;
+          u.progress += 1;
+          if (u.progress >= u.ticksNeeded) {
+            t.upgradeLevel = (t.upgradeLevel || 0) + 1;
+            t.upgrading = null;
+          }
+        }
+        // Insufficient stock: the upgrade simply waits: the tile keeps
+        // operating at its current tier, nothing is lost or "stalled".
+      }
+    }
+  }
+
+  function simTick(game, onProgress) {
+    const { board, stock } = game;
     computePower(game);
+    recomputeCaps(game);
     stepConstruction(game, onProgress);
+    stepUpgrades(game);
 
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
@@ -231,14 +355,39 @@
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
-        if (t.type === "lumber") game.stock.lumber += LUMBER_RATE;
-        if (t.type === "quarry") game.stock.concrete += CONCRETE_RATE;
+        if (t.type === "lumber") stock.lumber = Math.min(stock.lumber + effectiveRate(LUMBER_RATE, t), stock.lumberCap);
+        if (t.type === "quarry") stock.concrete = Math.min(stock.concrete + effectiveRate(CONCRETE_RATE, t), stock.concreteCap);
+      }
+    }
+
+    // Industrial zones are the only material sink beyond upkeep: they
+    // convert raw Lumber+Concrete into Goods (capped), throttled by
+    // whichever is scarcer — available input, or remaining Goods storage.
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        if (t.status !== "built" || t.type !== "ind" || t.level <= 0) continue;
+        const wantInput = t.level * IND_INPUT_PER_LEVEL;
+        const wantOutput = t.level * IND_OUTPUT_PER_LEVEL;
+        const goodsRoom = Math.max(0, stock.goodsCap - stock.goods);
+        const ratio = Math.max(0, Math.min(
+          1,
+          stock.lumber / wantInput,
+          stock.concrete / wantInput,
+          goodsRoom / wantOutput
+        ));
+        stock.lumber -= wantInput * ratio;
+        stock.concrete -= wantInput * ratio;
+        stock.goods = Math.min(stock.goodsCap, stock.goods + wantOutput * ratio);
       }
     }
 
     recomputeTotals(game);
 
-    let income = game.population * TAX.res + game.jobs * TAX.com * 0.6;
+    const exported = Math.min(stock.goods || 0, GOODS_EXPORT_RATE);
+    stock.goods = (stock.goods || 0) - exported;
+
+    let income = game.population * TAX.res + game.jobs * TAX.com * 0.6 + exported * GOODS_PRICE;
     let upkeep = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
@@ -246,9 +395,10 @@
         if (t.status !== "built") continue;
         if (t.type === "road") upkeep += UPKEEP.road;
         else if (t.type === "res" || t.type === "com" || t.type === "ind") upkeep += UPKEEP.zone * t.level;
-        else if (t.type === "power") upkeep += UPKEEP.power;
+        else if (t.type === "power") upkeep += UPKEEP.power * upkeepMultiplier(t);
         else if (t.type === "park") upkeep += UPKEEP.park;
-        else if (t.type === "lumber" || t.type === "quarry") upkeep += UPKEEP.yard;
+        else if (t.type === "lumber" || t.type === "quarry") upkeep += UPKEEP.yard * upkeepMultiplier(t);
+        else if (t.type === "warehouse") upkeep += UPKEEP.warehouse;
       }
     }
     game.lastNet = Math.round(income - upkeep);
@@ -279,9 +429,14 @@
   return {
     GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, CAP_PER_LEVEL,
     LUMBER_RATE, CONCRETE_RATE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
+    STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_RATE, GOODS_PRICE,
+    IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
+    UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, upgradeCost,
+    effectiveRate, effectivePowerRadius, upkeepMultiplier,
     clamp, inBounds, newTile, newSite, createGame,
     isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad,
-    computePower, recomputeTotals, bfsPath,
-    advanceSite, stepConstruction, simTick, placeTile
+    computePower, recomputeCaps, recomputeTotals, bfsPath,
+    advanceSite, stepConstruction, startUpgrade, stepUpgrades,
+    simTick, placeTile
   };
 });

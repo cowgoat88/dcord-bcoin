@@ -26,11 +26,14 @@
     image-rendering: pixelated; touch-action: none; max-width: 100%; height: auto;
   }
   #board.panning { cursor: grab; }
-  #panel { width: 260px; flex-shrink: 0; background: #1b1e24; border: 1px solid #333; padding: 10px; font-size: 13px; }
+  #panel {
+    width: 260px; flex-shrink: 0; background: #1b1e24; border: 1px solid #333; padding: 10px; font-size: 13px;
+    max-height: calc(100vh - 24px); overflow-y: auto;
+  }
 
   @media (max-width: 720px) {
     #layout { flex-direction: column; align-items: stretch; width: 100%; }
-    #panel { width: 100%; }
+    #panel { width: 100%; max-height: none; overflow-y: visible; }
     button { padding: 10px 6px; font-size: 13px; touch-action: manipulation; }
   }
   .stats div { display: flex; justify-content: space-between; padding: 2px 0; }
@@ -75,6 +78,7 @@
       <div><span>Jobs (C+I)</span><span id="stJobs">0</span></div>
       <div><span>Lumber</span><span id="stLumber">0</span></div>
       <div><span>Concrete</span><span id="stConcrete">0</span></div>
+      <div><span>Goods</span><span id="stGoods">0</span></div>
     </div>
 
     <h2>Demand (R / C / I)</h2>
@@ -110,7 +114,7 @@
 
     <div id="msg"></div>
     <div id="help">
-      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Zoned tiles only grow once built, adjacent to a road, and powered. Use Pan + Zoom to work at a comfortable tile size on a small screen.
+      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash. Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry to spend money+materials on higher output/radius and lower upkeep (2 tiers). Zoned tiles only grow once built, adjacent to a road, and powered. Use Pan + Zoom to work at a comfortable tile size on a small screen.
     </div>
   </div>
 </div>
@@ -123,7 +127,7 @@
   const { GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, BUILD, BULLDOZE_COST, clamp, inBounds } = E;
   const CANVAS_W = GRID_W * TILE, CANVAS_H = GRID_H * TILE;
 
-  const TOOLS = ["road", "res", "com", "ind", "power", "park", "lumber", "quarry", "bulldoze"];
+  const TOOLS = ["road", "res", "com", "ind", "power", "park", "lumber", "quarry", "warehouse", "upgrade", "bulldoze"];
 
   let game = E.createGame();
   let selectedTool = "road";
@@ -168,7 +172,7 @@
   }
 
   function placeTile(x, y, tool) {
-    const rejection = E.placeTile(game, x, y, tool);
+    const rejection = tool === "upgrade" ? E.startUpgrade(game, x, y) : E.placeTile(game, x, y, tool);
     if (rejection) flash(rejection);
   }
 
@@ -231,9 +235,41 @@
     if (t.type === "park") return "#2e7d32";
     if (t.type === "lumber") return "#8d6e63";
     if (t.type === "quarry") return "#78909c";
+    if (t.type === "warehouse") return "#a1887f";
     const base = { res: [76,175,80], com: [66,165,245], ind: [255,183,77] }[t.type];
     const shade = 0.35 + (t.level / MAX_LEVEL) * 0.65;
     return `rgb(${Math.round(base[0]*shade)},${Math.round(base[1]*shade)},${Math.round(base[2]*shade)})`;
+  }
+
+  // Thin border + progress text for a tile being upgraded — distinct from
+  // drawSiteOverlay's full hatch, since an upgrading building stays fully
+  // operational the whole time (unlike a brand-new site).
+  function drawUpgradeOverlay(x, y, t) {
+    const px = x * TILE, py = y * TILE;
+    const u = t.upgrading;
+    ctx.strokeStyle = "rgba(129,212,250,0.9)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 1, py + 1, TILE - 3, TILE - 3);
+    if (TILE * camera.zoom >= 18) {
+      const pct = Math.round((u.progress / u.ticksNeeded) * 100);
+      ctx.fillStyle = "#e1f5fe";
+      ctx.font = `${8 / camera.zoom + 6}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(pct + "%", px + TILE / 2, py + TILE / 2 + 3);
+    }
+  }
+
+  // Small corner badge showing an upgraded tile's tier (1 or 2).
+  function drawUpgradeBadge(x, y, t) {
+    const px = x * TILE, py = y * TILE;
+    ctx.fillStyle = "rgba(129,212,250,0.95)";
+    ctx.beginPath();
+    ctx.arc(px + TILE - 5, py + 5, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0d2733";
+    ctx.font = "8px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(String(t.upgradeLevel), px + TILE - 5, py + 8);
   }
 
   function drawSiteOverlay(x, y, t) {
@@ -276,6 +312,8 @@
           ctx.strokeStyle = "rgba(224,102,90,0.6)";
           ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
         }
+        if (t.upgrading) drawUpgradeOverlay(x, y, t);
+        else if (t.upgradeLevel > 0) drawUpgradeBadge(x, y, t);
       }
     }
 
@@ -317,8 +355,9 @@
     netEl.className = game.lastNet >= 0 ? "pos" : "neg";
     document.getElementById("stPop").textContent = game.population.toLocaleString();
     document.getElementById("stJobs").textContent = game.jobs.toLocaleString();
-    document.getElementById("stLumber").textContent = Math.floor(game.stock.lumber).toLocaleString();
-    document.getElementById("stConcrete").textContent = Math.floor(game.stock.concrete).toLocaleString();
+    document.getElementById("stLumber").textContent = Math.floor(game.stock.lumber) + " / " + game.stock.lumberCap;
+    document.getElementById("stConcrete").textContent = Math.floor(game.stock.concrete) + " / " + game.stock.concreteCap;
+    document.getElementById("stGoods").textContent = Math.floor(game.stock.goods) + " / " + game.stock.goodsCap;
 
     setBar("barR", game.demand.res);
     setBar("barC", game.demand.com);
@@ -422,22 +461,30 @@
   const toolInfo = document.getElementById("toolInfo");
   function specText(id) {
     if (id === "bulldoze") return `Clears a tile. Cost $${BULLDOZE_COST}.`;
+    if (id === "upgrade") {
+      const c0 = E.upgradeCost(0), c1 = E.upgradeCost(1);
+      return `Tap a built Power Plant / Lumber Yard / Quarry to upgrade it (max ${E.UPGRADE_MAX_LEVEL} tiers). `
+        + `Tier 1: $${c0.cost} · ${c0.lumber} Lumber · ${c0.concrete} Concrete · ${c0.ticks} days. `
+        + `Tier 2: $${c1.cost} · ${c1.lumber} Lumber · ${c1.concrete} Concrete · ${c1.ticks} days.`;
+    }
     const s = BUILD[id];
     const parts = [`$${s.cost}`];
     if (s.lumber) parts.push(`${s.lumber} Lumber`);
     if (s.concrete) parts.push(`${s.concrete} Concrete`);
     parts.push(`${s.ticks} day${s.ticks === 1 ? "" : "s"} to build`);
+    if (id === "ind") parts.push("converts Lumber+Concrete into exportable Goods once built");
+    if (id === "warehouse") parts.push("raises Lumber/Concrete/Goods storage caps");
     return parts.join(" · ");
   }
 
   const toolsDiv = document.getElementById("tools");
   TOOLS.forEach((id) => {
     const spec = BUILD[id];
-    const label = spec ? spec.label : "Bulldoze";
-    const color = spec ? spec.color : "#888";
-    const cost = spec ? spec.cost : BULLDOZE_COST;
+    const label = spec ? spec.label : (id === "upgrade" ? "Upgrade" : "Bulldoze");
+    const color = spec ? spec.color : (id === "upgrade" ? "#81d4fa" : "#888");
+    const costLabel = spec ? `$${spec.cost}` : (id === "upgrade" ? "varies" : `$${BULLDOZE_COST}`);
     const btn = document.createElement("button");
-    btn.innerHTML = `<span class="swatch" style="background:${color}"></span>${label} ($${cost})`;
+    btn.innerHTML = `<span class="swatch" style="background:${color}"></span>${label} (${costLabel})`;
     btn.dataset.tool = id;
     if (id === selectedTool) btn.classList.add("active");
     btn.addEventListener("click", () => {
@@ -471,7 +518,14 @@
   document.getElementById("btnLoad").addEventListener("click", () => {
     const raw = localStorage.getItem("cityManagerSave");
     if (!raw) return flash("No save found.");
-    game = JSON.parse(raw);
+    // Merge onto a fresh game rather than replacing outright, so a save
+    // from before Goods/storage caps/upgrades existed still loads cleanly
+    // (missing fields fall back to sane defaults instead of going
+    // undefined/NaN through the new economy code).
+    const loaded = JSON.parse(raw);
+    const fresh = E.createGame();
+    game = Object.assign(fresh, loaded, { stock: Object.assign(fresh.stock, loaded.stock) });
+    E.recomputeCaps(game);
     cars = []; deliveryTrucks = [];
     updateUI();
     flash("Loaded.");
