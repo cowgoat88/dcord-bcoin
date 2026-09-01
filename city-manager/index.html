@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>City Manager</title>
 <style>
   :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { max-width: 100%; overflow-x: hidden; }
   body {
     margin: 0;
     background: #14161a;
@@ -17,9 +19,18 @@
     padding: 12px;
   }
   h1 { font-size: 16px; margin: 0 0 8px; color: #9fb4c7; font-weight: 600; }
-  #layout { display: flex; gap: 12px; align-items: flex-start; }
-  #board { background: #1b1e24; border: 1px solid #333; cursor: crosshair; image-rendering: pixelated; }
-  #panel { width: 260px; background: #1b1e24; border: 1px solid #333; padding: 10px; font-size: 13px; }
+  #layout { display: flex; gap: 12px; align-items: flex-start; max-width: 100%; }
+  #board {
+    background: #1b1e24; border: 1px solid #333; cursor: crosshair;
+    image-rendering: pixelated; touch-action: none; max-width: 100%; height: auto;
+  }
+  #panel { width: 260px; flex-shrink: 0; background: #1b1e24; border: 1px solid #333; padding: 10px; font-size: 13px; }
+
+  @media (max-width: 720px) {
+    #layout { flex-direction: column; align-items: stretch; width: 100%; }
+    #panel { width: 100%; }
+    button { padding: 10px 6px; font-size: 13px; touch-action: manipulation; }
+  }
   .stats div { display: flex; justify-content: space-between; padding: 2px 0; }
   .stats span:last-child { font-variant-numeric: tabular-nums; }
   .neg { color: #e0665a; }
@@ -353,19 +364,27 @@
   // --- input ---
   function tileFromEvent(e) {
     const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / TILE);
-    const y = Math.floor((e.clientY - rect.top) / TILE);
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = Math.floor(((e.clientX - rect.left) * scaleX) / TILE);
+    const y = Math.floor(((e.clientY - rect.top) * scaleY) / TILE);
     return [x, y];
   }
 
-  canvas.addEventListener("mousedown", (e) => {
+  // Pointer Events cover mouse, touch, and pen with one code path.
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
     painting = true;
     const [x, y] = tileFromEvent(e);
     placeTile(x, y, selectedTool);
+    hoverX = x; hoverY = y;
     lastPaintedX = x; lastPaintedY = y;
   });
-  window.addEventListener("mouseup", () => { painting = false; lastPaintedX = -1; lastPaintedY = -1; });
-  canvas.addEventListener("mousemove", (e) => {
+  function endPaint() { painting = false; lastPaintedX = -1; lastPaintedY = -1; }
+  canvas.addEventListener("pointerup", endPaint);
+  canvas.addEventListener("pointercancel", endPaint);
+  canvas.addEventListener("pointermove", (e) => {
     const [x, y] = tileFromEvent(e);
     hoverX = x; hoverY = y;
     if (painting && (x !== lastPaintedX || y !== lastPaintedY)) {
@@ -374,7 +393,7 @@
     }
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-  canvas.addEventListener("mouseleave", () => { hoverX = -1; hoverY = -1; });
+  canvas.addEventListener("pointerleave", () => { if (!painting) { hoverX = -1; hoverY = -1; } });
 
   const toolsDiv = document.getElementById("tools");
   TOOLS.forEach((tool) => {
