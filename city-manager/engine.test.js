@@ -80,8 +80,11 @@ test("construction stalls (without consuming stock) when materials run short", (
   assert.equal(t.status, "site");
   assert.equal(t.stalled, true);
   assert.equal(t.progress, 0);
-  assert.equal(game.stock.lumber, 0, "a stalled site must not partially consume stock");
-  assert.equal(game.stock.concrete, 0);
+  // Stock ends the tick at EMERGENCY_TRICKLE, not 0 — with zero built
+  // Lumber Yards/Quarries that safety-net trickle applies regardless of
+  // the stalled site; it's independent of "did construction consume it".
+  assert.equal(game.stock.lumber, E.EMERGENCY_TRICKLE, "a stalled site must not partially consume stock");
+  assert.equal(game.stock.concrete, E.EMERGENCY_TRICKLE);
 });
 
 test("Lumber Yards/Quarries never deadlock even when many builds start at once", () => {
@@ -214,8 +217,10 @@ test("a built, leveled Industrial zone converts raw materials into capped Goods"
   E.simTick(game);
   const expectedInput = 2 * E.IND_INPUT_PER_LEVEL;
   const expectedOutput = 2 * E.IND_OUTPUT_PER_LEVEL;
-  assert.equal(game.stock.lumber, 50 - expectedInput);
-  assert.equal(game.stock.concrete, 50 - expectedInput);
+  // No Lumber Yard/Quarry exists in this fixture, so EMERGENCY_TRICKLE
+  // also adds back in on top of what Industrial consumed.
+  assert.equal(game.stock.lumber, 50 - expectedInput + E.EMERGENCY_TRICKLE);
+  assert.equal(game.stock.concrete, 50 - expectedInput + E.EMERGENCY_TRICKLE);
   // With zero warehouses, export capacity is just the flat base rate.
   assert.equal(game.stock.goods, Math.max(0, expectedOutput - E.GOODS_EXPORT_BASE));
 });
@@ -429,4 +434,33 @@ test("foodNeedFor scales with a res zone's current level", () => {
   assert.equal(E.foodNeedFor(tile0), E.FOOD_PER_LEVEL * 1);
   assert.equal(E.foodNeedFor(tile2), E.FOOD_PER_LEVEL * 3);
   assert.ok(E.foodNeedFor(tile2) > E.foodNeedFor(tile0), "a denser house needs more food to grow further");
+});
+
+test("hitting zero stock with zero producers is recoverable, not a permanent dead end", () => {
+  // Regression for a real reported bug: with no built Lumber Yard/Quarry
+  // anywhere, a construction site at 0 stock used to sit at 0% forever —
+  // nothing produced more material, so not even a freshly-placed yard
+  // could ever finish building itself. EMERGENCY_TRICKLE guarantees this
+  // always eventually resolves.
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 0, concrete: 0 });
+  E.placeTile(game, 5, 5, "lumber"); // needs 5 lumber total, 4 ticks
+
+  let completed = false;
+  for (let i = 0; i < 20 && !completed; i++) {
+    E.simTick(game);
+    if (game.board[5][5].status === "built") completed = true;
+  }
+  assert.ok(completed, "a freshly-placed Lumber Yard must eventually finish even starting from absolute zero stock");
+  assert.ok(game.stock.lumber > 0, "stock must be flowing again once the yard exists");
+});
+
+test("EMERGENCY_TRICKLE stops applying once a real producer exists", () => {
+  const game = E.createGame();
+  game.board[5][5] = { type: "lumber", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  Object.assign(game.stock, { lumber: 0 });
+  E.simTick(game);
+  // A single built yard already produces more than the trickle alone
+  // would, and the trickle must not additionally stack on top of it.
+  assert.equal(game.stock.lumber, E.LUMBER_RATE);
 });

@@ -20,6 +20,15 @@
   const CAP_PER_LEVEL = 10; // population or jobs added per level
   const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day (before upgrades/clustering)
 
+  // Safety net: if every Lumber Yard/Quarry is gone (bulldozed, or the
+  // starting stock got spent before one was ever finished), the stockpile
+  // can otherwise sit at exactly 0 forever — nothing produces more, so
+  // not even a freshly-placed yard/quarry could ever finish building
+  // itself. This trickle is deliberately below what a single working yard
+  // produces (LUMBER_RATE), so it does nothing once real production
+  // exists; it only exists so hitting rock bottom is always recoverable.
+  const EMERGENCY_TRICKLE = 2;
+
   // A zoned tile doesn't need to touch a road directly — it just needs one
   // within this radius (bigger with road upgrades), like a real city block
   // set back from its frontage road.
@@ -481,22 +490,28 @@
       }
     }
 
+    let builtLumberYards = 0, builtQuarries = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
         if (t.type === "lumber") {
+          builtLumberYards++;
           const cluster = countClusterNeighbors(game, x, y, "lumber");
           const rate = effectiveRate(LUMBER_RATE, t) * (1 + CLUSTER_BONUS_PER_NEIGHBOR * cluster);
           stock.lumber = Math.min(stock.lumber + rate, stock.lumberCap);
         }
         if (t.type === "quarry") {
+          builtQuarries++;
           const cluster = countClusterNeighbors(game, x, y, "quarry");
           const rate = effectiveRate(CONCRETE_RATE, t) * (1 + CLUSTER_BONUS_PER_NEIGHBOR * cluster);
           stock.concrete = Math.min(stock.concrete + rate, stock.concreteCap);
         }
       }
     }
+    // See EMERGENCY_TRICKLE: guarantees recovery even from zero producers.
+    if (builtLumberYards === 0) stock.lumber = Math.min(stock.lumber + EMERGENCY_TRICKLE, stock.lumberCap);
+    if (builtQuarries === 0) stock.concrete = Math.min(stock.concrete + EMERGENCY_TRICKLE, stock.concreteCap);
 
     // Industrial zones are the only material sink beyond upkeep: they
     // convert raw Lumber+Concrete into Goods (capped), throttled by
@@ -570,7 +585,7 @@
     GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, CAP_PER_LEVEL,
     ROAD_BASE_RADIUS, ROAD_UPGRADE_STEP, CLUSTER_BONUS_PER_NEIGHBOR,
     FOOD_RADIUS, FOOD_RATE, FOOD_PER_LEVEL,
-    LUMBER_RATE, CONCRETE_RATE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
+    LUMBER_RATE, CONCRETE_RATE, EMERGENCY_TRICKLE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
     STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_BASE, GOODS_EXPORT_PER_WAREHOUSE, GOODS_PRICE,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
     UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, UPGRADE_REJECTION_MESSAGE, upgradeCost,

@@ -22,6 +22,14 @@ exercises directly.
 - Lumber Yards and Quarries produce materials per day once built; cosmetic
   delivery trucks path over the built road network from yard to active
   site while it's receiving materials.
+- **Zero-producer safety net**: if every Lumber Yard (or every Quarry) is
+  gone — bulldozed, or the starting stock got spent before one finished —
+  a small trickle of that material (`EMERGENCY_TRICKLE`, below what even
+  one working yard produces) accrues regardless. Without it, hitting
+  exactly 0 stock with no surviving producer was an unrecoverable dead
+  end: nothing produced more, so not even a freshly-placed yard could
+  ever finish building itself. The trickle does nothing once a real
+  producer exists.
 - **Lumber and Concrete are capped**, not unlimited — production stops
   adding to a stockpile that's already full. A **Warehouse** raises every
   cap (Lumber, Concrete, and Goods) once built.
@@ -95,20 +103,22 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 31 cases covering placement rules, construction staging,
+needed, Node 18+. 33 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
 five upgradeable types, rejection cases, cost deduction, effects), the
 road service radius (base + upgraded), the clustering output bonus, the
-tax-vs-export income balance, and the food mechanic (distance falloff,
-res-only gating, growth unblocked once fed). The material-reservation and
-RCI-bootstrap tests are direct regressions for bugs found in play: a
+tax-vs-export income balance, the food mechanic (distance falloff,
+res-only gating, growth unblocked once fed), and the zero-producer
+safety net. These are direct regressions for bugs found in play: a
 shared-stockpile deadlock where simultaneous construction could
-permanently starve the only tiles that produce more material, and a
+permanently starve the only tiles that produce more material; a
 demand-formula regression that left `population`/`jobs` stuck at zero
-forever. Run this after any change to `engine.js` before touching
-`index.html`'s rendering/input code on top of it.
+forever; and hitting exactly 0 stock with no surviving Lumber Yard/Quarry
+being an unrecoverable dead end. Run this after any change to
+`engine.js` before touching `index.html`'s rendering/input code on top
+of it.
 
 ## Known simplifications
 
