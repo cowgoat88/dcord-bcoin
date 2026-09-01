@@ -1,8 +1,14 @@
 # City Manager
 
-Single-file, dependency-free construction-management prototype. Open
-`index.html` in any browser — no build step, no server required. Runs on
-desktop and mobile (touch input, pinch-free zoom/pan controls).
+Dependency-free construction-management prototype. Open `index.html` in
+any browser — no build step, no server required. Runs on desktop and
+mobile (touch input, pinch-free zoom/pan controls).
+
+`engine.js` holds the core simulation (grid, construction staging,
+material stockpile, power/road adjacency, RCI demand/economy) with no
+DOM or canvas dependency, loaded by `index.html` as a plain `<script>`
+before the page's own rendering/input code. This is what `engine.test.js`
+exercises directly.
 
 ## Mechanics
 
@@ -34,6 +40,24 @@ desktop and mobile (touch input, pinch-free zoom/pan controls).
   view instead of painting, which is the fix for tiles being too small to
   tap accurately on a phone. Mobile starts at 3x zoom automatically.
 - Speed buttons (1x/2x/3x) and Pause control simulation rate.
+
+## Tests
+
+```
+node --test city-manager/engine.test.js
+```
+
+Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
+needed, Node 18+. Covers placement rules (occupied-tile rejection, cost
+deduction), construction staging (multi-tick completion, stalling on
+short materials), the Lumber Yard/Quarry material-reservation guarantee,
+power radius, road/power/built-status gating of zone growth, and the RCI
+demand bootstrap. The last two are direct regression tests for bugs found
+in play: a shared-stockpile deadlock where simultaneous construction
+could permanently starve the only tiles that produce more material, and
+a demand-formula regression that left `population`/`jobs` stuck at zero
+forever. Run this after any change to `engine.js` before touching
+`index.html`'s rendering/input code on top of it.
 
 ## Known simplifications
 
