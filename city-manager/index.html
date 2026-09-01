@@ -24,6 +24,7 @@
     background: #1b1e24; border: 1px solid #333; cursor: crosshair;
     image-rendering: pixelated; touch-action: none; max-width: 100%; height: auto;
   }
+  #board.panning { cursor: grab; }
   #panel { width: 260px; flex-shrink: 0; background: #1b1e24; border: 1px solid #333; padding: 10px; font-size: 13px; }
 
   @media (max-width: 720px) {
@@ -48,16 +49,19 @@
   button.active { background: #3a5b73; border-color: #5b8aa8; color: #fff; }
   button:hover { background: #31363e; }
   .swatch { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: middle; }
+  #toolInfo { font-size: 11px; color: #9fb4c7; margin-top: 6px; min-height: 14px; }
   #controls { display: flex; gap: 4px; margin-top: 6px; }
   #controls button { flex: 1; text-align: center; }
-  #speedRow { display: flex; gap: 4px; margin-top: 4px; }
-  #speedRow button { flex: 1; text-align: center; }
+  #speedRow, #zoomRow { display: flex; gap: 4px; margin-top: 4px; }
+  #speedRow button, #zoomRow button { flex: 1; text-align: center; }
+  #viewRow { display: flex; gap: 4px; margin-top: 4px; }
+  #viewRow button { flex: 1; text-align: center; }
   #msg { font-size: 11px; color: #7d8896; margin-top: 8px; min-height: 28px; }
   #help { font-size: 11px; color: #656e78; margin-top: 10px; line-height: 1.5; }
 </style>
 </head>
 <body>
-<h1>CITY MANAGER — grid-based RTS city sim prototype</h1>
+<h1>CITY MANAGER — construction management prototype</h1>
 <div id="layout">
   <canvas id="board" width="800" height="500"></canvas>
   <div id="panel">
@@ -68,6 +72,8 @@
       <div><span>Net / day</span><span id="stNet">$0</span></div>
       <div><span>Population</span><span id="stPop">0</span></div>
       <div><span>Jobs (C+I)</span><span id="stJobs">0</span></div>
+      <div><span>Lumber</span><span id="stLumber">0</span></div>
+      <div><span>Concrete</span><span id="stConcrete">0</span></div>
     </div>
 
     <h2>Demand (R / C / I)</h2>
@@ -75,8 +81,20 @@
     <div class="bar-row"><span class="label">C</span><div class="bar-track"><div class="bar-fill" id="barC" style="background:#42a5f5"></div></div></div>
     <div class="bar-row"><span class="label">I</span><div class="bar-track"><div class="bar-fill" id="barI" style="background:#ffb74d"></div></div></div>
 
+    <h2>View</h2>
+    <div id="viewRow">
+      <button id="btnPanMode">Pan: Off</button>
+    </div>
+    <div id="zoomRow">
+      <button data-zoom="1">1x</button>
+      <button data-zoom="2">2x</button>
+      <button data-zoom="3">3x</button>
+      <button data-zoom="4">4x</button>
+    </div>
+
     <h2>Tools</h2>
     <div class="tools" id="tools"></div>
+    <div id="toolInfo"></div>
 
     <div id="controls">
       <button id="btnPause">Pause</button>
@@ -91,7 +109,7 @@
 
     <div id="msg"></div>
     <div id="help">
-      Click / drag to paint a tool. Power plant powers tiles within its radius (dashed circle on hover). Zoned tiles only grow if adjacent to a road and powered, and if demand for that zone is positive.
+      Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Zoned tiles only grow once built, adjacent to a road, and powered. Use Pan + Zoom to work at a comfortable tile size on a small screen.
     </div>
   </div>
 </div>
@@ -101,26 +119,31 @@
   "use strict";
 
   const GRID_W = 40, GRID_H = 25, TILE = 20;
+  const CANVAS_W = GRID_W * TILE, CANVAS_H = GRID_H * TILE;
   const POWER_RADIUS = 8;
   const MAX_LEVEL = 3;
   const CAP_PER_LEVEL = 10; // population or jobs added per level
+  const LUMBER_RATE = 3, CONCRETE_RATE = 3; // per built yard, per day
 
-  const COSTS = { road: 10, res: 20, com: 20, ind: 20, park: 30, power: 500, bulldoze: 5 };
-  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1 };
+  const BUILD = {
+    road:    { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
+    res:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#4caf50", label: "Residential" },
+    com:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#42a5f5", label: "Commercial" },
+    ind:     { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#ffb74d", label: "Industrial" },
+    power:   { cost: 500, lumber: 20, concrete: 30, ticks: 8, color: "#e0665a", label: "Power Plant" },
+    park:    { cost: 20,  lumber: 3,  concrete: 0,  ticks: 2, color: "#2e7d32", label: "Park" },
+    lumber:  { cost: 100, lumber: 5,  concrete: 0,  ticks: 4, color: "#8d6e63", label: "Lumber Yard" },
+    quarry:  { cost: 100, lumber: 5,  concrete: 5,  ticks: 4, color: "#78909c", label: "Quarry" }
+  };
+  const BULLDOZE_COST = 5;
+  const UPKEEP = { road: 0.5, zone: 1, power: 20, park: 1, yard: 0.5 };
   const TAX = { res: 0.5, com: 1, ind: 0.8 };
 
-  const TOOLS = [
-    { id: "road", label: "Road", color: "#555" },
-    { id: "res", label: "Residential", color: "#4caf50" },
-    { id: "com", label: "Commercial", color: "#42a5f5" },
-    { id: "ind", label: "Industrial", color: "#ffb74d" },
-    { id: "power", label: "Power Plant", color: "#e0665a" },
-    { id: "park", label: "Park", color: "#2e7d32" },
-    { id: "bulldoze", label: "Bulldoze", color: "#888" }
-  ];
+  const TOOLS = ["road", "res", "com", "ind", "power", "park", "lumber", "quarry", "bulldoze"];
 
   let board = [];
   let money = 10000;
+  let stock = { lumber: 30, concrete: 15 };
   let day = 1;
   let population = 0;
   let jobs = 0;
@@ -133,9 +156,30 @@
   let lastPaintedX = -1, lastPaintedY = -1;
   let hoverX = -1, hoverY = -1;
   let cars = [];
+  let deliveryTrucks = [];
+
+  let camera = { x: 0, y: 0, zoom: 1 };
+  let panMode = false;
+  let panning = false;
+  let panStart = null;
 
   function newTile() {
-    return { type: "empty", level: 0, powered: false };
+    return { type: "empty" };
+  }
+
+  function newSite(tool) {
+    const spec = BUILD[tool];
+    return {
+      type: tool,
+      status: "site",
+      level: 0,
+      powered: false,
+      progress: 0,
+      ticksNeeded: spec.ticks,
+      need: { lumber: spec.lumber, concrete: spec.concrete },
+      delivered: { lumber: 0, concrete: 0 },
+      stalled: false
+    };
   }
 
   function initGrid() {
@@ -148,14 +192,27 @@
   }
 
   function inBounds(x, y) { return x >= 0 && y >= 0 && x < GRID_W && y < GRID_H; }
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  function isBuiltRoad(x, y) {
+    return inBounds(x, y) && board[y][x].type === "road" && board[y][x].status === "built";
+  }
 
   function hasAdjacentRoad(x, y) {
     const deltas = [[1,0],[-1,0],[0,1],[0,-1]];
     for (const [dx, dy] of deltas) {
-      const nx = x + dx, ny = y + dy;
-      if (inBounds(nx, ny) && board[ny][nx].type === "road") return true;
+      if (isBuiltRoad(x + dx, y + dy)) return true;
     }
     return false;
+  }
+
+  function adjacentBuiltRoad(x, y) {
+    const deltas = [[1,0],[-1,0],[0,1],[0,-1]];
+    for (const [dx, dy] of deltas) {
+      const nx = x + dx, ny = y + dy;
+      if (isBuiltRoad(nx, ny)) return [nx, ny];
+    }
+    return null;
   }
 
   function computePower() {
@@ -164,7 +221,7 @@
 
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
-        if (board[y][x].type !== "power") continue;
+        if (board[y][x].type !== "power" || board[y][x].status !== "built") continue;
         for (let dy = -POWER_RADIUS; dy <= POWER_RADIUS; dy++) {
           for (let dx = -POWER_RADIUS; dx <= POWER_RADIUS; dx++) {
             const nx = x + dx, ny = y + dy;
@@ -182,6 +239,7 @@
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
+        if (t.status !== "built") continue;
         if (t.type === "res") population += t.level * CAP_PER_LEVEL;
         if (t.type === "com") comJobs += t.level * CAP_PER_LEVEL;
         if (t.type === "ind") indJobs += t.level * CAP_PER_LEVEL;
@@ -189,22 +247,82 @@
     }
     jobs = comJobs + indJobs;
 
-    const totalJobs = jobs || 1;
-    const totalPop = population || 1;
-    demand.res = clamp(((totalJobs - population) / 10) * 5, -100, 100);
+    demand.res = clamp(((jobs - population) / 10) * 5, -100, 100);
     demand.ind = clamp(((population - indJobs) / 10) * 5, -100, 100);
     demand.com = clamp(((population - comJobs * 2) / 10) * 5, -100, 100);
   }
 
-  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function bfsPath(start, end) {
+    const key = (x, y) => y * GRID_W + x;
+    const visited = new Set([key(start[0], start[1])]);
+    const queue = [[start, [start]]];
+    let head = 0;
+    while (head < queue.length) {
+      const [[cx, cy], path] = queue[head++];
+      if (cx === end[0] && cy === end[1]) return path;
+      const deltas = [[1,0],[-1,0],[0,1],[0,-1]];
+      for (const [dx, dy] of deltas) {
+        const nx = cx + dx, ny = cy + dy;
+        if (!isBuiltRoad(nx, ny) || visited.has(key(nx, ny))) continue;
+        visited.add(key(nx, ny));
+        queue.push([[nx, ny], path.concat([[nx, ny]])]);
+      }
+    }
+    return null;
+  }
+
+  function maybeSpawnDeliveryTruck(siteX, siteY) {
+    if (deliveryTrucks.length >= 10) return;
+    const siteRoad = adjacentBuiltRoad(siteX, siteY);
+    if (!siteRoad) return;
+    const yards = [];
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        if ((t.type === "lumber" || t.type === "quarry") && t.status === "built") {
+          const r = adjacentBuiltRoad(x, y);
+          if (r) yards.push(r);
+        }
+      }
+    }
+    if (!yards.length) return;
+    const yardRoad = yards[Math.floor(Math.random() * yards.length)];
+    const path = bfsPath(yardRoad, siteRoad);
+    if (!path || path.length < 2) return;
+    deliveryTrucks.push({ path, idx: 0, t: 0 });
+  }
+
+  function stepConstruction() {
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        if (t.status !== "site") continue;
+        const needLumber = Math.min(t.need.lumber / t.ticksNeeded, t.need.lumber - t.delivered.lumber);
+        const needConcrete = Math.min(t.need.concrete / t.ticksNeeded, t.need.concrete - t.delivered.concrete);
+        if (stock.lumber >= needLumber && stock.concrete >= needConcrete) {
+          stock.lumber -= needLumber;
+          stock.concrete -= needConcrete;
+          t.delivered.lumber += needLumber;
+          t.delivered.concrete += needConcrete;
+          t.progress += 1;
+          t.stalled = false;
+          maybeSpawnDeliveryTruck(x, y);
+          if (t.progress >= t.ticksNeeded) t.status = "built";
+        } else {
+          t.stalled = true;
+        }
+      }
+    }
+  }
 
   function simTick() {
     computePower();
+    stepConstruction();
 
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
-        if (t.type !== "res" && t.type !== "com" && t.type !== "ind") continue;
+        if (t.status !== "built" || (t.type !== "res" && t.type !== "com" && t.type !== "ind")) continue;
         const eligible = t.powered && hasAdjacentRoad(x, y);
         const d = demand[t.type];
         if (eligible && d > 0 && t.level < MAX_LEVEL) {
@@ -215,6 +333,15 @@
       }
     }
 
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const t = board[y][x];
+        if (t.status !== "built") continue;
+        if (t.type === "lumber") stock.lumber += LUMBER_RATE;
+        if (t.type === "quarry") stock.concrete += CONCRETE_RATE;
+      }
+    }
+
     recomputeTotals();
 
     let income = population * TAX.res + jobs * TAX.com * 0.6;
@@ -222,10 +349,12 @@
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
+        if (t.status !== "built") continue;
         if (t.type === "road") upkeep += UPKEEP.road;
         else if (t.type === "res" || t.type === "com" || t.type === "ind") upkeep += UPKEEP.zone * t.level;
         else if (t.type === "power") upkeep += UPKEEP.power;
         else if (t.type === "park") upkeep += UPKEEP.park;
+        else if (t.type === "lumber" || t.type === "quarry") upkeep += UPKEEP.yard;
       }
     }
     lastNet = Math.round(income - upkeep);
@@ -241,18 +370,17 @@
     const t = board[y][x];
     if (tool === "bulldoze") {
       if (t.type === "empty") return;
-      if (money < COSTS.bulldoze) return flash("Not enough money.");
-      money -= COSTS.bulldoze;
+      if (money < BULLDOZE_COST) return flash("Not enough money.");
+      money -= BULLDOZE_COST;
       board[y][x] = newTile();
       recomputeTotals();
       return;
     }
-    if (t.type === tool) return; // no-op, already this
-    const cost = COSTS[tool];
-    if (money < cost) return flash("Not enough money.");
-    money -= cost;
-    board[y][x] = { type: tool, level: tool === "road" || tool === "power" || tool === "park" ? 1 : 0, powered: false };
-    recomputeTotals();
+    if (t.type !== "empty") return flash("Bulldoze that tile first.");
+    const spec = BUILD[tool];
+    if (money < spec.cost) return flash("Not enough money.");
+    money -= spec.cost;
+    board[y][x] = newSite(tool);
   }
 
   function flash(text) {
@@ -265,7 +393,7 @@
     const roadTiles = [];
     for (let y = 0; y < GRID_H; y++)
       for (let x = 0; x < GRID_W; x++)
-        if (board[y][x].type === "road") roadTiles.push([x, y]);
+        if (isBuiltRoad(x, y)) roadTiles.push([x, y]);
 
     while (cars.length < Math.min(12, Math.floor(roadTiles.length / 4)) && roadTiles.length) {
       const [x, y] = roadTiles[Math.floor(Math.random() * roadTiles.length)];
@@ -279,7 +407,7 @@
         const deltas = [[1,0],[-1,0],[0,1],[0,-1]];
         const options = deltas
           .map(([dx, dy]) => [c.x + dx, c.y + dy])
-          .filter(([nx, ny]) => inBounds(nx, ny) && board[ny][nx].type === "road");
+          .filter(([nx, ny]) => isBuiltRoad(nx, ny));
         if (options.length) {
           const [nx, ny] = options[Math.floor(Math.random() * options.length)];
           c.tx = nx; c.ty = ny; c.t = 0;
@@ -292,6 +420,17 @@
     for (const c of cars) c.t = Math.min(1, c.t + dt * 1.5);
   }
 
+  function stepDeliveryTrucks(dt) {
+    for (const tr of deliveryTrucks) {
+      tr.t += dt * 2.5;
+      while (tr.t >= 1 && tr.idx < tr.path.length - 1) {
+        tr.idx += 1;
+        tr.t -= 1;
+      }
+    }
+    deliveryTrucks = deliveryTrucks.filter((tr) => !(tr.idx >= tr.path.length - 1 && tr.t >= 1));
+  }
+
   // --- rendering ---
   const canvas = document.getElementById("board");
   const ctx = canvas.getContext("2d");
@@ -301,19 +440,50 @@
     if (t.type === "road") return "#4a4f57";
     if (t.type === "power") return "#e0665a";
     if (t.type === "park") return "#2e7d32";
+    if (t.type === "lumber") return "#8d6e63";
+    if (t.type === "quarry") return "#78909c";
     const base = { res: [76,175,80], com: [66,165,245], ind: [255,183,77] }[t.type];
     const shade = 0.35 + (t.level / MAX_LEVEL) * 0.65;
     return `rgb(${Math.round(base[0]*shade)},${Math.round(base[1]*shade)},${Math.round(base[2]*shade)})`;
   }
 
+  function drawSiteOverlay(x, y, t) {
+    const px = x * TILE, py = y * TILE;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(px, py, TILE - 1, TILE - 1);
+    ctx.clip();
+    ctx.strokeStyle = t.stalled ? "rgba(224,102,90,0.9)" : "rgba(255,213,79,0.8)";
+    ctx.lineWidth = 2;
+    for (let i = -TILE; i < TILE * 2; i += 6) {
+      ctx.beginPath();
+      ctx.moveTo(px + i, py + TILE);
+      ctx.lineTo(px + i + TILE, py);
+      ctx.stroke();
+    }
+    ctx.restore();
+    if (TILE * camera.zoom >= 18) {
+      const pct = Math.round((t.progress / t.ticksNeeded) * 100);
+      ctx.fillStyle = "#fff";
+      ctx.font = `${8 / camera.zoom + 6}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(pct + "%", px + TILE / 2, py + TILE / 2 + 3);
+    }
+  }
+
   function render() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.scale(camera.zoom, camera.zoom);
+    ctx.translate(-camera.x, -camera.y);
+
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         ctx.fillStyle = colorFor(t);
         ctx.fillRect(x * TILE, y * TILE, TILE - 1, TILE - 1);
-        if ((t.type === "res" || t.type === "com" || t.type === "ind") && !t.powered) {
+        if (t.status === "site") drawSiteOverlay(x, y, t);
+        if (t.status === "built" && (t.type === "res" || t.type === "com" || t.type === "ind") && !t.powered) {
           ctx.strokeStyle = "rgba(224,102,90,0.6)";
           ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
         }
@@ -329,6 +499,15 @@
       ctx.fill();
     }
 
+    for (const tr of deliveryTrucks) {
+      const a = tr.path[tr.idx];
+      const b = tr.path[Math.min(tr.idx + 1, tr.path.length - 1)];
+      const px = (a[0] + (b[0] - a[0]) * tr.t) * TILE + TILE / 2;
+      const py = (a[1] + (b[1] - a[1]) * tr.t) * TILE + TILE / 2;
+      ctx.fillStyle = "#ffa000";
+      ctx.fillRect(px - 3, py - 3, 6, 6);
+    }
+
     if (selectedTool === "power" && inBounds(hoverX, hoverY)) {
       ctx.strokeStyle = "rgba(255,255,255,0.4)";
       ctx.setLineDash([4, 3]);
@@ -337,6 +516,8 @@
       ctx.stroke();
       ctx.setLineDash([]);
     }
+
+    ctx.restore();
   }
 
   function updateUI() {
@@ -347,6 +528,8 @@
     netEl.className = lastNet >= 0 ? "pos" : "neg";
     document.getElementById("stPop").textContent = population.toLocaleString();
     document.getElementById("stJobs").textContent = jobs.toLocaleString();
+    document.getElementById("stLumber").textContent = Math.floor(stock.lumber).toLocaleString();
+    document.getElementById("stConcrete").textContent = Math.floor(stock.concrete).toLocaleString();
 
     setBar("barR", demand.res);
     setBar("barC", demand.com);
@@ -361,30 +544,71 @@
     else { el.style.left = (50 - pct) + "%"; }
   }
 
+  // --- camera ---
+  function clampCamera() {
+    const viewW = CANVAS_W / camera.zoom;
+    const viewH = CANVAS_H / camera.zoom;
+    camera.x = clamp(camera.x, 0, Math.max(0, CANVAS_W - viewW));
+    camera.y = clamp(camera.y, 0, Math.max(0, CANVAS_H - viewH));
+  }
+
+  function setZoom(z) {
+    const viewWOld = CANVAS_W / camera.zoom;
+    const viewHOld = CANVAS_H / camera.zoom;
+    const cx = camera.x + viewWOld / 2;
+    const cy = camera.y + viewHOld / 2;
+    camera.zoom = z;
+    camera.x = cx - (CANVAS_W / camera.zoom) / 2;
+    camera.y = cy - (CANVAS_H / camera.zoom) / 2;
+    clampCamera();
+    document.querySelectorAll("#zoomRow button").forEach((b) => {
+      b.classList.toggle("active", parseInt(b.dataset.zoom, 10) === z);
+    });
+  }
+
   // --- input ---
   function tileFromEvent(e) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const x = Math.floor(((e.clientX - rect.left) * scaleX) / TILE);
-    const y = Math.floor(((e.clientY - rect.top) * scaleY) / TILE);
-    return [x, y];
+    const worldX = ((e.clientX - rect.left) * scaleX) / camera.zoom + camera.x;
+    const worldY = ((e.clientY - rect.top) * scaleY) / camera.zoom + camera.y;
+    return [Math.floor(worldX / TILE), Math.floor(worldY / TILE)];
   }
 
   // Pointer Events cover mouse, touch, and pen with one code path.
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
+    if (panMode) {
+      panning = true;
+      panStart = { clientX: e.clientX, clientY: e.clientY, camX: camera.x, camY: camera.y };
+      return;
+    }
     painting = true;
     const [x, y] = tileFromEvent(e);
     placeTile(x, y, selectedTool);
     hoverX = x; hoverY = y;
     lastPaintedX = x; lastPaintedY = y;
   });
-  function endPaint() { painting = false; lastPaintedX = -1; lastPaintedY = -1; }
+  function endPaint() {
+    painting = false; lastPaintedX = -1; lastPaintedY = -1;
+    panning = false; panStart = null;
+  }
   canvas.addEventListener("pointerup", endPaint);
   canvas.addEventListener("pointercancel", endPaint);
   canvas.addEventListener("pointermove", (e) => {
+    if (panning && panStart) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const dx = (e.clientX - panStart.clientX) * scaleX / camera.zoom;
+      const dy = (e.clientY - panStart.clientY) * scaleY / camera.zoom;
+      camera.x = panStart.camX - dx;
+      camera.y = panStart.camY - dy;
+      clampCamera();
+      return;
+    }
     const [x, y] = tileFromEvent(e);
     hoverX = x; hoverY = y;
     if (painting && (x !== lastPaintedX || y !== lastPaintedY)) {
@@ -393,21 +617,49 @@
     }
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-  canvas.addEventListener("pointerleave", () => { if (!painting) { hoverX = -1; hoverY = -1; } });
+  canvas.addEventListener("pointerleave", () => { if (!painting && !panning) { hoverX = -1; hoverY = -1; } });
+
+  document.getElementById("btnPanMode").addEventListener("click", (e) => {
+    panMode = !panMode;
+    e.target.textContent = panMode ? "Pan: On" : "Pan: Off";
+    e.target.classList.toggle("active", panMode);
+    canvas.classList.toggle("panning", panMode);
+  });
+
+  document.querySelectorAll("#zoomRow button").forEach((btn) => {
+    btn.addEventListener("click", () => setZoom(parseInt(btn.dataset.zoom, 10)));
+  });
+
+  const toolInfo = document.getElementById("toolInfo");
+  function specText(id) {
+    if (id === "bulldoze") return `Clears a tile. Cost $${BULLDOZE_COST}.`;
+    const s = BUILD[id];
+    const parts = [`$${s.cost}`];
+    if (s.lumber) parts.push(`${s.lumber} Lumber`);
+    if (s.concrete) parts.push(`${s.concrete} Concrete`);
+    parts.push(`${s.ticks} day${s.ticks === 1 ? "" : "s"} to build`);
+    return parts.join(" · ");
+  }
 
   const toolsDiv = document.getElementById("tools");
-  TOOLS.forEach((tool) => {
+  TOOLS.forEach((id) => {
+    const spec = BUILD[id];
+    const label = spec ? spec.label : "Bulldoze";
+    const color = spec ? spec.color : "#888";
+    const cost = spec ? spec.cost : BULLDOZE_COST;
     const btn = document.createElement("button");
-    btn.innerHTML = `<span class="swatch" style="background:${tool.color}"></span>${tool.label} ($${COSTS[tool.id]})`;
-    btn.dataset.tool = tool.id;
-    if (tool.id === selectedTool) btn.classList.add("active");
+    btn.innerHTML = `<span class="swatch" style="background:${color}"></span>${label} ($${cost})`;
+    btn.dataset.tool = id;
+    if (id === selectedTool) btn.classList.add("active");
     btn.addEventListener("click", () => {
-      selectedTool = tool.id;
+      selectedTool = id;
       [...toolsDiv.children].forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
+      toolInfo.textContent = specText(id);
     });
     toolsDiv.appendChild(btn);
   });
+  toolInfo.textContent = specText(selectedTool);
 
   document.getElementById("btnPause").addEventListener("click", (e) => {
     paused = !paused;
@@ -424,7 +676,7 @@
   document.querySelector('#speedRow button[data-speed="1"]').classList.add("active");
 
   document.getElementById("btnSave").addEventListener("click", () => {
-    const save = { board, money, day, population, jobs, demand };
+    const save = { board, money, stock, day, population, jobs, demand };
     localStorage.setItem("cityManagerSave", JSON.stringify(save));
     flash("Saved.");
   });
@@ -432,9 +684,9 @@
     const raw = localStorage.getItem("cityManagerSave");
     if (!raw) return flash("No save found.");
     const save = JSON.parse(raw);
-    board = save.board; money = save.money; day = save.day;
-    population = save.population; jobs = save.jobs; demand = save.demand;
-    cars = [];
+    board = save.board; money = save.money; stock = save.stock || { lumber: 0, concrete: 0 };
+    day = save.day; population = save.population; jobs = save.jobs; demand = save.demand;
+    cars = []; deliveryTrucks = [];
     updateUI();
     flash("Loaded.");
   });
@@ -454,6 +706,7 @@
         simTick();
       }
       stepCars(dt * speed);
+      stepDeliveryTrucks(dt * speed);
     }
 
     render();
@@ -462,6 +715,13 @@
 
   initGrid();
   computePower();
+  camera.zoom = window.innerWidth < 720 ? 3 : 1;
+  camera.x = (CANVAS_W - CANVAS_W / camera.zoom) / 2;
+  camera.y = (CANVAS_H - CANVAS_H / camera.zoom) / 2;
+  clampCamera();
+  document.querySelectorAll("#zoomRow button").forEach((b) => {
+    b.classList.toggle("active", parseInt(b.dataset.zoom, 10) === camera.zoom);
+  });
   updateUI();
   requestAnimationFrame(frame);
 })();
