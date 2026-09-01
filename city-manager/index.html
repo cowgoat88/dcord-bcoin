@@ -247,7 +247,12 @@
     }
     jobs = comJobs + indJobs;
 
-    demand.res = clamp(((jobs - population) / 10) * 5, -100, 100);
+    // Treat zero jobs as one phantom job so res demand starts slightly
+    // positive instead of exactly 0 — otherwise res never grows (needs
+    // d>0), so population never grows, so com/ind demand never turns
+    // positive either: a permanent zero-zero deadlock.
+    const jobsForRes = jobs || 1;
+    demand.res = clamp(((jobsForRes - population) / 10) * 5, -100, 100);
     demand.ind = clamp(((population - indJobs) / 10) * 5, -100, 100);
     demand.com = clamp(((population - comJobs * 2) / 10) * 5, -100, 100);
   }
@@ -292,27 +297,52 @@
     deliveryTrucks.push({ path, idx: 0, t: 0 });
   }
 
+  function advanceSite(x, y, t, reserveLumber, reserveConcrete) {
+    const needLumber = Math.min(t.need.lumber / t.ticksNeeded, t.need.lumber - t.delivered.lumber);
+    const needConcrete = Math.min(t.need.concrete / t.ticksNeeded, t.need.concrete - t.delivered.concrete);
+    const availLumber = stock.lumber - reserveLumber;
+    const availConcrete = stock.concrete - reserveConcrete;
+    if (availLumber >= needLumber && availConcrete >= needConcrete) {
+      stock.lumber -= needLumber;
+      stock.concrete -= needConcrete;
+      t.delivered.lumber += needLumber;
+      t.delivered.concrete += needConcrete;
+      t.progress += 1;
+      t.stalled = false;
+      maybeSpawnDeliveryTruck(x, y);
+      if (t.progress >= t.ticksNeeded) t.status = "built";
+    } else {
+      t.stalled = true;
+    }
+  }
+
   function stepConstruction() {
+    // Lumber Yards/Quarries are the only source of new stock. Giving them
+    // first pick of the pool each tick isn't enough on its own: other sites
+    // draining the pool tick after tick can still leave too little for a
+    // yard's *later* ticks even though it went first every time so far. So
+    // everything else is also barred from touching whatever the still-in-
+    // progress yards/quarries need for the rest of their build — otherwise
+    // a big enough batch of simultaneous construction permanently freezes
+    // the economy at zero production (nothing left to ever finish a yard).
+    const priority = [];
+    const rest = [];
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "site") continue;
-        const needLumber = Math.min(t.need.lumber / t.ticksNeeded, t.need.lumber - t.delivered.lumber);
-        const needConcrete = Math.min(t.need.concrete / t.ticksNeeded, t.need.concrete - t.delivered.concrete);
-        if (stock.lumber >= needLumber && stock.concrete >= needConcrete) {
-          stock.lumber -= needLumber;
-          stock.concrete -= needConcrete;
-          t.delivered.lumber += needLumber;
-          t.delivered.concrete += needConcrete;
-          t.progress += 1;
-          t.stalled = false;
-          maybeSpawnDeliveryTruck(x, y);
-          if (t.progress >= t.ticksNeeded) t.status = "built";
-        } else {
-          t.stalled = true;
-        }
+        (t.type === "lumber" || t.type === "quarry" ? priority : rest).push([x, y, t]);
       }
     }
+    for (const [x, y, t] of priority) advanceSite(x, y, t, 0, 0);
+
+    let reserveLumber = 0, reserveConcrete = 0;
+    for (const [, , t] of priority) {
+      if (t.status !== "site") continue;
+      reserveLumber += t.need.lumber - t.delivered.lumber;
+      reserveConcrete += t.need.concrete - t.delivered.concrete;
+    }
+    for (const [x, y, t] of rest) advanceSite(x, y, t, reserveLumber, reserveConcrete);
   }
 
   function simTick() {
