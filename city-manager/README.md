@@ -110,6 +110,18 @@ exercises directly.
   careless build that sprawls across the map goes **bankrupt around day
   70**. Six times the land yields roughly the same profit as three, so
   there is a real optimum to find rather than an "expand forever" gradient.
+- **RCI demand carries `GROWTH_HEADROOM` of slack, and it is load-bearing.**
+  Without it, "Residential grows while jobs > pop" and "Industrial grows
+  while pop > indJobs" are exact logical complements: whenever one side
+  may grow the other may not, so they ratchet up in lockstep, land exactly
+  on `pop == jobs`, and both demands hit zero — freezing the city
+  permanently at whatever size early random growth rolls happened to
+  reach. Measured: identical layouts finished anywhere between population
+  80 and 1010, and 27% froze below 400, which made the outcome mostly luck
+  rather than layout. With slack on both sides the city ratchets upward
+  until something real stops it — farm coverage, power/road service, land,
+  or the cost curves. Same bug family as the `jobs || 1` bootstrap, which
+  had only patched the `pop == 0` case.
 - **Two lose conditions end the game**: **Bankruptcy** — the treasury stays
   negative for `BANKRUPTCY_DEBT_DAYS` (30) straight days in a row; a single
   bad day is forgiven, the streak resets the moment money is non-negative
@@ -152,7 +164,7 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 48 cases covering placement rules, construction staging,
+needed, Node 18+. 50 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
@@ -165,7 +177,8 @@ conditions (Bankruptcy's debt-streak timing/reset, City Collapse via
 sustained neglect, and the game freezing once over), and the three
 economic pressures (the goods price curve and its floor, that total export
 revenue still rises with volume, admin cost's super-linear growth, the
-staffing ratio and an unstaffed all-Industrial city producing nothing).
+staffing ratio and an unstaffed all-Industrial city producing nothing),
+and the RCI growth deadlock at `pop == jobs`.
 These are direct
 regressions for bugs found in play: a shared-stockpile deadlock where
 simultaneous construction could permanently starve the only tiles that
@@ -179,7 +192,8 @@ even with an active Quarry; reusing the food *growth* threshold
 falsely collapsed every city that ever grew a zone past level 0; `TAX.ind`
 being dead code (every job was billed at `TAX.com`'s rate); and staffing
 reading stale prior-tick totals, which handed a brand-new city one free
-fully-staffed day. Run this after any change to `engine.js` before
+fully-staffed day; and Residential/Industrial demand being exact
+complements, which froze 27% of cities at a random size forever. Run this after any change to `engine.js` before
 touching `index.html`'s rendering/input code on top of it.
 
 ## Known simplifications

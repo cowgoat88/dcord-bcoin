@@ -741,3 +741,56 @@ test("Industrial job tax uses TAX.ind, not TAX.com", () => {
     "with TAX.com > TAX.ind, a commercial city must out-earn an identical industrial one"
   );
 });
+
+test("a balanced city keeps growing instead of deadlocking at pop == jobs", () => {
+  // Regression for a measured bug: "res grows while jobs > pop" and
+  // "industry grows while pop > indJobs" were exact logical complements,
+  // so whenever one side could grow the other could not. They ratcheted
+  // up in lockstep, landed exactly on pop == jobs, and both demands hit 0
+  // — freezing the city permanently at whatever size early random rolls
+  // reached. Identical layouts finished anywhere from pop 80 to pop 1010,
+  // and 27% froze under pop 400. GROWTH_HEADROOM gives both sides slack so
+  // the ceiling is set by the player's layout, not by demand arithmetic.
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 5000, concrete: 5000 });
+  game.money = 1e9;
+  const built = (type, up) => ({ type, status: "built", level: 0, powered: false, upgradeLevel: up || 0, upgrading: null });
+
+  // Placed clear of the zone blocks below — a zone written over the plant
+  // silently un-powers the whole fixture.
+  game.board[4][20] = built("power", 2);   // radius 14, covers x 6-34, y 0-18
+  game.board[14][22] = built("road", 2);   // radius 7, covers x 15-29, y 7-21
+  // Farms, with housing packed directly against them so food actually
+  // reaches it (FOOD_RADIUS is 6 and decays linearly over that distance).
+  for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) game.board[16 + j][19 + i] = built("farm", 2);
+  for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) game.board[12 + j][18 + i] = built("res");
+  for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) game.board[12 + j][24 + i] = built("ind");
+
+  E.computePower(game);
+  E.computeFood(game);
+  assert.ok(game.board[12][18].powered, "setup: the res block must be powered");
+  assert.ok(E.hasRoadService(game, 18, 12), "setup: the res block must be road-served");
+  assert.ok(game.board[12][18].foodSupply >= E.FOOD_PER_LEVEL * E.MAX_LEVEL,
+    "setup: the res block must have enough food to reach max density");
+
+  runTicks(game, 400);
+  // With equal counts of res and ind, the old formulas parked this at a
+  // low pop == jobs fixed point. Both must now reach real density.
+  assert.ok(game.population > 0, "population must grow at all");
+  assert.ok(game.jobs > 0, "jobs must grow at all");
+  assert.equal(game.board[12][18].level, E.MAX_LEVEL, "a fully-served res zone must reach max density, not stall partway");
+  assert.equal(game.board[12][24].level, E.MAX_LEVEL, "a fully-served industrial zone must reach max density too");
+});
+
+test("demand stays positive for both Residential and Industrial when pop equals jobs", () => {
+  // The exact deadlock point, asserted directly on the formulas.
+  const game = E.createGame();
+  const built = (type, level) => ({ type, status: "built", level, powered: false, upgradeLevel: 0, upgrading: null });
+  // 3 res levels and 3 ind levels -> population 30, indJobs 30, jobs 30.
+  game.board[5][5] = built("res", 3);
+  game.board[5][9] = built("ind", 3);
+  E.recomputeTotals(game);
+  assert.equal(game.population, game.jobs, "setup: this is the deadlock point");
+  assert.ok(game.demand.res > 0, "Residential must still want to grow at pop == jobs");
+  assert.ok(game.demand.ind > 0, "Industrial must still want to grow at pop == jobs");
+});

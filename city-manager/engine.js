@@ -89,6 +89,13 @@
   const TAX = { res: 0.09, com: 0.14, ind: 0.11 };
   const JOB_TAX_FACTOR = 0.6; // jobs are taxed at this fraction of their rate
 
+  // Slack in the RCI demand targets, in population/jobs units (so 20 is
+  // two density levels' worth). Lets Residential and Industrial both grow
+  // when they are balanced, instead of deadlocking at pop == jobs. Too
+  // small and cities still freeze; too large and RCI stops being a
+  // constraint at all.
+  const GROWTH_HEADROOM = 20;
+
   // Lose conditions. A single bad day never ends the game — both require
   // a sustained failure, not a momentary dip.
   const BANKRUPTCY_DEBT_DAYS = 30; // consecutive days with money < 0
@@ -420,15 +427,30 @@
     game.foodSupply = foodSupply;
     game.foodDemand = foodDemand;
 
-    // Treat zero jobs as one phantom job so res demand starts slightly
-    // positive instead of exactly 0 — otherwise res never grows (needs
-    // d>0), so population never grows, so com/ind demand never turns
-    // positive either: a permanent zero-zero deadlock. Regression-tested
-    // in engine.test.js ("RCI bootstrap").
+    // Each demand is measured against its target with GROWTH_HEADROOM of
+    // slack. The slack is load-bearing, not cosmetic: without it "res
+    // grows while jobs > pop" and "industry grows while pop > indJobs"
+    // are exact logical complements, so whenever one side may grow the
+    // other may not. They ratchet up in lockstep, land exactly on
+    // pop == jobs, and *both* demands hit 0 — the whole city freezes
+    // permanently at whatever size early random growth rolls happened to
+    // reach. Measured before the fix: identical layouts finished anywhere
+    // between pop 80 and pop 1010, and 27% froze under pop 400, which
+    // made outcomes mostly luck rather than layout.
+    //
+    // With slack on both sides, both can grow at pop == jobs, so the city
+    // ratchets upward until something real stops it — farm coverage,
+    // power/road service, land, or the cost curves. That is the intent:
+    // the ceiling should be set by the player's layout, not by a
+    // knife-edge in the demand arithmetic.
+    //
+    // The `|| 1` on jobs stays for the pop == 0 bootstrap, which is the
+    // same failure at the origin. Regression-tested in engine.test.js
+    // ("RCI bootstrap" and the deadlock test below it).
     const jobsForRes = game.jobs || 1;
-    game.demand.res = clamp(((jobsForRes - population) / 10) * 5, -100, 100);
-    game.demand.ind = clamp(((population - indJobs) / 10) * 5, -100, 100);
-    game.demand.com = clamp(((population - comJobs * 2) / 10) * 5, -100, 100);
+    game.demand.res = clamp(((jobsForRes + GROWTH_HEADROOM - population) / 10) * 5, -100, 100);
+    game.demand.ind = clamp(((population + GROWTH_HEADROOM - indJobs) / 10) * 5, -100, 100);
+    game.demand.com = clamp(((population + GROWTH_HEADROOM - comJobs * 2) / 10) * 5, -100, 100);
   }
 
   function bfsPath(game, start, end) {
@@ -752,7 +774,7 @@
     GOODS_PRICE_FLOOR, GOODS_MARKET_DEPTH, ADMIN_COST_PER_TILE, ADMIN_SCALING,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
     UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, UPGRADE_REJECTION_MESSAGE, upgradeCost,
-    BANKRUPTCY_DEBT_DAYS, COLLAPSE_POPULATION_THRESHOLD,
+    BANKRUPTCY_DEBT_DAYS, COLLAPSE_POPULATION_THRESHOLD, GROWTH_HEADROOM,
     NEGLECT_TICKS_BEFORE_DECAY, NEGLECT_DECAY_CHANCE,
     effectiveRate, effectivePowerRadius, effectiveRoadRadius, effectiveExportRate, upkeepMultiplier,
     goodsPriceFor, staffingRatio, adminCost,
