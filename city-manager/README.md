@@ -82,6 +82,20 @@ exercises directly.
   up an industrial base (raw material production → Industrial zones →
   Goods → Warehouses to export more of it) is the actual path to a
   growing treasury, not just zoning residential and waiting.
+- **Two lose conditions end the game**: **Bankruptcy** — the treasury stays
+  negative for `BANKRUPTCY_DEBT_DAYS` (30) straight days in a row; a single
+  bad day is forgiven, the streak resets the moment money is non-negative
+  again. **City Collapse** — a zone that's grown past level 0 but goes
+  unserved (unpowered, road-cut, or short of the food it needs to *hold*
+  its current level) accumulates neglect; past `NEGLECT_TICKS_BEFORE_DECAY`
+  (10) ticks of sustained neglect it starts losing levels back down, and if
+  the city's population (which had previously grown above
+  `COLLAPSE_POPULATION_THRESHOLD`) is fully wiped out this way, the city
+  collapses. Growing to a level and merely holding it use different food
+  thresholds on purpose — growing to the next level takes more food than
+  holding the current one, so a zone that just grew isn't instantly
+  flagged as starving. Either ending freezes the simulation (no more
+  ticks, placement, or upgrades) behind a New Game banner.
 - Existing tiles can't be overwritten by picking a different tool — bulldoze
   first. This also makes click/tap-drag painting safe: it only fills empty
   tiles it passes over.
@@ -110,7 +124,7 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 34 cases covering placement rules, construction staging,
+needed, Node 18+. 40 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
@@ -118,17 +132,21 @@ five upgradeable types, rejection cases, cost deduction, effects), the
 road service radius (base + upgraded), the clustering output bonus, the
 tax-vs-export income balance, the food mechanic (distance falloff,
 res-only gating, growth unblocked once fed), the zero-producer safety
-net, and construction's priority over Industrial consumption. These are
-direct regressions for bugs found in play: a shared-stockpile deadlock
-where simultaneous construction could permanently starve the only tiles
-that produce more material; a demand-formula regression that left
+net, construction's priority over Industrial consumption, and both lose
+conditions (Bankruptcy's debt-streak timing/reset, City Collapse via
+sustained neglect, and the game freezing once over). These are direct
+regressions for bugs found in play: a shared-stockpile deadlock where
+simultaneous construction could permanently starve the only tiles that
+produce more material; a demand-formula regression that left
 `population`/`jobs` stuck at zero forever; hitting exactly 0 stock with
-no surviving Lumber Yard/Quarry being an unrecoverable dead end; and
+no surviving Lumber Yard/Quarry being an unrecoverable dead end;
 Industrial consumption able to keep pace with a single Quarry's output
-indefinitely, permanently starving new construction of the same
-material even with an active Quarry. Run this after any change to
-`engine.js` before touching `index.html`'s rendering/input code on top
-of it.
+indefinitely, permanently starving new construction of the same material
+even with an active Quarry; and reusing the food *growth* threshold
+(next-level food) as the neglect/maintenance check, which would have
+falsely collapsed every city that ever grew a zone past level 0. Run this
+after any change to `engine.js` before touching `index.html`'s
+rendering/input code on top of it.
 
 ## Known simplifications
 

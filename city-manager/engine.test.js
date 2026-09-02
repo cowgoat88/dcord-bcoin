@@ -495,3 +495,135 @@ test("new construction gets priority over Industrial consumption for the same da
   }
   assert.equal(completedAtTick, 5, "new construction must finish in its minimum build time, not starve behind Industrial consumption");
 });
+
+test("a single bad day never triggers bankruptcy, but a sustained debt streak does", () => {
+  const game = E.createGame();
+  game.money = -1;
+  for (let i = 0; i < E.BANKRUPTCY_DEBT_DAYS - 1; i++) {
+    E.simTick(game);
+    game.money = -1; // hold in debt without letting the economy recover on its own
+  }
+  assert.equal(game.gameOver, null, "must not trigger before the full debt streak elapses");
+
+  E.simTick(game);
+  assert.ok(game.gameOver, "must trigger once the debt streak reaches BANKRUPTCY_DEBT_DAYS");
+  assert.equal(game.gameOver.reason, "bankruptcy");
+});
+
+test("debt streak resets the moment money is non-negative again", () => {
+  const game = E.createGame();
+  game.money = -1;
+  for (let i = 0; i < E.BANKRUPTCY_DEBT_DAYS - 2; i++) {
+    E.simTick(game);
+    game.money = -1;
+  }
+  assert.ok(game.debtStreak > 0, "streak must have been accumulating");
+  game.money = 5; // one solvent day
+  E.simTick(game);
+  assert.equal(game.debtStreak, 0, "a solvent day must reset the streak entirely, not just pause it");
+});
+
+test("once the game is over, simTick freezes state and placeTile/startUpgrade are rejected", () => {
+  const game = E.createGame();
+  game.gameOver = { reason: "bankruptcy", day: 5 };
+  const dayBefore = game.day;
+  const moneyBefore = game.money;
+  E.simTick(game);
+  assert.equal(game.day, dayBefore, "simTick must be a no-op once the game has ended");
+  assert.equal(game.money, moneyBefore);
+
+  const msg = E.placeTile(game, 3, 3, "road");
+  assert.equal(msg, E.gameOverMessage(game));
+  assert.equal(game.board[3][3].type, "empty", "no placement must happen once the game is over");
+
+  const upgradeMsg = E.startUpgrade(game, 3, 3);
+  assert.equal(upgradeMsg, E.gameOverMessage(game));
+});
+
+test("City Collapse only triggers after population has actually grown, not at the start of a fresh game", () => {
+  const game = E.createGame();
+  E.simTick(game); // population is 0 from tick 1, same as any brand-new city
+  assert.equal(game.gameOver, null, "population 0 before ever growing must not be mistaken for a collapse");
+});
+
+test("a res zone that grew past level 0 does not falsely neglect-decay on stable food that only covered the old growth threshold", () => {
+  // Regression for a critical bug found in live play-testing: foodNeedFor
+  // is a *growth* threshold (food needed to reach the next level), scaled
+  // to level+1. Using that same number to decide whether a zone is
+  // "maintained" meant any zone that just grew immediately needed MORE
+  // food than got it there in the first place, registering as neglected
+  // from the very next tick even with perfectly stable food/power/road —
+  // which would eventually decay and falsely collapse every city that
+  // ever grew past level 0. foodNeedToMaintain (scaled to the *current*
+  // level) must be used for neglect instead, decoupled from growth.
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
+  game.money = 1000000;
+
+  game.board[10][10] = { type: "power", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][11] = { type: "road", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][12] = { type: "farm", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][13] = { type: "res", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.demand.res = 100;
+
+  let grew = false;
+  for (let i = 0; i < 100 && !grew; i++) {
+    E.simTick(game);
+    game.demand.res = 100;
+    if (game.board[10][13].level > 0) grew = true;
+  }
+  assert.ok(grew, "setup: the res zone must grow past level 0");
+  const levelAfterGrowth = game.board[10][13].level;
+  // This farm's supply to this tile only ever covers foodNeedToMaintain at
+  // this level, not foodNeedFor's higher next-tier threshold — exactly the
+  // gap that used to falsely trigger neglect.
+  assert.ok(
+    game.board[10][13].foodSupply < E.foodNeedFor(game.board[10][13]),
+    "setup: food must fall short of the growth threshold for this to be a meaningful regression check"
+  );
+
+  // Nothing about service changes from here — power, road, and farm all
+  // stay exactly as built. Run far longer than NEGLECT_TICKS_BEFORE_DECAY
+  // and confirm neglect never accumulates and the game never ends.
+  for (let i = 0; i < 200; i++) {
+    E.simTick(game);
+    game.demand.res = 0; // stop further growth so the level under test holds steady
+  }
+  assert.equal(game.board[10][13].neglect, 0, "a zone with stable food/power/road must never accumulate neglect just for having grown");
+  assert.ok(game.board[10][13].level >= levelAfterGrowth, "the zone must not have decayed");
+  assert.equal(game.gameOver, null, "normal growth must never falsely trigger City Collapse");
+});
+
+test("a built, grown zone that goes unserved decays after sustained neglect, eventually collapsing the city", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 1000, concrete: 1000 });
+  game.money = 1000000;
+
+  // Get one res zone up to a real level with full service...
+  game.board[10][10] = { type: "power", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][11] = { type: "road", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][12] = { type: "farm", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[10][13] = { type: "res", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  game.demand.res = 100; // force growth chances to resolve quickly for the test
+
+  let grew = false;
+  for (let i = 0; i < 100 && !grew; i++) {
+    E.simTick(game);
+    game.demand.res = 100;
+    if (game.board[10][13].level > 0) grew = true;
+  }
+  assert.ok(grew, "setup: the res zone must actually grow first");
+  assert.ok(game.peakPopulation >= E.COLLAPSE_POPULATION_THRESHOLD || game.population > 0, "sanity: population did grow");
+
+  // ...then bulldoze its road, cutting service, and watch neglect decay it
+  // all the way back down without ever touching the zone directly.
+  game.board[10][11] = E.newTile();
+
+  let collapsed = false;
+  for (let i = 0; i < 500 && !collapsed; i++) {
+    E.simTick(game);
+    if (game.gameOver) collapsed = true;
+  }
+  assert.ok(collapsed, "sustained neglect must be able to fully collapse a city that had grown");
+  assert.equal(game.gameOver.reason, "collapse");
+});

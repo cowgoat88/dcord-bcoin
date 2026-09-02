@@ -66,6 +66,20 @@
   // the treasury. See README for the reasoning.
   const TAX = { res: 0.12, com: 0.2, ind: 0.15 };
 
+  // Lose conditions. A single bad day never ends the game — both require
+  // a sustained failure, not a momentary dip.
+  const BANKRUPTCY_DEBT_DAYS = 30; // consecutive days with money < 0
+  const COLLAPSE_POPULATION_THRESHOLD = 10; // must have gotten at least this big once...
+  // ...before falling back to 0 population counts as a collapse rather
+  // than "hasn't started growing yet".
+
+  // A built zone that goes unserved (unpowered, road-cut, or — for
+  // Residential — unfed) for this many consecutive days starts losing
+  // levels instead of just failing to grow. This is what makes City
+  // Collapse actually reachable through neglect, not just self-bulldozing.
+  const NEGLECT_TICKS_BEFORE_DECAY = 10;
+  const NEGLECT_DECAY_CHANCE = 0.2;
+
   const BUILD = {
     road:      { cost: 5,   lumber: 1,  concrete: 0,  ticks: 1, color: "#555",    label: "Road" },
     res:       { cost: 15,  lumber: 2,  concrete: 1,  ticks: 3, color: "#4caf50", label: "Residential" },
@@ -116,7 +130,8 @@
       delivered: { lumber: 0, concrete: 0 },
       stalled: false,
       upgradeLevel: 0,
-      upgrading: null
+      upgrading: null,
+      neglect: 0
     };
   }
 
@@ -141,7 +156,10 @@
       foodSupply: 0,
       foodDemand: 0,
       demand: { res: 50, com: 20, ind: 20 },
-      lastNet: 0
+      lastNet: 0,
+      debtStreak: 0,
+      peakPopulation: 0,
+      gameOver: null
     };
   }
 
@@ -292,6 +310,16 @@
     return FOOD_PER_LEVEL * (tile.level + 1);
   }
 
+  // How much food a res zone needs to *hold* its current level without
+  // being neglected. Deliberately lower than foodNeedFor: reaching a level
+  // only required enough food for the next tier at the moment of growth,
+  // so demanding that same higher amount forever after would flag every
+  // zone that just grew as neglected. 0 at level 0 — an un-grown zone
+  // can't starve.
+  function foodNeedToMaintain(tile) {
+    return FOOD_PER_LEVEL * tile.level;
+  }
+
   // Recomputes storage caps and warehouse count from built Warehouses.
   // Called before anything that produces/consumes stock this tick, so it
   // reflects completions from the *previous* tick — consistent with how
@@ -325,6 +353,7 @@
     }
     game.population = population;
     game.jobs = comJobs + indJobs;
+    game.peakPopulation = Math.max(game.peakPopulation || 0, population);
     // City-wide totals for display only — actual growth eligibility below
     // uses each res zone's own local foodSupply (from computeFood), since
     // food doesn't pool globally the way Lumber/Concrete/Goods do.
@@ -411,11 +440,20 @@
     for (const [x, y, t] of rest) advanceSite(game, x, y, t, reserveLumber, reserveConcrete, onProgress);
   }
 
+  function gameOverMessage(game) {
+    if (!game.gameOver) return undefined;
+    return game.gameOver.reason === "bankruptcy"
+      ? "Game over — the city went bankrupt."
+      : "Game over — the city collapsed.";
+  }
+
   // Returns undefined on success, or a user-facing message on rejection.
   // Unlike a fresh build, an upgrading tile stays fully operational at its
   // current tier the whole time — this only affects a tile that's already
   // status==="built".
   function startUpgrade(game, x, y) {
+    const over = gameOverMessage(game);
+    if (over) return over;
     if (!inBounds(x, y)) return undefined;
     const t = game.board[y][x];
     if (!UPGRADEABLE_TYPES.includes(t.type) || t.status !== "built") {
@@ -465,6 +503,7 @@
   }
 
   function simTick(game, onProgress) {
+    if (game.gameOver) return; // frozen: the run has already ended
     const { board, stock } = game;
     computePower(game);
     computeFood(game);
@@ -511,13 +550,36 @@
         // Food only gates Residential — jobs don't need to eat. This is
         // the population bottleneck: a house can be powered, road-served,
         // and in demand, and still not grow if no farm reaches it.
-        const fed = t.type !== "res" || t.foodSupply >= foodNeedFor(t);
-        const eligible = t.powered && hasRoadService(game, x, y) && fed;
-        const d = game.demand[t.type];
-        if (eligible && d > 0 && t.level < MAX_LEVEL) {
-          if (Math.random() < 0.3) t.level += 1;
-        } else if (d < -70 && t.level > 0) {
-          if (Math.random() < 0.15) t.level -= 1;
+        //
+        // Growing to the next level and *holding* the current one are
+        // different thresholds: foodNeedFor is next-tier food, so a zone
+        // that just grew would otherwise fail its own upkeep check the
+        // very next tick even with completely stable food/power/road.
+        const basicService = t.powered && hasRoadService(game, x, y);
+        const fedToMaintain = t.type !== "res" || t.foodSupply >= foodNeedToMaintain(t);
+        const fedToGrow = t.type !== "res" || t.foodSupply >= foodNeedFor(t);
+        const maintained = basicService && fedToMaintain;
+        const canGrow = basicService && fedToGrow;
+        if (maintained) {
+          // Served: neglect resets.
+          t.neglect = 0;
+        } else {
+          // Unserved (unpowered, road-cut, or short even of upkeep food):
+          // a brief outage is forgiven, but sustained neglect starts
+          // costing levels — this is what makes City Collapse reachable
+          // through play instead of only via self-bulldozing.
+          t.neglect = (t.neglect || 0) + 1;
+          if (t.neglect > NEGLECT_TICKS_BEFORE_DECAY && t.level > 0) {
+            if (Math.random() < NEGLECT_DECAY_CHANCE) t.level -= 1;
+          }
+        }
+        if (canGrow) {
+          const d = game.demand[t.type];
+          if (d > 0 && t.level < MAX_LEVEL) {
+            if (Math.random() < 0.3) t.level += 1;
+          } else if (d < -70 && t.level > 0) {
+            if (Math.random() < 0.15) t.level -= 1;
+          }
         }
       }
     }
@@ -568,10 +630,20 @@
     game.lastNet = Math.round(income - upkeep);
     game.money += game.lastNet;
     game.day += 1;
+
+    // Lose conditions: both require a sustained failure, not one bad tick.
+    game.debtStreak = game.money < 0 ? (game.debtStreak || 0) + 1 : 0;
+    if (game.debtStreak >= BANKRUPTCY_DEBT_DAYS) {
+      game.gameOver = { reason: "bankruptcy", day: game.day };
+    } else if (game.peakPopulation >= COLLAPSE_POPULATION_THRESHOLD && game.population === 0) {
+      game.gameOver = { reason: "collapse", day: game.day };
+    }
   }
 
   // Returns undefined on success, or a user-facing message on rejection.
   function placeTile(game, x, y, tool) {
+    const over = gameOverMessage(game);
+    if (over) return over;
     if (!inBounds(x, y)) return undefined;
     const t = game.board[y][x];
     if (tool === "bulldoze") {
@@ -598,10 +670,12 @@
     STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_BASE, GOODS_EXPORT_PER_WAREHOUSE, GOODS_PRICE,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
     UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, UPGRADE_REJECTION_MESSAGE, upgradeCost,
+    BANKRUPTCY_DEBT_DAYS, COLLAPSE_POPULATION_THRESHOLD,
+    NEGLECT_TICKS_BEFORE_DECAY, NEGLECT_DECAY_CHANCE,
     effectiveRate, effectivePowerRadius, effectiveRoadRadius, effectiveExportRate, upkeepMultiplier,
-    clamp, inBounds, newTile, newSite, createGame,
+    clamp, inBounds, newTile, newSite, createGame, gameOverMessage,
     isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad, hasRoadService, countClusterNeighbors,
-    computePower, computeFood, foodNeedFor, recomputeCaps, recomputeTotals, bfsPath,
+    computePower, computeFood, foodNeedFor, foodNeedToMaintain, recomputeCaps, recomputeTotals, bfsPath,
     advanceSite, stepConstruction, startUpgrade, stepUpgrades,
     simTick, placeTile
   };

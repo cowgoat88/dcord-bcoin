@@ -62,12 +62,30 @@
   #viewRow button { flex: 1; text-align: center; }
   #msg { font-size: 11px; color: #7d8896; margin-top: 8px; min-height: 28px; }
   #help { font-size: 11px; color: #656e78; margin-top: 10px; line-height: 1.5; }
+  #boardWrap { position: relative; max-width: 100%; }
+  #gameOverBanner {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+    background: rgba(10,12,15,0.88); color: #fff; text-align: center; padding: 20px;
+  }
+  #gameOverBanner[hidden] { display: none; }
+  #gameOverBanner h2 { margin: 0; font-size: 20px; color: #fff; text-transform: none; letter-spacing: normal; }
+  #gameOverBanner p { margin: 0; font-size: 13px; color: #c7d0da; max-width: 320px; }
+  #gameOverBanner button { padding: 8px 20px; font-size: 13px; }
+  .neg-warn { color: #e0665a; font-size: 10px; margin-left: 4px; }
 </style>
 </head>
 <body>
 <h1>CITY MANAGER — construction management prototype</h1>
 <div id="layout">
-  <canvas id="board" width="800" height="500"></canvas>
+  <div id="boardWrap">
+    <canvas id="board" width="800" height="500"></canvas>
+    <div id="gameOverBanner" hidden>
+      <h2 id="gameOverTitle">Game Over</h2>
+      <p id="gameOverText"></p>
+      <button id="btnNewGame">New Game</button>
+    </div>
+  </div>
   <div id="panel">
     <h2>Status</h2>
     <div class="stats">
@@ -117,6 +135,8 @@
     <div id="msg"></div>
     <div id="help">
       Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash — Warehouses also raise export capacity, so they're the real income lever, not taxes. Lumber Yards/Quarries built next to each other each produce more (clustering). Zoned tiles grow once built and powered, as long as they're within a road's service radius (not necessarily touching it — bigger with road upgrades). Houses also need a nearby Farm: food fades with distance from the farm (orange outline = house isn't getting enough), so population growth is capped by farm coverage, not just power/road/demand. Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry/Road/Farm to spend money+materials on higher output/radius and lower upkeep (2 tiers). Use Pan + Zoom to work at a comfortable tile size on a small screen.
+      <br><br>
+      A brief outage is forgiven, but a zone left unpowered/road-cut/unfed for too long starts losing levels — sustained neglect, not just one bad tick, is what causes decline. Two ways to lose: staying in debt for 30 straight days (bankruptcy), or a city that once grew falling all the way back to zero population (collapse).
     </div>
   </div>
 </div>
@@ -170,6 +190,34 @@
   function simTick() {
     E.simTick(game, maybeSpawnDeliveryTruck);
     updateCars();
+    updateUI();
+    if (game.gameOver) {
+      paused = true;
+      document.getElementById("btnPause").textContent = "Resume";
+      showGameOverBanner();
+    }
+  }
+
+  function showGameOverBanner() {
+    const reason = game.gameOver.reason;
+    document.getElementById("gameOverTitle").textContent =
+      reason === "bankruptcy" ? "Bankrupt" : "City Collapsed";
+    document.getElementById("gameOverText").textContent =
+      (reason === "bankruptcy"
+        ? `The treasury stayed in debt for ${E.BANKRUPTCY_DEBT_DAYS} days straight — the city is bankrupt.`
+        : `Once-thriving, the city lost all of its population to sustained neglect.`)
+      + ` It happened on day ${game.gameOver.day}.`;
+    document.getElementById("gameOverBanner").hidden = false;
+  }
+
+  function newGame() {
+    game = E.createGame();
+    E.computePower(game);
+    E.computeFood(game);
+    cars = []; deliveryTrucks = [];
+    document.getElementById("gameOverBanner").hidden = true;
+    paused = false;
+    document.getElementById("btnPause").textContent = "Pause";
     updateUI();
   }
 
@@ -314,9 +362,12 @@
         if (t.status === "built" && (t.type === "res" || t.type === "com" || t.type === "ind") && !t.powered) {
           ctx.strokeStyle = "rgba(224,102,90,0.6)";
           ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
-        } else if (t.status === "built" && t.type === "res" && t.foodSupply < E.foodNeedFor(t)) {
+        } else if (t.status === "built" && t.type === "res" && t.foodSupply < E.foodNeedToMaintain(t)) {
           // Distinct color from the "not powered" outline so a starving
           // house (needs a farm) reads differently from an unpowered one.
+          // Uses the maintenance threshold, not the (higher) growth
+          // threshold — a zone that's merely plateaued at its current
+          // level with stable food shouldn't look like it's starving.
           ctx.strokeStyle = "rgba(255,152,0,0.7)";
           ctx.strokeRect(x * TILE + 1, y * TILE + 1, TILE - 3, TILE - 3);
         }
@@ -375,7 +426,13 @@
 
   function updateUI() {
     document.getElementById("stDay").textContent = game.day;
-    document.getElementById("stMoney").textContent = "$" + Math.round(game.money).toLocaleString();
+    const moneyEl = document.getElementById("stMoney");
+    moneyEl.textContent = "$" + Math.round(game.money).toLocaleString();
+    if (game.debtStreak > 0) {
+      const daysLeft = E.BANKRUPTCY_DEBT_DAYS - game.debtStreak;
+      moneyEl.innerHTML = "$" + Math.round(game.money).toLocaleString()
+        + `<span class="neg-warn">bankrupt in ${daysLeft}d</span>`;
+    }
     const netEl = document.getElementById("stNet");
     netEl.textContent = (game.lastNet >= 0 ? "+$" : "-$") + Math.abs(game.lastNet).toLocaleString();
     netEl.className = game.lastNet >= 0 ? "pos" : "neg";
@@ -562,9 +619,14 @@
     E.computePower(game);
     E.computeFood(game);
     cars = []; deliveryTrucks = [];
+    const banner = document.getElementById("gameOverBanner");
+    if (game.gameOver) { showGameOverBanner(); paused = true; document.getElementById("btnPause").textContent = "Resume"; }
+    else banner.hidden = true;
     updateUI();
     flash("Loaded.");
   });
+
+  document.getElementById("btnNewGame").addEventListener("click", newGame);
 
   // --- main loop ---
   let lastTime = performance.now();
