@@ -57,14 +57,37 @@
   const WAREHOUSE_BONUS = { lumber: 80, concrete: 80, goods: 80 };
   const GOODS_EXPORT_BASE = 3; // units/day exportable with zero warehouses
   const GOODS_EXPORT_PER_WAREHOUSE = 6; // extra export capacity per built warehouse
-  const GOODS_PRICE = 8; // $ per unit sold — the main income lever
+
+  // Goods sell into a market with finite depth: the price is per-unit, but
+  // flooding it with more units *per day* drives that price down toward a
+  // floor. Without this the 300th unit/day earned exactly as much as the
+  // first, so the export loop was a linear money printer with no marginal
+  // pressure — the single biggest reason a saturated city just accrued
+  // cash forever. Revenue still rises with volume, but sub-linearly, so
+  // scaling up production is worth less per unit than making each unit
+  // cheaper to produce (upgrades, clustering, tighter layout).
+  const GOODS_PRICE = 8; // $ per unit at low volume
+  const GOODS_PRICE_FLOOR = 2; // $ per unit the price never falls below
+  const GOODS_MARKET_DEPTH = 120; // units/day at which the premium has halved
+
+  // Running a city has an administrative cost that grows faster than the
+  // city does — a 900-tile city costs far more than 9x a 100-tile one to
+  // run. Per-tile upkeep alone is flat, so income (which scales with
+  // population and production) always outran it; this is the term that
+  // makes sprawl genuinely expensive and forces tight, deliberate layout.
+  // Deliberately negligible for a small starting city.
+  const ADMIN_COST_PER_TILE = 0.15;
+  const ADMIN_SCALING = 1.2; // exponent — >1 is what makes it super-linear
   const IND_INPUT_PER_LEVEL = 1; // lumber AND concrete consumed, per zone level, per day
   const IND_OUTPUT_PER_LEVEL = 2; // goods produced, per zone level, per day
 
-  // Tax is deliberately a minor trickle now, not a viable income strategy
-  // on its own — Goods export (production + warehouses) is meant to carry
-  // the treasury. See README for the reasoning.
-  const TAX = { res: 0.12, com: 0.2, ind: 0.15 };
+  // Tax is deliberately a minor trickle, not a viable income strategy on
+  // its own — Goods export (production + warehouses) is meant to carry the
+  // treasury. Measured at a saturated city these rates leave export at
+  // ~62% of gross income; raising them is what previously let a player
+  // coast on zoning alone. See README for the reasoning.
+  const TAX = { res: 0.09, com: 0.14, ind: 0.11 };
+  const JOB_TAX_FACTOR = 0.6; // jobs are taxed at this fraction of their rate
 
   // Lose conditions. A single bad day never ends the game — both require
   // a sustained failure, not a momentary dip.
@@ -156,7 +179,13 @@
       foodSupply: 0,
       foodDemand: 0,
       demand: { res: 50, com: 20, ind: 20 },
+      builtTiles: 0,
       lastNet: 0,
+      lastIncome: 0,
+      lastUpkeep: 0,
+      lastAdmin: 0,
+      lastExported: 0,
+      lastGoodsPrice: GOODS_PRICE,
       debtStreak: 0,
       peakPopulation: 0,
       gameOver: null
@@ -255,6 +284,33 @@
     return GOODS_EXPORT_BASE + (game.warehouses || 0) * GOODS_EXPORT_PER_WAREHOUSE;
   }
 
+  // Per-unit price for selling `volume` goods in a single day. Hyperbolic
+  // decay from GOODS_PRICE toward GOODS_PRICE_FLOOR — never zero, so a big
+  // exporter still earns, just at thin margins.
+  function goodsPriceFor(volume) {
+    if (!(volume > 0)) return GOODS_PRICE;
+    return GOODS_PRICE_FLOOR + (GOODS_PRICE - GOODS_PRICE_FLOOR) / (1 + volume / GOODS_MARKET_DEPTH);
+  }
+
+  // Commercial and Industrial zones need people to staff them. If the city
+  // has fewer residents than jobs, every job-holding zone runs at that
+  // fraction of capacity. This is what makes population an input to the
+  // economy rather than just a score: before it existed, an all-Industrial
+  // city with zero housing produced Goods at full rate and skipped the
+  // entire Residential/farm/food system.
+  function staffingRatio(game) {
+    const jobs = game.jobs || 0;
+    if (jobs <= 0) return 1;
+    return clamp((game.population || 0) / jobs, 0, 1);
+  }
+
+  // Super-linear administrative cost from the city's total built footprint.
+  function adminCost(game) {
+    const tiles = game.builtTiles || 0;
+    if (tiles <= 0) return 0;
+    return ADMIN_COST_PER_TILE * Math.pow(tiles, ADMIN_SCALING);
+  }
+
   function computePower(game) {
     const { board } = game;
     for (let y = 0; y < GRID_H; y++)
@@ -340,11 +396,12 @@
 
   function recomputeTotals(game) {
     const { board } = game;
-    let population = 0, comJobs = 0, indJobs = 0, foodSupply = 0, foodDemand = 0;
+    let population = 0, comJobs = 0, indJobs = 0, foodSupply = 0, foodDemand = 0, builtTiles = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built") continue;
+        builtTiles++;
         if (t.type === "res") { population += t.level * CAP_PER_LEVEL; foodDemand += foodNeedFor(t); }
         if (t.type === "com") comJobs += t.level * CAP_PER_LEVEL;
         if (t.type === "ind") indJobs += t.level * CAP_PER_LEVEL;
@@ -353,6 +410,9 @@
     }
     game.population = population;
     game.jobs = comJobs + indJobs;
+    game.comJobs = comJobs;
+    game.indJobs = indJobs;
+    game.builtTiles = builtTiles;
     game.peakPopulation = Math.max(game.peakPopulation || 0, population);
     // City-wide totals for display only — actual growth eligibility below
     // uses each res zone's own local foodSupply (from computeFood), since
@@ -584,15 +644,26 @@
       }
     }
 
+    // Totals are recomputed here, *before* Industrial runs, so staffing
+    // reflects this tick's actual population and job count including the
+    // growth loop just above. Reading last tick's totals instead left a
+    // bootstrap hole: on a fresh game jobs was still 0, staffingRatio
+    // returned its "no jobs, no constraint" default of 1, and a city with
+    // industry but no residents got one free fully-staffed day.
+    recomputeTotals(game);
+
     // Industrial zones are the only material sink beyond upkeep: they
     // convert raw Lumber+Concrete into Goods (capped), throttled by
-    // whichever is scarcer — available input, or remaining Goods storage.
+    // whichever is scarcer — available input, remaining Goods storage, or
+    // how much of their capacity the population can actually staff.
+    const staffing = staffingRatio(game);
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const t = board[y][x];
         if (t.status !== "built" || t.type !== "ind" || t.level <= 0) continue;
-        const wantInput = t.level * IND_INPUT_PER_LEVEL;
-        const wantOutput = t.level * IND_OUTPUT_PER_LEVEL;
+        const wantInput = t.level * IND_INPUT_PER_LEVEL * staffing;
+        const wantOutput = t.level * IND_OUTPUT_PER_LEVEL * staffing;
+        if (wantOutput <= 0) continue;
         const goodsRoom = Math.max(0, stock.goodsCap - stock.goods);
         const ratio = Math.max(0, Math.min(
           1,
@@ -606,13 +677,19 @@
       }
     }
 
-    recomputeTotals(game);
-
     const exportRate = effectiveExportRate(game);
     const exported = Math.min(stock.goods || 0, exportRate);
     stock.goods = (stock.goods || 0) - exported;
 
-    let income = game.population * TAX.res + game.jobs * TAX.com * 0.6 + exported * GOODS_PRICE;
+    const unitPrice = goodsPriceFor(exported);
+    game.lastGoodsPrice = unitPrice;
+    game.lastExported = exported;
+    // Commercial and Industrial jobs are taxed at their own rates —
+    // TAX.ind used to be dead: every job was billed at TAX.com.
+    let income = game.population * TAX.res
+      + (game.comJobs || 0) * TAX.com * JOB_TAX_FACTOR
+      + (game.indJobs || 0) * TAX.ind * JOB_TAX_FACTOR
+      + exported * unitPrice;
     let upkeep = 0;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
@@ -627,7 +704,11 @@
         else if (t.type === "farm") upkeep += UPKEEP.farm * upkeepMultiplier(t);
       }
     }
-    game.lastNet = Math.round(income - upkeep);
+    const admin = adminCost(game);
+    game.lastAdmin = admin;
+    game.lastIncome = income;
+    game.lastUpkeep = upkeep + admin;
+    game.lastNet = Math.round(income - upkeep - admin);
     game.money += game.lastNet;
     game.day += 1;
 
@@ -666,13 +747,15 @@
     GRID_W, GRID_H, TILE, POWER_RADIUS, MAX_LEVEL, CAP_PER_LEVEL,
     ROAD_BASE_RADIUS, ROAD_UPGRADE_STEP, CLUSTER_BONUS_PER_NEIGHBOR,
     FOOD_RADIUS, FOOD_RATE, FOOD_PER_LEVEL,
-    LUMBER_RATE, CONCRETE_RATE, EMERGENCY_TRICKLE, BUILD, BULLDOZE_COST, UPKEEP, TAX,
+    LUMBER_RATE, CONCRETE_RATE, EMERGENCY_TRICKLE, BUILD, BULLDOZE_COST, UPKEEP, TAX, JOB_TAX_FACTOR,
     STORAGE_BASE, WAREHOUSE_BONUS, GOODS_EXPORT_BASE, GOODS_EXPORT_PER_WAREHOUSE, GOODS_PRICE,
+    GOODS_PRICE_FLOOR, GOODS_MARKET_DEPTH, ADMIN_COST_PER_TILE, ADMIN_SCALING,
     IND_INPUT_PER_LEVEL, IND_OUTPUT_PER_LEVEL,
     UPGRADE_MAX_LEVEL, UPGRADEABLE_TYPES, UPGRADE_REJECTION_MESSAGE, upgradeCost,
     BANKRUPTCY_DEBT_DAYS, COLLAPSE_POPULATION_THRESHOLD,
     NEGLECT_TICKS_BEFORE_DECAY, NEGLECT_DECAY_CHANCE,
     effectiveRate, effectivePowerRadius, effectiveRoadRadius, effectiveExportRate, upkeepMultiplier,
+    goodsPriceFor, staffingRatio, adminCost,
     clamp, inBounds, newTile, newSite, createGame, gameOverMessage,
     isBuiltRoad, hasAdjacentRoad, adjacentBuiltRoad, hasRoadService, countClusterNeighbors,
     computePower, computeFood, foodNeedFor, foodNeedToMaintain, recomputeCaps, recomputeTotals, bfsPath,

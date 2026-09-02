@@ -94,10 +94,13 @@
       <div><span>Net / day</span><span id="stNet">$0</span></div>
       <div><span>Population</span><span id="stPop">0</span></div>
       <div><span>Jobs (C+I)</span><span id="stJobs">0</span></div>
+      <div><span>Staffing</span><span id="stStaff">100%</span></div>
       <div><span>Food (supply/need)</span><span id="stFood">0 / 0</span></div>
+      <div><span>Admin cost/day</span><span id="stAdmin">$0</span></div>
       <div><span>Lumber</span><span id="stLumber">0</span></div>
       <div><span>Concrete</span><span id="stConcrete">0</span></div>
       <div><span>Goods</span><span id="stGoods">0</span></div>
+      <div><span>Goods price</span><span id="stPrice">$8.00</span></div>
       <div><span>Export cap./day</span><span id="stExport">0</span></div>
     </div>
 
@@ -137,6 +140,8 @@
       Tap/drag an empty tile to start construction — bulldoze first to replace something. New builds sit as a site consuming Lumber/Concrete from the stockpile over several days; short on materials and it stalls (red outline) until a Lumber Yard/Quarry restocks it. Lumber and Concrete are capped — build a Warehouse to raise the cap. Industrial zones convert raw materials into Goods (also capped), which auto-export for cash — Warehouses also raise export capacity, so they're the real income lever, not taxes. Lumber Yards/Quarries built next to each other each produce more (clustering). Zoned tiles grow once built and powered, as long as they're within a road's service radius (not necessarily touching it — bigger with road upgrades). Houses also need a nearby Farm: food fades with distance from the farm (orange outline = house isn't getting enough), so population growth is capped by farm coverage, not just power/road/demand. Upgrade tool: tap a built Power Plant/Lumber Yard/Quarry/Road/Farm to spend money+materials on higher output/radius and lower upkeep (2 tiers). Use Pan + Zoom to work at a comfortable tile size on a small screen.
       <br><br>
       A brief outage is forgiven, but a zone left unpowered/road-cut/unfed for too long starts losing levels — sustained neglect, not just one bad tick, is what causes decline. Two ways to lose: staying in debt for 30 straight days (bankruptcy), or a city that once grew falling all the way back to zero population (collapse).
+      <br><br>
+      <b>Bigger is not automatically better.</b> Three pressures push back on growth, all visible in the Status panel. <b>Staffing</b>: Commercial and Industrial only run at the rate your population can staff them — jobs without housing produce nothing, so Residential and Farms are inputs to the economy, not decoration. <b>Goods price</b>: the market has finite depth, so the more you ship per day the less each unit fetches (down to a floor) — scaling production up earns less per unit than making each unit cheaper via upgrades and clustering. <b>Admin cost</b>: every built tile adds overhead, and it grows faster than the city does, so sprawl is expensive and a tight, well-planned layout beats a large sloppy one. A careless city that covers the map will go bankrupt; a compact one that balances housing, food, production and export will not.
     </div>
   </div>
 </div>
@@ -438,11 +443,37 @@
     netEl.className = game.lastNet >= 0 ? "pos" : "neg";
     document.getElementById("stPop").textContent = game.population.toLocaleString();
     document.getElementById("stJobs").textContent = game.jobs.toLocaleString();
+    // Staffing: below 100% means Commercial/Industrial are running short
+    // of workers and producing proportionally less. Flagged in red because
+    // it's otherwise an invisible drag on Goods output.
+    const staffPct = Math.round(E.staffingRatio(game) * 100);
+    const staffEl = document.getElementById("stStaff");
+    staffEl.textContent = staffPct + "%";
+    staffEl.className = staffPct < 100 ? "neg" : "";
+
     document.getElementById("stFood").textContent = Math.round(game.foodSupply) + " / " + Math.round(game.foodDemand);
+
+    // Admin cost grows super-linearly with the built footprint — showing
+    // it (with the tile count driving it) is what makes sprawl legible as
+    // a cost rather than an unexplained shrinking net.
+    const adminEl = document.getElementById("stAdmin");
+    adminEl.textContent = "$" + Math.round(game.lastAdmin || 0).toLocaleString()
+      + " (" + (game.builtTiles || 0) + " tiles)";
+    adminEl.className = (game.lastAdmin || 0) > 0 ? "neg" : "";
+
     document.getElementById("stLumber").textContent = Math.floor(game.stock.lumber) + " / " + game.stock.lumberCap;
     document.getElementById("stConcrete").textContent = Math.floor(game.stock.concrete) + " / " + game.stock.concreteCap;
     document.getElementById("stGoods").textContent = Math.floor(game.stock.goods) + " / " + game.stock.goodsCap;
-    document.getElementById("stExport").textContent = E.effectiveExportRate(game) + " units · $" + (E.effectiveExportRate(game) * E.GOODS_PRICE) + " max";
+
+    // Price at the volume actually being shipped, so the player can see
+    // the market thinning as they scale production up.
+    const rate = E.effectiveExportRate(game);
+    const price = E.goodsPriceFor(Math.min(game.stock.goods || 0, rate));
+    const priceEl = document.getElementById("stPrice");
+    priceEl.textContent = "$" + price.toFixed(2);
+    priceEl.className = price < E.GOODS_PRICE * 0.6 ? "neg" : "";
+    document.getElementById("stExport").textContent =
+      rate + " units · $" + Math.round(rate * E.goodsPriceFor(rate)) + " max";
 
     setBar("barR", game.demand.res);
     setBar("barC", game.demand.com);

@@ -81,7 +81,35 @@ exercises directly.
   Warehouses raise export *capacity* as well as storage caps, so building
   up an industrial base (raw material production → Industrial zones →
   Goods → Warehouses to export more of it) is the actual path to a
-  growing treasury, not just zoning residential and waiting.
+  growing treasury, not just zoning residential and waiting. Measured at a
+  saturated city, export is ~61% of gross income.
+- **Three pressures keep growth from being free.** Without them a
+  saturated city earned a flat, risk-free +$2,248/day forever with the
+  player doing nothing — measured, not estimated. Each one is shown in the
+  Status panel, because a cost the player can't see is just an unexplained
+  shrinking net:
+  - **Staffing** — Commercial and Industrial only run at the fraction of
+    their capacity the population can staff (`population / jobs`, capped at
+    1). Jobs without housing produce nothing at all, which kills the
+    previously-dominant "all Industrial, no housing" strategy that skipped
+    the entire Residential/farm/food system. Population is an economic
+    input now, not a score.
+  - **Goods market depth** — the export price per unit decays
+    hyperbolically from `GOODS_PRICE` toward `GOODS_PRICE_FLOOR` as daily
+    volume rises. Total revenue still increases with volume (never build
+    *less*), but marginal revenue falls, so making each unit cheaper
+    (upgrades, clustering, tight layout) beats simply making more.
+  - **Administrative cost** — every built tile adds overhead scaled
+    `ADMIN_COST_PER_TILE * tiles^ADMIN_SCALING`. Super-linear, so sprawl is
+    genuinely expensive while a small city pays almost nothing (a 10-tile
+    city owes under $5/day). This is the term that makes layout quality
+    matter more than tile count.
+
+  Net effect, measured against reference builds: a compact, well-balanced
+  single district runs ~+$110/day; three good districts ~+$168/day; and a
+  careless build that sprawls across the map goes **bankrupt around day
+  70**. Six times the land yields roughly the same profit as three, so
+  there is a real optimum to find rather than an "expand forever" gradient.
 - **Two lose conditions end the game**: **Bankruptcy** — the treasury stays
   negative for `BANKRUPTCY_DEBT_DAYS` (30) straight days in a row; a single
   bad day is forgiven, the streak resets the moment money is non-negative
@@ -124,7 +152,7 @@ node --test city-manager/engine.test.js
 ```
 
 Uses Node's built-in test runner (`node:test`/`node:assert`) — no install
-needed, Node 18+. 40 cases covering placement rules, construction staging,
+needed, Node 18+. 48 cases covering placement rules, construction staging,
 the Lumber Yard/Quarry material-reservation guarantee, power radius,
 zone-growth gating, the RCI demand bootstrap, storage caps, Warehouse cap
 boost, Industrial goods production/export, the Upgrade mechanic (all
@@ -132,9 +160,13 @@ five upgradeable types, rejection cases, cost deduction, effects), the
 road service radius (base + upgraded), the clustering output bonus, the
 tax-vs-export income balance, the food mechanic (distance falloff,
 res-only gating, growth unblocked once fed), the zero-producer safety
-net, construction's priority over Industrial consumption, and both lose
+net, construction's priority over Industrial consumption, both lose
 conditions (Bankruptcy's debt-streak timing/reset, City Collapse via
-sustained neglect, and the game freezing once over). These are direct
+sustained neglect, and the game freezing once over), and the three
+economic pressures (the goods price curve and its floor, that total export
+revenue still rises with volume, admin cost's super-linear growth, the
+staffing ratio and an unstaffed all-Industrial city producing nothing).
+These are direct
 regressions for bugs found in play: a shared-stockpile deadlock where
 simultaneous construction could permanently starve the only tiles that
 produce more material; a demand-formula regression that left
@@ -142,11 +174,13 @@ produce more material; a demand-formula regression that left
 no surviving Lumber Yard/Quarry being an unrecoverable dead end;
 Industrial consumption able to keep pace with a single Quarry's output
 indefinitely, permanently starving new construction of the same material
-even with an active Quarry; and reusing the food *growth* threshold
+even with an active Quarry; reusing the food *growth* threshold
 (next-level food) as the neglect/maintenance check, which would have
-falsely collapsed every city that ever grew a zone past level 0. Run this
-after any change to `engine.js` before touching `index.html`'s
-rendering/input code on top of it.
+falsely collapsed every city that ever grew a zone past level 0; `TAX.ind`
+being dead code (every job was billed at `TAX.com`'s rate); and staffing
+reading stale prior-tick totals, which handed a brand-new city one free
+fully-staffed day. Run this after any change to `engine.js` before
+touching `index.html`'s rendering/input code on top of it.
 
 ## Known simplifications
 

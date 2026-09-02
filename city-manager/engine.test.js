@@ -187,10 +187,13 @@ test("simTick's economy applies upkeep only to built tiles and advances the day 
   assert.equal(game.day, startDay + 1);
   assert.equal(game.board[1][1].status, "built");
   // With nothing else built, net for this tick reflects zero income and
-  // (at most) the single now-built road's upkeep — never a mystery charge
-  // for the site tick before it completed.
+  // exactly two charges — the single now-built road's upkeep plus the
+  // administrative cost of a one-tile city — never a mystery charge for
+  // the site tick before it completed.
+  const expected = -(E.UPKEEP.road + E.ADMIN_COST_PER_TILE * Math.pow(1, E.ADMIN_SCALING));
   assert.ok(game.lastNet <= 0);
-  assert.ok(game.lastNet >= -E.UPKEEP.road - 0.01);
+  assert.equal(game.lastNet, Math.round(expected));
+  assert.equal(game.builtTiles, 1, "only the finished road counts toward the admin footprint");
 });
 
 test("raw material stock never exceeds its cap even with surplus production", () => {
@@ -218,7 +221,12 @@ test("a built, leveled Industrial zone converts raw materials into capped Goods"
   const game = E.createGame();
   Object.assign(game.stock, { lumber: 50, concrete: 50, goods: 0 });
   game.board[5][5] = { type: "ind", status: "built", level: 2, powered: false, upgradeLevel: 0, upgrading: null };
+  // Enough residents to fully staff those 2 levels of Industrial jobs —
+  // without them staffing is 0 and the zone correctly produces nothing,
+  // which would make this test pass for the wrong reason.
+  game.board[5][8] = { type: "res", status: "built", level: 2, powered: false, upgradeLevel: 0, upgrading: null };
   E.simTick(game);
+  assert.equal(E.staffingRatio(game), 1, "setup: Industrial must be fully staffed here");
   const expectedInput = 2 * E.IND_INPUT_PER_LEVEL;
   const expectedOutput = 2 * E.IND_OUTPUT_PER_LEVEL;
   // No Lumber Yard/Quarry exists in this fixture, so EMERGENCY_TRICKLE
@@ -233,8 +241,12 @@ test("Industrial goods output throttles to zero once Goods storage is full, with
   const game = E.createGame();
   Object.assign(game.stock, { lumber: 50, concrete: 50, goods: game.stock.goodsCap });
   game.board[5][5] = { type: "ind", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+  // Fully staffed, so the throttle under test is Goods storage — not a
+  // lack of workers silently zeroing output.
+  game.board[5][8] = { type: "res", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
   const lumberBefore = game.stock.lumber;
   E.simTick(game);
+  assert.equal(E.staffingRatio(game), 1, "setup: Industrial must be fully staffed here");
   // Only a little export capacity opens up Goods room for that tick (no
   // warehouses here, so just GOODS_EXPORT_BASE), so consumption must be
   // near zero, never the full per-level want.
@@ -626,4 +638,106 @@ test("a built, grown zone that goes unserved decays after sustained neglect, eve
   }
   assert.ok(collapsed, "sustained neglect must be able to fully collapse a city that had grown");
   assert.equal(game.gameOver.reason, "collapse");
+});
+
+test("goods price falls as daily export volume rises, but never below the floor", () => {
+  // The export loop used to pay a flat GOODS_PRICE per unit at any volume,
+  // so a saturated city printed money linearly forever with no marginal
+  // pressure. Price now decays hyperbolically toward a floor.
+  assert.equal(E.goodsPriceFor(0), E.GOODS_PRICE, "zero volume quotes the base price");
+  const small = E.goodsPriceFor(5);
+  const medium = E.goodsPriceFor(E.GOODS_MARKET_DEPTH);
+  const huge = E.goodsPriceFor(E.GOODS_MARKET_DEPTH * 100);
+  assert.ok(small > medium && medium > huge, "price must fall monotonically with volume");
+  assert.ok(small <= E.GOODS_PRICE, "price never exceeds the base");
+  assert.ok(huge > E.GOODS_PRICE_FLOOR, "price approaches the floor but never reaches or crosses it");
+  // At exactly market depth the premium over the floor has halved.
+  assert.ok(Math.abs(medium - (E.GOODS_PRICE_FLOOR + (E.GOODS_PRICE - E.GOODS_PRICE_FLOOR) / 2)) < 1e-9);
+});
+
+test("total export revenue still rises with volume — the price curve thins margins, it does not cap income", () => {
+  // A price curve that made revenue *fall* past some volume would make
+  // extra production actively harmful and reward doing nothing.
+  let prev = 0;
+  for (let v = 1; v <= 500; v += 7) {
+    const revenue = v * E.goodsPriceFor(v);
+    assert.ok(revenue > prev, "revenue must be monotonically increasing at volume " + v);
+    prev = revenue;
+  }
+});
+
+test("administrative cost is negligible for a small city and super-linear for a large one", () => {
+  const small = E.adminCost({ builtTiles: 10 });
+  const mid = E.adminCost({ builtTiles: 100 });
+  const big = E.adminCost({ builtTiles: 1000 });
+  assert.equal(E.adminCost({ builtTiles: 0 }), 0, "an empty map costs nothing to administer");
+  assert.ok(small < 5, "a 10-tile city must not be meaningfully taxed by admin overhead");
+  // Super-linear: 10x the tiles must cost *more* than 10x the admin.
+  assert.ok(mid > small * 10, "admin must grow faster than linearly (10 -> 100 tiles)");
+  assert.ok(big > mid * 10, "admin must grow faster than linearly (100 -> 1000 tiles)");
+});
+
+test("simTick charges administrative cost on top of per-tile upkeep and reports both", () => {
+  const game = E.createGame();
+  for (let x = 1; x <= 12; x++) game.board[5][x] = { type: "road", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  E.simTick(game);
+  assert.equal(game.builtTiles, 12);
+  const expectedAdmin = E.adminCost({ builtTiles: 12 });
+  assert.ok(Math.abs(game.lastAdmin - expectedAdmin) < 1e-9, "lastAdmin must reflect the built footprint");
+  assert.ok(game.lastUpkeep > game.lastAdmin, "lastUpkeep is the combined figure, admin included");
+  assert.equal(game.lastNet, Math.round(game.lastIncome - game.lastUpkeep));
+});
+
+test("Commercial and Industrial zones only run at the rate the population can staff", () => {
+  // Before staffing existed, an all-Industrial city with zero housing
+  // produced Goods at full rate, skipping the entire Residential/farm/food
+  // system — the most degenerate strategy in the game.
+  assert.equal(E.staffingRatio({ population: 0, jobs: 0 }), 1, "an empty city must not divide by zero");
+  assert.equal(E.staffingRatio({ population: 100, jobs: 50 }), 1, "surplus population does not over-staff");
+  assert.equal(E.staffingRatio({ population: 25, jobs: 100 }), 0.25);
+  assert.equal(E.staffingRatio({ population: 0, jobs: 100 }), 0, "no residents means no output at all");
+});
+
+test("an all-Industrial city with no housing produces no Goods", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 500, concrete: 500 });
+  // Fully served industry, but nobody lives here.
+  game.board[10][10] = { type: "power", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  for (let x = 8; x <= 12; x++) game.board[9][x] = { type: "road", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  for (let x = 8; x <= 12; x++) game.board[11][x] = { type: "ind", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+  game.board[11][13] = { type: "warehouse", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  runTicks(game, 15);
+  assert.equal(game.population, 0, "setup: this city genuinely has no residents");
+  assert.equal(game.stock.goods, 0, "unstaffed Industrial zones must produce nothing");
+});
+
+test("adding housing to a job-heavy city restores Industrial output", () => {
+  const game = E.createGame();
+  Object.assign(game.stock, { lumber: 500, concrete: 500 });
+  game.board[10][10] = { type: "power", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  for (let x = 6; x <= 14; x++) game.board[9][x] = { type: "road", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  for (let x = 8; x <= 12; x++) game.board[11][x] = { type: "ind", status: "built", level: 2, powered: false, upgradeLevel: 0, upgrading: null };
+  // Housing + farms so residents actually exist and are fed.
+  for (let x = 6; x <= 14; x++) game.board[8][x] = { type: "res", status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+  for (let x = 6; x <= 14; x++) game.board[7][x] = { type: "farm", status: "built", level: 0, powered: false, upgradeLevel: 0, upgrading: null };
+  runTicks(game, 10);
+  assert.ok(game.population > 0, "setup: residents must exist");
+  assert.ok(E.staffingRatio(game) > 0, "setup: staffing must be non-zero");
+  assert.ok(game.stock.goods > 0, "a staffed Industrial base must produce Goods");
+});
+
+test("Industrial job tax uses TAX.ind, not TAX.com", () => {
+  // TAX.ind was previously dead: every job was billed at TAX.com's rate.
+  const comCity = E.createGame();
+  const indCity = E.createGame();
+  for (const [g, type] of [[comCity, "com"], [indCity, "ind"]]) {
+    for (let x = 5; x <= 9; x++) g.board[10][x] = { type, status: "built", level: 3, powered: false, upgradeLevel: 0, upgrading: null };
+    E.simTick(g);
+  }
+  assert.equal(comCity.jobs, indCity.jobs, "setup: both cities must have identical job counts");
+  assert.ok(E.TAX.com !== E.TAX.ind, "setup: the two rates must differ for this to prove anything");
+  assert.ok(
+    comCity.lastIncome > indCity.lastIncome,
+    "with TAX.com > TAX.ind, a commercial city must out-earn an identical industrial one"
+  );
 });
