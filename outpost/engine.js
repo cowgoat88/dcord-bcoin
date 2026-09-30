@@ -172,6 +172,37 @@
     return undefined;
   }
 
+  // --- terrain ---------------------------------------------------------
+  // One property per node, affecting how well it defends. Deliberately
+  // the smallest thing that makes *where* a position sits matter as much
+  // as what it is: a Factory on high ground is a fortress worth building
+  // a front around, the same Factory in a marsh is the obvious place to
+  // punch through.
+  //
+  // Terrain is assigned symmetrically with everything else, so both sides
+  // get the same ground. Reducing lane density was measured as the
+  // alternative route to "chokepoints" and rejected: even at degree 2.7
+  // maps averaged 0.1 articulation points and 4% blocked routes, because
+  // the connectivity pass yields ring-like graphs with no cut vertices.
+  const TERRAIN = {
+    open:     { label: "Open",     defence: 1.00 },
+    highland: { label: "Highland", defence: 1.25 },
+    marsh:    { label: "Marsh",    defence: 0.78 }
+  };
+  // Command and the Doomstar are always Open. They already have the
+  // largest capacities, and stacking highland on top of the defender
+  // edge, Fortify and a level-3 upgrade pushes their defence beyond what
+  // any realistic concentration can crack — which is exactly how the
+  // original stalemate happened.
+  const FLAT_TYPES = ["command", "doomstar"];
+
+  function terrainOf(node) {
+    return TERRAIN[node.terrain] ? node.terrain : "open";
+  }
+  function terrainDefence(node) {
+    return TERRAIN[terrainOf(node)].defence;
+  }
+
   // --- supply ---------------------------------------------------------
   // A position is IN SUPPLY when it can trace a chain of your own nodes
   // back to one of your Command nodes. Cut that chain and the position
@@ -292,8 +323,10 @@
   // Defence strength of a node against an incoming fleet. Neutral ground
   // has nobody dug in, so it gets neither the defender edge nor tech.
   function defenceOf(game, node) {
-    if (node.owner === NEUTRAL) return node.garrison;
-    return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner);
+    // Terrain applies to everyone, including unheld ground — a marsh is a
+    // marsh whoever is standing in it.
+    if (node.owner === NEUTRAL) return node.garrison * terrainDefence(node);
+    return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner) * terrainDefence(node);
   }
 
   // ---- map generation -------------------------------------------------
@@ -369,13 +402,18 @@
     for (let i = 1; i < pts.length; i++) if (alongOf(pts[i]) < alongOf(pts[hqIdx])) hqIdx = i;
 
     const typePool = ["factory", "mine", "relay", "factory", "mine", "factory", "relay"];
+    const terrainPool = ["open", "highland", "open", "marsh", "open", "highland", "marsh"];
     pts.forEach((p, i) => {
       const type = i === hqIdx ? "command" : typePool[(i * 3 + seed) % typePool.length];
-      nodes.push({ id: nodes.length, x: p.x, y: p.y, type, owner: NEUTRAL, garrison: 0, level: 0 });
+      // Both halves of a mirrored pair get identical ground, so terrain
+      // can never hand one side a better start.
+      const terrain = FLAT_TYPES.indexOf(type) !== -1
+        ? "open" : terrainPool[(i * 5 + seed * 3) % terrainPool.length];
+      nodes.push({ id: nodes.length, x: p.x, y: p.y, type, terrain, owner: NEUTRAL, garrison: 0, level: 0 });
       // 180-degree rotation about the map centre.
       nodes.push({
         id: nodes.length, x: W - p.x, y: H - p.y,
-        type, owner: NEUTRAL, garrison: 0, level: 0
+        type, terrain, owner: NEUTRAL, garrison: 0, level: 0
       });
     });
 
@@ -394,7 +432,7 @@
     // The Doomstar sits dead centre — the one node both sides start
     // equally far from, so holding it is always a contested decision.
     nodes.push({
-      id: nodes.length, x: W / 2, y: H / 2, type: "doomstar",
+      id: nodes.length, x: W / 2, y: H / 2, type: "doomstar", terrain: "open",
       owner: NEUTRAL, garrison: 24, level: 0
     });
 
@@ -713,7 +751,8 @@
       // defender's own multipliers are unwound so the garrison shown is
       // real units rather than effective strength — a better-fortified
       // defender loses fewer units to the same attack.
-      const perUnit = to.owner === NEUTRAL ? 1 : DEFENDER_EDGE * fortifyMult(game, to.owner);
+      const perUnit = terrainDefence(to) *
+        (to.owner === NEUTRAL ? 1 : DEFENDER_EDGE * fortifyMult(game, to.owner));
       to.garrison = Math.max(0, to.garrison - effAttack / perUnit);
       emit(game, {
         kind: "repulsed", x: to.x, y: to.y, owner: to.owner, attacker: f.owner,
@@ -757,7 +796,7 @@
   const DIFFICULTY = [
     { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.70 },
     { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 1.00 },
-    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.60 }
+    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.75 }
   ];
   function aiProduction(game) {
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
@@ -884,11 +923,12 @@
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
     DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
     DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE,
-    TECH, TECH_MAX,
+    TECH, TECH_MAX, TERRAIN, FLAT_TYPES,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, createGame,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
+    terrainOf, terrainDefence,
     sendFleet, upgradeNode, researchTech, fireDoomstar, step,
     isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult

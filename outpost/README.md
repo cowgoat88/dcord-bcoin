@@ -81,6 +81,41 @@ no reason to fight over them, and two players could comfortably turtle in
 opposite corners. Now the small scattered nodes fuel the weapon and the
 middle of the map is worth holding.
 
+## Terrain
+
+Every position stands on ground, and the ground decides how well it
+defends. One property, three values:
+
+| Ground | Defence | Reads as |
+|---|---|---|
+| **Highland** | ×1.25 | green halo, peak mark |
+| **Open** | ×1.00 | nothing |
+| **Marsh** | ×0.78 | violet halo, ripple mark |
+
+A Factory on high ground is a fortress worth building a front around;
+the same Factory in a marsh is the obvious place to punch through. It
+applies to unheld ground too — a marsh is a marsh whoever is standing in
+it — so terrain shapes where you expand, not just where you fight.
+
+Ground is mirrored with the rest of the map, so it can never hand one
+side an easier start. **Command and the Doomstar are always on open
+ground**: they already carry the largest capacities, and stacking
+highland on top of the defender edge, Fortify and a level-3 upgrade
+pushes them past what any realistic concentration can crack — which is
+exactly how the original stalemate began.
+
+### Why terrain, and not narrower maps
+
+Fewer lanes was measured first as the way to create chokepoints, and
+rejected. Sweeping lane density from ~4.9 down to 2.7 connections per
+position produced, per map, an average of **0.1 articulation points**
+(positions whose loss actually splits the map) and only **4% of routes
+fully blocked** — because the generator's connectivity pass yields
+ring-like graphs, which have no cut vertices however sparse they get. It
+also made the game worse, not better: the player's win rate across the
+three tiers fell from 9/5/0 to 8/2/1. Terrain gives positional depth
+without touching connectivity.
+
 ## Supply lines
 
 The lane map is a supply network, not just a set of shortcuts:
@@ -188,5 +223,7 @@ and concentration, the research tracks (escalating costs, army-wide
 effect, the Assault/Fortify asymmetry, parity under equal tech, and that
 a fully fortified position stays crackable), difficulty ordering, the supply network (enemy ground blocking transit,
 orders refused with no route, severed positions falling out of supply and
-producing far less, cut-off Relays not charging), and the stalemate
+producing far less, cut-off Relays not charging), terrain (mirrored
+placement, Command and Doomstar always flat, defence effects, and the
+worst possible position staying crackable), and the stalemate
 regression.

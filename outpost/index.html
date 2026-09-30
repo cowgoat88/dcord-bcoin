@@ -213,6 +213,8 @@
           <div><i>Hold the centre</i> to fire it</div>
           <div><i>Enemy ground</i> blocks your routes</div>
           <div><i>Cut off</i> = 30% output</div>
+          <div><i>Highland</i> ×1.25 defence</div>
+          <div><i>Marsh</i> ×0.78 defence</div>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Positions</div>
         <div class="shapes">
@@ -956,6 +958,43 @@
       ctx.save();
       ctx.translate(n.x, n.y);
 
+      // Ground the position stands on. Drawn beneath everything else and
+      // kept muted: it should be legible at a glance without competing
+      // with the garrison number, which is what you actually read.
+      const terr = E.terrainOf(n);
+      if (terr !== "open") {
+        // Ground is drawn as a soft tinted patch the position sits on.
+        // Fine line-art was tried first and was unreadable at phone size;
+        // a coloured field is unmistakable at any scale and still stays
+        // behind the garrison number, which is what you actually read.
+        const hi = terr === "highland";
+        const rr = r + 19;
+        const grd = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, rr);
+        grd.addColorStop(0, hi ? "rgba(122,196,148,.30)" : "rgba(146,128,200,.28)");
+        grd.addColorStop(1, hi ? "rgba(122,196,148,0)" : "rgba(146,128,200,0)");
+        ctx.fillStyle = grd;
+        ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.fill();
+
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.strokeStyle = hi ? "#7ac494" : "#9280c8";
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        if (hi) {
+          // A peak, sitting just below the position.
+          ctx.moveTo(-7, r + 13); ctx.lineTo(0, r + 5); ctx.lineTo(7, r + 13);
+        } else {
+          // Two flat ripples.
+          ctx.moveTo(-7, r + 8);
+          ctx.bezierCurveTo(-3, r + 5, 3, r + 11, 7, r + 8);
+          ctx.moveTo(-7, r + 13);
+          ctx.bezierCurveTo(-3, r + 10, 3, r + 16, 7, r + 13);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
       // Selection ring
       if (sel) {
         ctx.strokeStyle = "#e2f7ff"; ctx.lineWidth = 2;
@@ -1260,6 +1299,13 @@
           (cut ? " <span style='color:var(--doom)'>(CUT OFF)</span>" : "")
       ];
       if (st.creditRate > 0) bits.push("+" + st.creditRate.toFixed(2) + "c/s");
+      const terrName = E.terrainOf(n);
+      if (terrName !== "open") {
+        const mult = E.TERRAIN[terrName].defence;
+        const good = mult > 1;
+        bits.push("<span style='color:" + (good ? "#8fb8a0" : "#a5a7d0") + "'>" +
+          E.TERRAIN[terrName].label + " \u00d7" + mult.toFixed(2) + " def</span>");
+      }
       if (n.type === "relay") {
         bits.push(E.isContested(game, n)
           ? "<span style='color:var(--doom)'>CONTESTED</span>"

@@ -836,3 +836,87 @@ test("neutral ground never counts as out of supply", () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------
+// Terrain
+// ---------------------------------------------------------------------
+test("terrain is mirrored, so neither side gets easier ground", () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const g = E.createGame({ seed });
+    const pairs = g.nodes.filter((n) => n.type !== "doomstar");
+    for (let i = 0; i < pairs.length; i += 2) {
+      assert.equal(E.terrainOf(pairs[i]), E.terrainOf(pairs[i + 1]),
+        `seed ${seed}: mirrored positions must stand on the same ground`);
+    }
+  }
+});
+
+test("Command and the Doomstar always sit on open ground", () => {
+  // Stacking highland on top of the defender edge, Fortify and a level-3
+  // upgrade would push the biggest positions past what any realistic
+  // concentration can crack — which is how the original stalemate began.
+  for (let seed = 1; seed <= 20; seed++) {
+    const g = E.createGame({ seed });
+    for (const n of g.nodes) {
+      if (E.FLAT_TYPES.indexOf(n.type) !== -1) {
+        assert.equal(E.terrainOf(n), "open", `seed ${seed}: ${n.type} must be on open ground`);
+      }
+    }
+  }
+});
+
+test("every map offers a mix of ground, not one uniform type", () => {
+  let sawHigh = 0, sawMarsh = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const g = E.createGame({ seed });
+    const kinds = new Set(g.nodes.map(E.terrainOf));
+    if (kinds.has("highland")) sawHigh++;
+    if (kinds.has("marsh")) sawMarsh++;
+  }
+  assert.ok(sawHigh >= 15, "most maps should contain high ground, got " + sawHigh + "/20");
+  assert.ok(sawMarsh >= 15, "most maps should contain soft ground, got " + sawMarsh + "/20");
+});
+
+test("terrain changes how hard a position is to take", () => {
+  const g = quiet();
+  const base = { owner: PLAYER, garrison: 40, terrain: "open" };
+  const high = { owner: PLAYER, garrison: 40, terrain: "highland" };
+  const soft = { owner: PLAYER, garrison: 40, terrain: "marsh" };
+  assert.ok(E.defenceOf(g, high) > E.defenceOf(g, base), "high ground must defend better");
+  assert.ok(E.defenceOf(g, soft) < E.defenceOf(g, base), "soft ground must defend worse");
+  // It applies to unheld ground too — a marsh is a marsh whoever is in it.
+  const wildHigh = { owner: NEUTRAL, garrison: 40, terrain: "highland" };
+  const wildOpen = { owner: NEUTRAL, garrison: 40, terrain: "open" };
+  assert.ok(E.defenceOf(g, wildHigh) > E.defenceOf(g, wildOpen));
+});
+
+test("the same attack takes a marsh position but fails on high ground", () => {
+  function fight(terrain) {
+    const g = quiet();
+    const a = g.nodes[0], b = g.nodes[1];
+    a.owner = PLAYER; a.garrison = 62; a.terrain = "open";
+    b.owner = ENEMY; b.garrison = 45; b.terrain = terrain;
+    g.adjacency.set(a.id, [b.id]); g.adjacency.set(b.id, [a.id]);
+    E.sendFleet(g, a.id, b.id, 1, PLAYER);
+    run(g, 40);
+    return b.owner;
+  }
+  assert.equal(fight("marsh"), PLAYER, "62 must take 45 defenders in a marsh");
+  assert.equal(fight("highland"), ENEMY, "the same 62 must fail against 45 on high ground");
+});
+
+test("even the hardest ground stays crackable by a concentrated attack", () => {
+  const g = quiet();
+  g.tech[ENEMY].fortify = E.TECH_MAX;
+  const worst = {
+    type: "factory", level: 3, owner: ENEMY, terrain: "highland",
+    garrison: E.nodeStats({ type: "factory", level: 3 }).cap
+  };
+  const defence = E.defenceOf(g, worst);
+  const midCap = (E.nodeStats({ type: "factory", level: 0 }).cap +
+                  E.nodeStats({ type: "relay", level: 0 }).cap) / 2;
+  assert.ok(midCap * 0.75 * 7 > defence,
+    "seven mid-size positions must break the worst case, got " + defence.toFixed(0));
+  assert.ok(midCap * 0.75 * 5 * (1 + E.TECH.assault.perLevel * E.TECH_MAX) > defence,
+    "five must do it with Assault maxed");
+});
