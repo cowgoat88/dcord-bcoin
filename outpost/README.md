@@ -86,21 +86,22 @@ middle of the map is worth holding.
 Every position stands on ground, and the ground decides how well it
 defends. One property, three values:
 
-| Ground | Defence | Reads as |
+| Space | Defence | Reads as |
 |---|---|---|
-| **Highland** | ×1.25 | green halo, peak mark |
-| **Open** | ×1.00 | nothing |
-| **Marsh** | ×0.78 | violet halo, ripple mark |
+| **Asteroid Belt** | ×1.25 | amber halo, scattered rocks |
+| **Open Space** | ×1.00 | nothing |
+| **Gravity Well** | ×0.78 | violet halo, concentric rings |
 
-A Factory on high ground is a fortress worth building a front around;
-the same Factory in a marsh is the obvious place to punch through. It
-applies to unheld ground too — a marsh is a marsh whoever is standing in
-it — so terrain shapes where you expand, not just where you fight.
+A Factory in an asteroid belt has cover to fight from and is a fortress
+worth building a front around; the same Factory in a gravity well is
+pinned where it cannot manoeuvre, and is the obvious place to punch
+through. It applies to unheld space too — a gravity well pins whoever is
+in it — so terrain shapes where you expand, not just where you fight.
 
-Ground is mirrored with the rest of the map, so it can never hand one
-side an easier start. **Command and the Doomstar are always on open
-ground**: they already carry the largest capacities, and stacking
-highland on top of the defender edge, Fortify and a level-3 upgrade
+Terrain is mirrored with the rest of the map, so it can never hand one
+side an easier start. **Command and the Doomstar always sit in open
+space**: they already carry the largest capacities, and stacking an
+asteroid belt on top of the defender edge, Fortify and a level-3 upgrade
 pushes them past what any realistic concentration can crack — which is
 exactly how the original stalemate began.
 
@@ -263,8 +264,8 @@ effect, the Assault/Fortify asymmetry, parity under equal tech, and that
 a fully fortified position stays crackable), difficulty ordering, the supply network (enemy ground blocking transit,
 orders refused with no route, severed positions falling out of supply and
 producing far less, cut-off Relays not charging), terrain (mirrored
-placement, Command and Doomstar always flat, defence effects, and the
-worst possible position staying crackable), and the stalemate
+placement, Command and Doomstar always in open space, defence effects,
+and the worst possible position staying crackable), and the stalemate
 regression.
 
 `online.test.js` adds 10 cases over an in-memory loopback, with no

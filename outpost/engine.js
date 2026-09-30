@@ -185,9 +185,12 @@
   // maps averaged 0.1 articulation points and 4% blocked routes, because
   // the connectivity pass yields ring-like graphs with no cut vertices.
   const TERRAIN = {
-    open:     { label: "Open",     defence: 1.00 },
-    highland: { label: "Highland", defence: 1.25 },
-    marsh:    { label: "Marsh",    defence: 0.78 }
+    // Open space is the baseline. An asteroid belt gives a defender cover
+    // to fight from; a gravity well pins a garrison in place where it
+    // cannot manoeuvre, so it is the soft spot on any map.
+    open:     { label: "Open Space",    defence: 1.00 },
+    asteroid: { label: "Asteroid Belt", defence: 1.25 },
+    well:     { label: "Gravity Well",  defence: 0.78 }
   };
   // Command and the Doomstar are always Open. They already have the
   // largest capacities, and stacking highland on top of the defender
@@ -402,7 +405,7 @@
     for (let i = 1; i < pts.length; i++) if (alongOf(pts[i]) < alongOf(pts[hqIdx])) hqIdx = i;
 
     const typePool = ["factory", "mine", "relay", "factory", "mine", "factory", "relay"];
-    const terrainPool = ["open", "highland", "open", "marsh", "open", "highland", "marsh"];
+    const terrainPool = ["open", "asteroid", "open", "well", "open", "asteroid", "well"];
     pts.forEach((p, i) => {
       const type = i === hqIdx ? "command" : typePool[(i * 3 + seed) % typePool.length];
       // Both halves of a mirrored pair get identical ground, so terrain

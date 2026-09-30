@@ -22,6 +22,11 @@
   }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* Any class that sets `display` silently defeats the `hidden`
+     attribute — which is how the join-code input and the connection
+     badge were both showing on the start screen. One rule, rather than
+     hunting down every offender as it appears. */
+  [hidden] { display: none !important; }
   html, body {
     margin: 0; height: 100%; overflow: hidden;
     background: var(--bg); color: var(--text);
@@ -85,14 +90,24 @@
 
   /* ---- overlays ---- */
   .overlay {
-    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    background: rgba(7, 11, 20, .9); backdrop-filter: blur(6px); z-index: 10; padding: 20px;
+    position: absolute; inset: 0; display: flex; justify-content: center;
+    /* Deliberately NOT align-items:center. Centring a flex child that is
+       taller than its container makes the child's top edge overflow
+       *and become unreachable*, even with scrolling — measured at
+       cardTop:-105 on a 667px phone once the online panel was added.
+       flex-start plus auto margins centres it when there is room and
+       degrades to top-aligned when there is not. */
+    align-items: flex-start;
+    overflow-y: auto; overscroll-behavior: contain;
+    background: rgba(7, 11, 20, .9); backdrop-filter: blur(6px); z-index: 10;
+    padding: 16px;
   }
   .overlay[hidden] { display: none; }
   .card {
     background: rgba(17, 24, 40, .96); border: 1px solid var(--line);
-    border-radius: 14px; padding: 26px 30px; max-width: 460px; width: 100%;
+    border-radius: 14px; padding: 22px 26px; max-width: 440px; width: 100%;
     box-shadow: 0 24px 70px rgba(0,0,0,.6); text-align: center;
+    margin: auto;            /* centres when it fits, never clips when it doesn't */
   }
   .card h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 7px; color: var(--player);
              text-shadow: 0 0 26px rgba(34,211,238,.45); }
@@ -151,6 +166,24 @@
   }
   .livebadge b { width: 6px; height: 6px; border-radius: 50%; background: var(--doom); }
   .livebadge.on b { background: #4ade80; }
+  .quickstart {
+    font-size: 12px; line-height: 1.6; color: var(--muted);
+    background: rgba(34,211,238,.07); border: 1px solid rgba(34,211,238,.22);
+    border-radius: 8px; padding: 9px 12px; margin-bottom: 14px;
+  }
+  .quickstart b { color: var(--player); font-weight: 700; }
+  details#rules { text-align: left; margin-bottom: 14px; }
+  details#rules > summary {
+    cursor: pointer; list-style: none; text-align: center;
+    font-size: 11px; color: var(--muted); letter-spacing: .5px;
+    text-transform: uppercase; padding: 7px; border-radius: 6px;
+    border: 1px solid var(--line);
+  }
+  details#rules > summary::-webkit-details-marker { display: none; }
+  details#rules > summary::after { content: " ▾"; }
+  details#rules[open] > summary::after { content: " ▴"; }
+  @media (hover: hover) { details#rules > summary:hover { color: var(--text); } }
+  details#rules > summary + * { margin-top: 12px; }
   .shapes { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 0 0 16px;
             font-size: 11px; color: var(--muted); text-align: left; }
   .shapes span { display: flex; align-items: center; gap: 7px; }
@@ -219,23 +252,28 @@
     <div class="overlay" id="startOverlay">
       <div class="card">
         <h1>OUTPOST</h1>
-        <p>Take the map. Every position you hold builds units; send them down the
-           supply lanes and take everything your opponent has.</p>
-        <div class="legend">
-          <div><i>Drag</i> node → target</div>
-          <div><i>Tap</i> nodes to group</div>
-          <div><i>Tap target</i> to send all</div>
+        <p>Hold positions, build forces, take the map.</p>
+        <div class="quickstart">
+          <b>Tap</b> a position, <b>tap</b> a target, <b>tap again</b> to confirm.
+          One position never beats an equal one — send several.
+        </div>
+        <details id="rules">
+          <summary>How to play</summary>
+          <div class="legend">
+          <div><i>Tap</i> yours, then a target</div>
+          <div><i>Hold</i> to add to a group</div>
+          <div><i>Drag</i> to skip the confirm</div>
           <div><i>Defenders</i> fight at ×1.25</div>
-          <div><i>One node</i> never beats an equal</div>
           <div><i>Mass several</i> — that's the game</div>
+          <div><i>Reinforce</i> your own positions too</div>
           <div><i>⚔ Assault</i> +15%/lvl attacking</div>
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
           <div><i>Relays</i> charge the Doomstar</div>
           <div><i>Hold the centre</i> to fire it</div>
-          <div><i>Enemy ground</i> blocks your routes</div>
+          <div><i>Enemy space</i> blocks your routes</div>
           <div><i>Cut off</i> = 30% output</div>
-          <div><i>Highland</i> ×1.25 defence</div>
-          <div><i>Marsh</i> ×0.78 defence</div>
+          <div><i>Asteroid Belt</i> ×1.25 defence</div>
+          <div><i>Gravity Well</i> ×0.78 defence</div>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Positions</div>
         <div class="shapes">
@@ -245,6 +283,7 @@
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Relay · charges</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 2.6,-2.8 9,-2.8 3.8,1.2 5.8,7.6 0,3.8 -5.8,7.6 -3.8,1.2 -9,-2.8 -2.6,-2.8" fill="none" stroke="#ff7a5c" stroke-width="1.6"/></svg> Doomstar · centre</span>
         </div>
+        </details>
         <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
         <div class="row" id="diffRow">
           <button data-diff="0">Cadet</button>
@@ -272,9 +311,6 @@
             <button id="btnCopy">Copy invite link</button>
           </div>
         </div>
-        <p style="margin:0 0 10px;font-size:11px;color:var(--muted)">Research is permanent and applies to
-           your whole force, and both sides can buy it — so equal tech is still an even fight.
-           Credits come from Mines.</p>
         <p style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
       </div>
     </div>
@@ -682,6 +718,7 @@
     started = false;
   });
   document.getElementById("btnHelp").addEventListener("click", () => {
+    document.getElementById("rules").open = true;
     document.getElementById("startOverlay").hidden = false;
     started = false;
   });
@@ -1239,35 +1276,43 @@
       // with the garrison number, which is what you actually read.
       const terr = E.terrainOf(n);
       if (terr !== "open") {
-        // Ground is drawn as a soft tinted patch the position sits on.
-        // Fine line-art was tried first and was unreadable at phone size;
-        // a coloured field is unmistakable at any scale and still stays
-        // behind the garrison number, which is what you actually read.
-        const hi = terr === "highland";
+        // The space a position sits in, drawn as a tinted field beneath
+        // it. Fine line-art was tried and was unreadable at phone size;
+        // a coloured field is unmistakable at any scale and stays behind
+        // the garrison number, which is what you actually read.
+        const rock = terr === "asteroid";
         const rr = r + 19;
         const grd = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, rr);
-        grd.addColorStop(0, hi ? "rgba(122,196,148,.30)" : "rgba(146,128,200,.28)");
-        grd.addColorStop(1, hi ? "rgba(122,196,148,0)" : "rgba(146,128,200,0)");
+        grd.addColorStop(0, rock ? "rgba(176,137,95,.34)" : "rgba(155,127,212,.30)");
+        grd.addColorStop(1, rock ? "rgba(176,137,95,0)" : "rgba(155,127,212,0)");
         ctx.fillStyle = grd;
         ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.fill();
 
         ctx.save();
-        ctx.globalAlpha = 0.95;
-        ctx.strokeStyle = hi ? "#7ac494" : "#9280c8";
-        ctx.lineWidth = 1.8;
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        if (hi) {
-          // A peak, sitting just below the position.
-          ctx.moveTo(-7, r + 13); ctx.lineTo(0, r + 5); ctx.lineTo(7, r + 13);
+        if (rock) {
+          // A scatter of rocks orbiting the position.
+          ctx.fillStyle = "#b0895f";
+          ctx.globalAlpha = 0.95;
+          const rocks = [[-0.95, 0.42, 2.6], [-0.35, 0.74, 1.8], [0.45, 0.68, 2.2],
+                         [1.0, 0.3, 1.6], [0.05, 0.9, 1.3]];
+          for (const [ax, ay, rad] of rocks) {
+            ctx.beginPath();
+            ctx.ellipse(ax * rr * 0.78, ay * rr * 0.62, rad, rad * 0.78, ax, 0, Math.PI * 2);
+            ctx.fill();
+          }
         } else {
-          // Two flat ripples.
-          ctx.moveTo(-7, r + 8);
-          ctx.bezierCurveTo(-3, r + 5, 3, r + 11, 7, r + 8);
-          ctx.moveTo(-7, r + 13);
-          ctx.bezierCurveTo(-3, r + 10, 3, r + 16, 7, r + 13);
+          // Concentric rings falling inward — something you cannot climb
+          // out of, which is why a garrison here fights badly.
+          ctx.strokeStyle = "#9b7fd4";
+          ctx.lineWidth = 1.5;
+          for (let k = 0; k < 3; k++) {
+            ctx.globalAlpha = 0.85 - k * 0.22;
+            const ry = (rr - 2) * (1 - k * 0.22);
+            ctx.beginPath();
+            ctx.ellipse(0, r + 9, ry * 0.52, ry * 0.17, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         }
-        ctx.stroke();
         ctx.restore();
       }
 
@@ -1623,7 +1668,7 @@
       if (terrName !== "open") {
         const mult = E.TERRAIN[terrName].defence;
         const good = mult > 1;
-        bits.push("<span style='color:" + (good ? "#8fb8a0" : "#a5a7d0") + "'>" +
+        bits.push("<span style='color:" + (good ? "#b0895f" : "#9b7fd4") + "'>" +
           E.TERRAIN[terrName].label + " \u00d7" + mult.toFixed(2) + " def</span>");
       }
       if (n.type === "relay") {

@@ -840,18 +840,18 @@ test("neutral ground never counts as out of supply", () => {
 // ---------------------------------------------------------------------
 // Terrain
 // ---------------------------------------------------------------------
-test("terrain is mirrored, so neither side gets easier ground", () => {
+test("terrain is mirrored, so neither side gets easier space", () => {
   for (let seed = 1; seed <= 20; seed++) {
     const g = E.createGame({ seed });
     const pairs = g.nodes.filter((n) => n.type !== "doomstar");
     for (let i = 0; i < pairs.length; i += 2) {
       assert.equal(E.terrainOf(pairs[i]), E.terrainOf(pairs[i + 1]),
-        `seed ${seed}: mirrored positions must stand on the same ground`);
+        `seed ${seed}: mirrored positions must sit in the same kind of space`);
     }
   }
 });
 
-test("Command and the Doomstar always sit on open ground", () => {
+test("Command and the Doomstar always sit in open space", () => {
   // Stacking highland on top of the defender edge, Fortify and a level-3
   // upgrade would push the biggest positions past what any realistic
   // concentration can crack — which is how the original stalemate began.
@@ -859,38 +859,38 @@ test("Command and the Doomstar always sit on open ground", () => {
     const g = E.createGame({ seed });
     for (const n of g.nodes) {
       if (E.FLAT_TYPES.indexOf(n.type) !== -1) {
-        assert.equal(E.terrainOf(n), "open", `seed ${seed}: ${n.type} must be on open ground`);
+        assert.equal(E.terrainOf(n), "open", `seed ${seed}: ${n.type} must be in open space`);
       }
     }
   }
 });
 
-test("every map offers a mix of ground, not one uniform type", () => {
+test("every map offers a mix of space, not one uniform type", () => {
   let sawHigh = 0, sawMarsh = 0;
   for (let seed = 1; seed <= 20; seed++) {
     const g = E.createGame({ seed });
     const kinds = new Set(g.nodes.map(E.terrainOf));
-    if (kinds.has("highland")) sawHigh++;
-    if (kinds.has("marsh")) sawMarsh++;
+    if (kinds.has("asteroid")) sawHigh++;
+    if (kinds.has("well")) sawMarsh++;
   }
-  assert.ok(sawHigh >= 15, "most maps should contain high ground, got " + sawHigh + "/20");
-  assert.ok(sawMarsh >= 15, "most maps should contain soft ground, got " + sawMarsh + "/20");
+  assert.ok(sawHigh >= 15, "most maps should contain asteroid cover, got " + sawHigh + "/20");
+  assert.ok(sawMarsh >= 15, "most maps should contain gravity wells, got " + sawMarsh + "/20");
 });
 
 test("terrain changes how hard a position is to take", () => {
   const g = quiet();
   const base = { owner: PLAYER, garrison: 40, terrain: "open" };
-  const high = { owner: PLAYER, garrison: 40, terrain: "highland" };
-  const soft = { owner: PLAYER, garrison: 40, terrain: "marsh" };
-  assert.ok(E.defenceOf(g, high) > E.defenceOf(g, base), "high ground must defend better");
-  assert.ok(E.defenceOf(g, soft) < E.defenceOf(g, base), "soft ground must defend worse");
-  // It applies to unheld ground too — a marsh is a marsh whoever is in it.
-  const wildHigh = { owner: NEUTRAL, garrison: 40, terrain: "highland" };
+  const high = { owner: PLAYER, garrison: 40, terrain: "asteroid" };
+  const soft = { owner: PLAYER, garrison: 40, terrain: "well" };
+  assert.ok(E.defenceOf(g, high) > E.defenceOf(g, base), "asteroid cover must defend better");
+  assert.ok(E.defenceOf(g, soft) < E.defenceOf(g, base), "a gravity well must defend worse");
+  // It applies to unheld space too — a gravity well pins anyone in it.
+  const wildHigh = { owner: NEUTRAL, garrison: 40, terrain: "asteroid" };
   const wildOpen = { owner: NEUTRAL, garrison: 40, terrain: "open" };
   assert.ok(E.defenceOf(g, wildHigh) > E.defenceOf(g, wildOpen));
 });
 
-test("the same attack takes a marsh position but fails on high ground", () => {
+test("the same attack takes a position in a gravity well but fails in an asteroid belt", () => {
   function fight(terrain) {
     const g = quiet();
     const a = g.nodes[0], b = g.nodes[1];
@@ -901,15 +901,15 @@ test("the same attack takes a marsh position but fails on high ground", () => {
     run(g, 40);
     return b.owner;
   }
-  assert.equal(fight("marsh"), PLAYER, "62 must take 45 defenders in a marsh");
-  assert.equal(fight("highland"), ENEMY, "the same 62 must fail against 45 on high ground");
+  assert.equal(fight("well"), PLAYER, "62 must take 45 defenders pinned in a gravity well");
+  assert.equal(fight("asteroid"), ENEMY, "the same 62 must fail against 45 in an asteroid belt");
 });
 
-test("even the hardest ground stays crackable by a concentrated attack", () => {
+test("even the strongest terrain stays crackable by a concentrated attack", () => {
   const g = quiet();
   g.tech[ENEMY].fortify = E.TECH_MAX;
   const worst = {
-    type: "factory", level: 3, owner: ENEMY, terrain: "highland",
+    type: "factory", level: 3, owner: ENEMY, terrain: "asteroid",
     garrison: E.nodeStats({ type: "factory", level: 3 }).cap
   };
   const defence = E.defenceOf(g, worst);
