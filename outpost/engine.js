@@ -277,7 +277,11 @@
     return best;
   }
 
-  function fireDoomstar(game, owner) {
+  // `targetId` is optional: pass one to aim the strike, omit it to hit
+  // whatever the enemy has massed hardest. The game's loudest moment
+  // should be a decision, but it must still work as one button for a
+  // player who does not want to aim.
+  function fireDoomstar(game, owner, targetId) {
     if (game.winner) return "The battle is over.";
     const d = doomstarNode(game);
     if (!d) return "No Doomstar on this map.";
@@ -285,7 +289,16 @@
     if ((game.charge[owner] || 0) < DOOM_CHARGE_NEEDED) {
       return "Charge " + Math.floor(game.charge[owner] || 0) + "/" + DOOM_CHARGE_NEEDED + ".";
     }
-    const target = doomstarTarget(game, owner);
+    let target = null;
+    if (targetId !== undefined && targetId !== null) {
+      const pick = game.nodes[targetId | 0];
+      if (!pick) return "No such position.";
+      if (pick.owner === owner) return "You cannot fire on your own position.";
+      if (pick.owner === NEUTRAL) return "Only an enemy position is worth a strike.";
+      target = pick;
+    } else {
+      target = doomstarTarget(game, owner);
+    }
     if (!target) return "Nothing left to fire at.";
 
     game.charge[owner] = 0;
@@ -1017,7 +1030,7 @@
       case "research":
         return researchTech(game, String(order.track), seat);
       case "fire":
-        return fireDoomstar(game, seat);
+        return fireDoomstar(game, seat, order.target);
       default:
         return "Unknown order.";
     }

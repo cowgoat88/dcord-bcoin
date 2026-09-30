@@ -142,6 +142,7 @@
     font-weight: 700; letter-spacing: .5px;
   }
   button.fire:not(:disabled) { animation: firePulse 1.3s ease-in-out infinite; }
+  button.fire.aiming { background: var(--doom); color: #150a08; }
   @keyframes firePulse {
     0%,100% { box-shadow: 0 0 0 rgba(255,122,92,0); }
     50%     { box-shadow: 0 0 16px rgba(255,122,92,.75); }
@@ -275,6 +276,7 @@
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
           <div><i>Relays</i> charge the Doomstar</div>
           <div><i>Hold the centre</i> to fire it</div>
+          <div><i>FIRE then tap</i> to aim the strike</div>
           <div><i>Enemy space</i> blocks your routes</div>
           <div><i>Cut off</i> = 30% output</div>
           <div><i>Asteroid Belt</i> ×1.25 defence</div>
@@ -408,6 +410,7 @@
   let selection = new Set();
   let hoverId = null;
   let doomTargetId = null;
+  let aiming = false;        // Doomstar aim mode: next tap picks the target
   let drag = null;              // { fromId, x, y, moved, touch }
   let pendingTarget = null;     // touch: target awaiting a confirming tap
   let pressTimer = null;
@@ -577,6 +580,14 @@
     }
 
     // --- taps ---------------------------------------------------------
+    // Aiming the Doomstar takes priority over every other tap meaning.
+    if (aiming) {
+      if (!target) { cancelAim(); toast("Strike cancelled."); return; }
+      if (target.owner === foeSeat) { launchStrike(target.id); return; }
+      toast(target.owner === mySeat ? "That's yours." : "Only an enemy position.");
+      return;
+    }
+
     if (!target) { selection.clear(); pendingTarget = null; updateHud(); return; }
 
     // Tapping something already in the group takes it back out.
@@ -689,10 +700,19 @@
   document.getElementById("btnFire").addEventListener("click", doFire);
   function doFire() {
     if (!game) return;
-    const reason = order({ kind: "fire" });
+    if (!E.canFire(game, mySeat)) { toast(E.fireDoomstar(game, mySeat) || "Not ready."); return; }
+    if (aiming) { launchStrike(); return; }      // press twice to take the default
+    aiming = true;
+    toast("Pick a target \u2014 or press FIRE again for the biggest");
+    updateHud();
+  }
+  function launchStrike(targetId) {
+    aiming = false;
+    const reason = order({ kind: "fire", target: targetId });
     if (reason) toast(reason);
     updateHud();
   }
+  function cancelAim() { if (aiming) { aiming = false; updateHud(); } }
 
   document.getElementById("techSeg").addEventListener("click", (ev) => {
     const b = ev.target.closest("button"); if (!b) return;
@@ -774,7 +794,7 @@
     else if (k === "f") doFire();
     else if (k === "q") doResearch("assault");
     else if (k === "w") doResearch("fortify");
-    else if (k === "escape") { selection.clear(); pendingTarget = null; updateHud(); }
+    else if (k === "escape") { cancelAim(); selection.clear(); pendingTarget = null; updateHud(); }
     else if (k >= "1" && k <= "4") {
       const b = document.getElementById("fracSeg").children[parseInt(k, 10) - 1];
       if (b) b.click();
@@ -1135,7 +1155,7 @@
         if (ev.owner === mySeat) sfx.big(); else sfx.lost();
       } else if (ev.kind === "charge") {
         if (ev.owner === mySeat && ev.ready) {
-          toast("Doomstar charged \u2014 hold the centre and FIRE");
+          toast("Doomstar charged \u2014 press FIRE, then pick a target");
           sfx.upgrade();
         }
       } else if (ev.kind === "research") {
@@ -1219,6 +1239,7 @@
     drawLanes(now);
     drawFleets(now);
     drawNodes(now);
+    drawAimMode(now);
     drawDragArrow();
     drawPendingTarget(now);
     drawHoverPreview();
@@ -1499,7 +1520,9 @@
       // Marked for the Doomstar: once your weapon is charged, the enemy
       // position it will strike is shown, so firing is an informed choice
       // and you can see when a better target is about to present itself.
-      if (doomTargetId === n.id) {
+      // While aiming, drawAimMode marks every option including this one;
+      // drawing both would stack two labels on the same node.
+      if (doomTargetId === n.id && !aiming) {
         const t = now * 0.004;
         ctx.strokeStyle = "#ff7a5c";
         ctx.globalAlpha = 0.85;
@@ -1597,6 +1620,30 @@
     ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke();
     ctx.fillStyle = col;
     ctx.fillText(label, tgt.x, ly);
+  }
+
+  // Aim mode: mark every legal target, and show which one the default
+  // would hit so taking it is still one press.
+  function drawAimMode(now) {
+    if (!aiming) return;
+    const auto = E.doomstarTarget(game, mySeat);
+    for (const n of game.nodes) {
+      if (n.owner !== foeSeat) continue;
+      const r = E.nodeStats(n).radius;
+      const isAuto = auto && auto.id === n.id;
+      const pulse = 1 + Math.sin(now * 0.007 + n.id) * 0.05;
+      ctx.strokeStyle = "#ff7a5c";
+      ctx.globalAlpha = isAuto ? 0.95 : 0.55;
+      ctx.lineWidth = isAuto ? 3 : 1.8;
+      ctx.setLineDash(isAuto ? [] : [4, 5]);
+      ctx.beginPath(); ctx.arc(n.x, n.y, (r + 16) * pulse, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#ff7a5c";
+      ctx.font = "700 10px ui-monospace, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(isAuto ? "DEFAULT \u2212" + E.DOOM_DAMAGE : "\u2212" + E.DOOM_DAMAGE, n.x, n.y - r - 20);
+    }
   }
 
   function drawDragArrow() {
@@ -1789,11 +1836,14 @@
     const fireBtn = document.getElementById("btnFire");
     const holdsDoom = (E.doomstarNode(game) || {}).owner === mySeat;
     fireBtn.disabled = !E.canFire(game, mySeat);
+    fireBtn.textContent = aiming ? "\u2600 PICK" : "\u2600 FIRE";
+    fireBtn.classList.toggle("aiming", aiming);
+    if (aiming && !E.canFire(game, mySeat)) aiming = false;
     fireBtn.title = !holdsDoom
       ? "Hold the Doomstar at the centre to fire"
       : ch < need ? "Charging: " + ch + "/" + need
-      : "Fire \u2014 " + E.DOOM_DAMAGE + " damage to " +
-        (dt2 ? E.NODE_TYPES[dt2.type].label + " (" + Math.floor(dt2.garrison) + ")" : "the largest position");
+      : aiming ? "Tap an enemy position \u2014 or press again for the default"
+      : "Fire \u2014 " + E.DOOM_DAMAGE + " damage. Press, then pick a target.";
 
     const upBtn = document.getElementById("btnUpgrade");
     if (sel.length) {

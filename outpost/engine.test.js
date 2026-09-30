@@ -700,6 +700,36 @@ test("the strike hits the enemy's largest position and spends the charge", () =>
   assert.equal(foes[0].garrison, 20, "other positions must be untouched");
 });
 
+test("an aimed strike hits the position you picked, not the biggest", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const foes = g.nodes.filter((n) => n.id !== E.doomstarNode(g).id);
+  foes[0].owner = ENEMY; foes[0].garrison = 30;   // the one we want gone
+  foes[1].owner = ENEMY; foes[1].garrison = 60;   // the automatic choice
+  foes[2].owner = NEUTRAL;
+
+  assert.equal(E.fireDoomstar(g, PLAYER, foes[0].id), undefined);
+  assert.equal(Math.round(foes[0].garrison), 30 - E.DOOM_DAMAGE);
+  assert.equal(foes[1].garrison, 60, "the automatic target must be spared");
+});
+
+test("aiming refuses your own ground, neutral ground and nonsense", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const foes = g.nodes.filter((n) => n.id !== E.doomstarNode(g).id);
+  foes[0].owner = PLAYER; foes[0].garrison = 10;
+  foes[1].owner = NEUTRAL;
+  foes[2].owner = ENEMY; foes[2].garrison = 40;
+
+  assert.match(E.fireDoomstar(g, PLAYER, foes[0].id), /your own/);
+  assert.match(E.fireDoomstar(g, PLAYER, foes[1].id), /enemy position/);
+  assert.match(E.fireDoomstar(g, PLAYER, 9999), /No such position/);
+  assert.equal(g.charge[PLAYER], E.DOOM_CHARGE_NEEDED,
+    "a refused strike must not spend the charge");
+});
+
 test("a strike that empties a position abandons it rather than capturing it", () => {
   const g = quiet();
   E.doomstarNode(g).owner = PLAYER;

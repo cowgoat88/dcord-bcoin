@@ -71,10 +71,16 @@ are for:
 - Every **uncontested Relay you hold** adds charge every few seconds.
 - A Relay is **contested** — and stops charging — while any lane-adjacent
   node is enemy-held, so charging is something you have to protect.
-- At full charge, **if you also hold the Doomstar itself**, you can fire:
-  it strips units from the enemy's single largest position. A position
-  emptied by the strike is abandoned, not captured — you still have to go
-  and take it.
+- At full charge, **if you also hold the Doomstar itself**, you can fire.
+  Press FIRE and the map goes into aim mode: tap the enemy position you
+  want hit, or press FIRE a second time to take the default — their
+  single largest position. A position emptied by the strike is abandoned,
+  not captured — you still have to go and take it.
+
+  Aiming matters because the biggest stack is often not the one worth
+  breaking. Cracking a fortified Relay to stop their charge, or softening
+  a chokepoint the moment before your fleets land, beats shaving units
+  off a rear-area garrison that was never going anywhere.
 
 It exists to answer two problems at once. Relays used to be filler with
 no reason to fight over them, and two players could comfortably turtle in
