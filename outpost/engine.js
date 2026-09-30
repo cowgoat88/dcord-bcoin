@@ -53,6 +53,33 @@
   // several at once. That is the core skill of the game.
   const DEFENDER_EDGE = 1.25;
 
+  // Progressive, army-wide research in the StarCraft mould: each track has
+  // three levels, each level costs more than the last, and a level applies
+  // to everything you own the moment it completes. This is the third claim
+  // on Credits alongside node upgrades, so the interesting question is
+  // what you *don't* buy.
+  //
+  // Assault deliberately out-scales Fortify (+15% vs +10% a level). Three
+  // reasons, all measured rather than assumed:
+  //   1. Defenders already get a flat x1.25 before any tech.
+  //   2. You must attack to win, so Assault is mandatory and Fortify is
+  //      the greedy pick — an equal-value Fortify would simply be better.
+  //   3. Stalemate is this game's failure mode. Modelling the force
+  //      requirements showed an un-teched attacker facing a +60% Fortify
+  //      defender needs ~9 mid-size positions converging on one L3
+  //      Command — more than anyone holds on a 14-node map, i.e. a
+  //      guaranteed freeze. Capping Fortify at +30% keeps the worst case
+  //      inside what a side can actually mass.
+  // Because both sides research the same tracks, equal tech leaves the
+  // force ratio exactly where it started — progression shifts the numbers
+  // without shifting the balance, which is the property that makes the
+  // StarCraft model work.
+  const TECH = {
+    assault: { label: "Assault", perLevel: 0.15, costs: [90, 200, 360] },
+    fortify: { label: "Fortify", perLevel: 0.10, costs: [80, 175, 320] }
+  };
+  const TECH_MAX = 3;
+
   // Fleets hitting the same node within this window fight as one force.
   // Without it, converging attacks are defeated one at a time no matter
   // how well timed, which makes concentration — the whole point —
@@ -92,10 +119,40 @@
     };
   }
 
-  // Defence strength of a node against an incoming fleet.
-  function defenceOf(node) {
-    if (node.owner === NEUTRAL) return node.garrison; // neutrals don't dig in
-    return node.garrison * DEFENDER_EDGE;
+  function techLevel(game, owner, track) {
+    return (game.tech && game.tech[owner] && game.tech[owner][track]) || 0;
+  }
+  // Cost of the *next* level, or null when the track is maxed.
+  function techCost(track, level) {
+    const spec = TECH[track];
+    if (!spec || level >= TECH_MAX) return null;
+    return spec.costs[level];
+  }
+  function assaultMult(game, owner) {
+    return 1 + TECH.assault.perLevel * techLevel(game, owner, "assault");
+  }
+  function fortifyMult(game, owner) {
+    return 1 + TECH.fortify.perLevel * techLevel(game, owner, "fortify");
+  }
+
+  function researchTech(game, track, owner) {
+    if (game.winner) return "The battle is over.";
+    if (!TECH[track]) return "No such research.";
+    const level = techLevel(game, owner, track);
+    const cost = techCost(track, level);
+    if (cost === null) return TECH[track].label + " is fully researched.";
+    if ((game.credits[owner] || 0) < cost) return "Need " + cost + " credits.";
+    game.credits[owner] -= cost;
+    game.tech[owner][track] = level + 1;
+    emit(game, { kind: "research", owner, track, level: level + 1 });
+    return undefined;
+  }
+
+  // Defence strength of a node against an incoming fleet. Neutral ground
+  // has nobody dug in, so it gets neither the defender edge nor tech.
+  function defenceOf(game, node) {
+    if (node.owner === NEUTRAL) return node.garrison;
+    return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner);
   }
 
   // ---- map generation -------------------------------------------------
@@ -261,6 +318,7 @@
       nodes, lanes, adjacency,
       fleets: [],
       credits: { [PLAYER]: 40, [ENEMY]: 40 },
+      tech: { [PLAYER]: { assault: 0, fortify: 0 }, [ENEMY]: { assault: 0, fortify: 0 } },
       time: 0,
       winner: null,
       difficulty: o.difficulty === undefined ? 1 : o.difficulty,
@@ -367,11 +425,13 @@
 
     // Production. Garrisons are floats internally and floored for display,
     // so a slow node still makes visible progress between ticks.
+    const aiMult = aiProduction(game);
     for (const n of game.nodes) {
       if (n.owner === NEUTRAL) continue;
       const s = nodeStats(n);
-      if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * dt);
-      if (s.creditRate > 0) game.credits[n.owner] = (game.credits[n.owner] || 0) + s.creditRate * dt;
+      const m = n.owner === ENEMY ? aiMult : 1;
+      if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * m * dt);
+      if (s.creditRate > 0) game.credits[n.owner] = (game.credits[n.owner] || 0) + s.creditRate * m * dt;
     }
 
     // Fleet movement: advance along the current lane, then hand off to the
@@ -449,9 +509,14 @@
     if (!a) return;
     const f = { owner: a.owner, count: a.count, to: to.id };
     const s = nodeStats(to);
-    const defence = defenceOf(to);
-    if (f.count > defence) {
-      const survivors = f.count - defence;
+    // Both sides fight at their researched strength. Comparisons happen in
+    // "effective" strength, and anything written back to a garrison is
+    // converted to real units so the numbers on screen stay honest.
+    const atkMult = assaultMult(game, a.owner);
+    const effAttack = f.count * atkMult;
+    const defence = defenceOf(game, to);
+    if (effAttack > defence) {
+      const survivors = (effAttack - defence) / atkMult;
       const previousOwner = to.owner;
       to.owner = f.owner;
       to.garrison = Math.min(s.cap, survivors);
@@ -465,11 +530,12 @@
         nodeId: to.id, count: Math.round(survivors), big: to.type === "command"
       });
     } else {
-      // Attack repulsed: the defender keeps the node, minus losses, and
-      // the defender-edge multiplier is unwound so the garrison shown is
-      // real units rather than effective strength.
-      const losses = f.count / DEFENDER_EDGE;
-      to.garrison = Math.max(0, to.garrison - (to.owner === NEUTRAL ? f.count : losses));
+      // Attack repulsed: the defender keeps the node, minus losses. The
+      // defender's own multipliers are unwound so the garrison shown is
+      // real units rather than effective strength — a better-fortified
+      // defender loses fewer units to the same attack.
+      const perUnit = to.owner === NEUTRAL ? 1 : DEFENDER_EDGE * fortifyMult(game, to.owner);
+      to.garrison = Math.max(0, to.garrison - effAttack / perUnit);
       emit(game, {
         kind: "repulsed", x: to.x, y: to.y, owner: to.owner, attacker: f.owner,
         count: Math.round(f.count)
@@ -489,11 +555,35 @@
   // that waited for an overwhelming margin. Patience is strength here, so
   // every tier keeps the same good attack threshold and the easy ones are
   // simply slower and less able to mass from depth.
+  // Two independent knobs, and keeping them separate is the whole trick:
+  //   interval — how often the AI *looks* for something to do (fast is
+  //              good: it reacts to threats and spends idle capacity)
+  //   margin   — how much more force than strictly needed before it
+  //              *commits* (high is good: thin-margin attacks fail and
+  //              throw the army away)
+  // Tying them together inverts the tiers. Measured twice: a "relaxed"
+  // AI on a long interval simply banked its army and ground out a win
+  // (53 units to the player's 9 by t=80), while the "ruthless" one
+  // attacked constantly and left every position thin enough to counter.
+  // Hard is therefore responsive *and* patient; easy is sluggish *and*
+  // reckless, which is what actually makes it easy to beat.
+  // `produce` is the primary lever and the only one that orders reliably.
+  // Decision-quality knobs cannot: `margin` helps and hurts in opposite
+  // phases (a thin margin grabs undefended neutrals quickly but throws
+  // armies at dug-in positions), and early expansion dominates the
+  // outcome, so tuning it inverted the tiers twice. A production
+  // multiplier is monotonic by construction, which is why almost every
+  // RTS uses one. It is applied openly to the AI's own output; the AI
+  // still plays through the same orders the player does.
   const DIFFICULTY = [
-    { interval: 4.0, margin: 1.45, minGarrison: 15, maxAttackers: 2, send: 0.50, upgrade: false },
-    { interval: 2.0, margin: 1.45, minGarrison: 11, maxAttackers: 3, send: 0.65, upgrade: true },
-    { interval: 1.1, margin: 1.45, minGarrison: 9,  maxAttackers: 6, send: 0.80, upgrade: true }
+    { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.70 },
+    { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 1.00 },
+    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.30 }
   ];
+  function aiProduction(game) {
+    const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
+    return cfg.produce;
+  }
 
   function stepAI(game, dt) {
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
@@ -504,7 +594,7 @@
     const mine = nodesOf(game, ENEMY);
     if (!mine.length) return;
 
-    if (cfg.upgrade) considerUpgrade(game, mine);
+    if (cfg.upgrade) considerSpending(game, mine);
 
     // Pick the best target on the whole map, then throw *everything that
     // borders it* at once. Attacking with one node at a time can never
@@ -522,12 +612,12 @@
       if (!attackers.length) continue;
 
       const force = attackers.reduce((sum, s) => sum + Math.floor(s.garrison * cfg.send), 0);
-      const need = defenceOf(tgt) * cfg.margin - incoming(game, tgt.id, ENEMY);
+      const need = (defenceOf(game, tgt) / assaultMult(game, ENEMY)) * cfg.margin - incoming(game, tgt.id, ENEMY);
       if (force <= need) continue;
 
       const value = NODE_TYPES[tgt.type].units * 2 + NODE_TYPES[tgt.type].credits * 3
         + (tgt.owner === PLAYER ? 1.5 : 0);
-      const score = value / (defenceOf(tgt) + 4);
+      const score = value / (defenceOf(game, tgt) + 4);
       if (!best || score > best.score) best = { score, tgt, attackers };
     }
     if (best) {
@@ -546,6 +636,21 @@
         areLinked(game, n.id, front.id))
       .sort((a, b) => b.garrison - a.garrison)[0];
     if (donor) sendFleet(game, donor.id, front.id, 0.5, ENEMY);
+  }
+
+  // The AI buys research too, or the player simply out-techs it for free.
+  // It leans Assault when it is even or ahead (it still has to attack to
+  // win) and Fortify when it is losing ground, and keeps a margin so it
+  // is not left permanently broke.
+  function considerSpending(game, owned) {
+    const behind = owned.length < nodesOf(game, PLAYER).length;
+    for (const track of behind ? ["fortify", "assault"] : ["assault", "fortify"]) {
+      const cost = techCost(track, techLevel(game, ENEMY, track));
+      if (cost !== null && (game.credits[ENEMY] || 0) >= cost * 1.25) {
+        if (!researchTech(game, track, ENEMY)) return;
+      }
+    }
+    considerUpgrade(game, owned);
   }
 
   function considerUpgrade(game, owned) {
@@ -582,9 +687,11 @@
   return {
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
     DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
+    TECH, TECH_MAX,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, createGame,
-    neighbors, areLinked, nodesOf, incoming, income, findPath,
-    sendFleet, upgradeNode, step, resolveArrival, resolveAssault, drainEvents
+    neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
+    sendFleet, upgradeNode, researchTech, step, resolveArrival, resolveAssault, drainEvents,
+    techLevel, techCost, assaultMult, fortifyMult
   };
 });

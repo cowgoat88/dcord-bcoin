@@ -13,9 +13,45 @@ the map is yours. A match runs about two to five minutes.
 - **Tap** your positions to build a group, then **tap a target** to send
   the whole group at once.
 - **Commit** (25/50/75/All) sets how much of each garrison an order sends.
-- **Credits** come from Mines and pay for **upgrades**.
-- Hotkeys: `A` select all, `U` upgrade, `1`–`4` commit level, `Space`
-  pause, `Esc` clear selection.
+- **Credits** come from Mines and pay for two different things: **node
+  upgrades** (a single position produces more) and **research** (a
+  permanent, army-wide bonus). What you skip is the real decision.
+- Hotkeys: `A` select all, `U` upgrade, `Q` Assault, `W` Fortify,
+  `1`–`4` commit level, `Space` pause, `Esc` clear selection.
+
+## Research
+
+Two progressive tracks in the StarCraft mould — three levels each, each
+level costing more than the last, and each applying to your entire force
+the moment it completes:
+
+| Track | Per level | Max | Costs | Effect |
+|---|---|---|---|---|
+| ⚔ **Assault** | +15% | +45% | 90 / 200 / 360 | Everything you attack with hits harder |
+| ⛨ **Fortify** | +10% | +30% | 80 / 175 / 320 | Every position you hold defends harder |
+
+Both sides can research, and the AI does (except on Cadet), so the enemy's
+current levels are shown in the top bar — it is the thing to watch and
+answer. Because both tracks are available to both players, **equal
+research leaves the force balance exactly where it started**; progression
+moves the numbers without moving the balance, which is the property that
+makes this model work.
+
+**Assault deliberately out-scales Fortify.** Three reasons, all measured:
+
+1. Defenders already hold a flat ×1.25 before any research.
+2. You must attack to win, so Assault is mandatory and Fortify is the
+   greedy pick. At equal value, Fortify would simply be the better buy.
+3. Stalemate is this game's failure mode. Modelling the force
+   requirements showed an un-teched attacker facing a **+60% Fortify**
+   defender on a maxed Command needs about **nine** mid-size positions
+   converging at once — more than anyone holds on a 14-node map, i.e. a
+   guaranteed freeze. Capping Fortify at +30% keeps the worst case at
+   seven positions untteched, or five with Assault maxed.
+
+Stress-tested across 16 seeds in five research configurations, including
+an AI that starts with Fortify maxed: **zero stalemates**, and a player
+with Assault maxed beats an AI with Fortify maxed 16/16.
 
 Positions are shaped by role, so the map is readable without labels:
 hexagon **Command** (your strongest producer, and where you start),
@@ -54,11 +90,18 @@ something that did not work:
   ever succeed. Multi-hop orders, coalescing arrivals and the rate/cap
   split fixed it — matches now resolve in 40s–4min, and a regression test
   asserts that six seeds all reach a winner.
-- **Difficulty was inverted.** Tiers defined by how *recklessly* the AI
-  attacked made the "ruthless" setting the weakest, because attacking on
-  thin margins dribbles an army away. Every tier now keeps the same good
-  attack threshold, and difficulty scales how often the AI acts and how
-  many positions it can coordinate.
+- **Difficulty inverted twice, and decision quality could not fix it.**
+  Tiers defined by how *recklessly* the AI attacked made "ruthless" the
+  weakest, because thin margins throw an army away. Tuning patience
+  instead inverted it the other way: a slow, patient AI simply banked its
+  army and ground out a win (53 units to the player's 9 by t=80). The
+  cause is that the attack margin helps and hurts in opposite phases — a
+  thin margin grabs undefended neutrals quickly but fails against dug-in
+  positions — and early expansion dominates the result. Difficulty is now
+  led by an openly-applied production multiplier (0.70 / 1.00 / 1.30),
+  which is monotonic by construction and is what most RTS games use.
+  Measured over 16 seeds the tiers finally order correctly: the reference
+  player wins 100% / 94% / 25%.
 - **The map adapts to your screen.** A fixed-aspect map letterboxed into a
   portrait phone left the playfield in a thin band with nodes too small to
   tap. The map is now generated to the viewport's aspect ratio with its
@@ -87,9 +130,12 @@ no private powers.
 node --test outpost/engine.test.js
 ```
 
-Node's built-in runner, no install needed (Node 18+). 29 cases covering
+Node's built-in runner, no install needed (Node 18+). 40 cases covering
 map connectivity and symmetry, deterministic generation, viewport
 adaptation, order validation, multi-hop routing, the defender edge,
 arrival coalescing, capture and reinforcement, production and capacity,
 the credit economy, upgrade costs and limits, win detection, AI expansion
-and concentration, and the stalemate regression.
+and concentration, the research tracks (escalating costs, army-wide
+effect, the Assault/Fortify asymmetry, parity under equal tech, and that
+a fully fortified position stays crackable), difficulty ordering, and the
+stalemate regression.

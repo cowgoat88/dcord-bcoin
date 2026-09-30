@@ -191,7 +191,7 @@ test("neutral positions do not get the defender bonus", () => {
   a.owner = PLAYER; a.garrison = 22;
   b.owner = NEUTRAL; b.garrison = 20;
   g.adjacency.set(a.id, [b.id]); g.adjacency.set(b.id, [a.id]);
-  assert.equal(E.defenceOf(b), 20, "an unheld position defends at face value");
+  assert.equal(E.defenceOf(g, b), 20, "an unheld position defends at face value");
   E.sendFleet(g, a.id, b.id, 1, PLAYER);
   run(g, 40);
   assert.equal(b.owner, PLAYER, "22 must beat a neutral 20");
@@ -211,7 +211,7 @@ test("fleets converging within the coalesce window fight as one force", () => {
   g.adjacency.set(a.id, [t.id]); g.adjacency.set(b.id, [t.id]);
   g.adjacency.set(t.id, [a.id, b.id]);
 
-  assert.ok(40 < E.defenceOf(t), "setup: either attack alone must lose");
+  assert.ok(40 < E.defenceOf(g, t), "setup: either attack alone must lose");
   E.sendFleet(g, a.id, t.id, 1, PLAYER);
   E.sendFleet(g, b.id, t.id, 1, PLAYER);
   run(g, 30);
@@ -406,8 +406,8 @@ test("matches reach a decision rather than stalling forever", () => {
             .sort((a, b) => E.dist(a, tgt) - E.dist(b, tgt)).slice(0, 4);
           if (!atk.length) continue;
           const force = atk.reduce((s, n) => s + Math.floor(n.garrison * 0.7), 0);
-          if (force <= E.defenceOf(tgt) * 1.45 - E.incoming(g, tgt.id, PLAYER)) continue;
-          const sc = (E.NODE_TYPES[tgt.type].units * 2) / (E.defenceOf(tgt) + 4);
+          if (force <= E.defenceOf(g, tgt) * 1.45 - E.incoming(g, tgt.id, PLAYER)) continue;
+          const sc = (E.NODE_TYPES[tgt.type].units * 2) / (E.defenceOf(g, tgt) + 4);
           if (!best || sc > best.sc) best = { sc, tgt, atk };
         }
         if (best) for (const s of best.atk) E.sendFleet(g, s.id, best.tgt.id, 0.7, PLAYER);
@@ -426,4 +426,162 @@ test("events are drained, so the view never replays the same effect twice", () =
   E.sendFleet(g, hq.id, E.neighbors(g, hq.id)[0], 0.5, PLAYER);
   assert.ok(E.drainEvents(g).length > 0, "an order must report something to show");
   assert.equal(E.drainEvents(g).length, 0, "draining must clear the queue");
+});
+
+// ---------------------------------------------------------------------
+// Progressive research (Assault / Fortify)
+// ---------------------------------------------------------------------
+test("research costs rise with each level and stop at the cap", () => {
+  for (const track of ["assault", "fortify"]) {
+    const costs = [0, 1, 2].map((l) => E.techCost(track, l));
+    assert.ok(costs.every((c) => c > 0), track + ": every level must have a price");
+    assert.ok(costs[1] > costs[0] && costs[2] > costs[1],
+      track + ": each level must cost more than the last");
+    assert.equal(E.techCost(track, E.TECH_MAX), null, track + ": must cap out");
+  }
+});
+
+test("researchTech charges credits, applies army-wide, and refuses when broke", () => {
+  const g = quiet();
+  const cost = E.techCost("assault", 0);
+  g.credits[PLAYER] = cost - 1;
+  assert.equal(E.researchTech(g, "assault", PLAYER), "Need " + cost + " credits.");
+  assert.equal(E.techLevel(g, PLAYER, "assault"), 0);
+
+  g.credits[PLAYER] = cost;
+  assert.equal(E.researchTech(g, "assault", PLAYER), undefined);
+  assert.equal(E.techLevel(g, PLAYER, "assault"), 1);
+  assert.equal(g.credits[PLAYER], 0);
+  assert.ok(E.assaultMult(g, PLAYER) > 1, "the bonus must apply immediately");
+  assert.equal(E.assaultMult(g, ENEMY), 1, "and must not leak to the opponent");
+});
+
+test("research refuses to go past the maximum level", () => {
+  const g = quiet();
+  g.credits[PLAYER] = 1e9;
+  for (let i = 0; i < E.TECH_MAX; i++) E.researchTech(g, "fortify", PLAYER);
+  assert.equal(E.techLevel(g, PLAYER, "fortify"), E.TECH_MAX);
+  assert.equal(E.researchTech(g, "fortify", PLAYER), "Fortify is fully researched.");
+});
+
+test("Assault makes an otherwise-losing attack succeed", () => {
+  function fight(assaultLevel) {
+    const g = quiet();
+    const a = g.nodes[0], b = g.nodes[1];
+    a.owner = PLAYER; a.garrison = 50;
+    b.owner = ENEMY; b.garrison = 45;
+    g.adjacency.set(a.id, [b.id]); g.adjacency.set(b.id, [a.id]);
+    g.tech[PLAYER].assault = assaultLevel;
+    E.sendFleet(g, a.id, b.id, 1, PLAYER);
+    run(g, 40);
+    return b.owner;
+  }
+  assert.equal(fight(0), ENEMY, "50 must not beat 45 defenders behind the defender edge");
+  assert.equal(fight(3), PLAYER, "the same attack must succeed with Assault fully researched");
+});
+
+test("Fortify makes an otherwise-winning attack fail", () => {
+  function fight(fortifyLevel) {
+    const g = quiet();
+    const a = g.nodes[0], b = g.nodes[1];
+    a.owner = PLAYER; a.garrison = 60;
+    b.owner = ENEMY; b.garrison = 45;
+    g.adjacency.set(a.id, [b.id]); g.adjacency.set(b.id, [a.id]);
+    g.tech[ENEMY].fortify = fortifyLevel;
+    E.sendFleet(g, a.id, b.id, 1, PLAYER);
+    run(g, 40);
+    return b.owner;
+  }
+  assert.equal(fight(0), PLAYER, "60 must beat 45 defenders with no Fortify");
+  assert.equal(fight(3), ENEMY, "the same attack must fail against full Fortify");
+});
+
+test("equal research leaves the force balance exactly where it started", () => {
+  // The property that makes the StarCraft model work: progression moves
+  // the numbers without moving the balance.
+  const baseline = (() => {
+    const g = quiet();
+    return E.defenceOf(g, { owner: ENEMY, garrison: 100 }) / E.assaultMult(g, PLAYER);
+  })();
+  for (let lvl = 1; lvl <= E.TECH_MAX; lvl++) {
+    const g = quiet();
+    g.tech[PLAYER].assault = lvl; g.tech[ENEMY].fortify = lvl;
+    const ratio = E.defenceOf(g, { owner: ENEMY, garrison: 100 }) / E.assaultMult(g, PLAYER);
+    // Assault out-scales Fortify on purpose, so parity must not get worse
+    // for the attacker as both sides climb the tree.
+    assert.ok(ratio <= baseline + 1e-9,
+      `level ${lvl}: matched research must never make attacking harder than level 0`);
+  }
+});
+
+test("Assault out-scales Fortify, so teching offence beats teching defence", () => {
+  // Deliberate: defenders already hold a flat x1.25 edge, attacking is
+  // mandatory to win, and an un-answerable Fortify would re-freeze the
+  // map the way the pre-multi-hop build did.
+  const maxAssault = 1 + E.TECH.assault.perLevel * E.TECH_MAX;
+  const maxFortify = 1 + E.TECH.fortify.perLevel * E.TECH_MAX;
+  assert.ok(maxAssault > maxFortify, "full Assault must beat full Fortify");
+});
+
+test("a fully fortified position is still crackable by a concentrated attack", () => {
+  // The stalemate guard. Modelling showed a +60% Fortify defender on an
+  // L3 Command needed ~9 mid-size positions converging — more than a side
+  // ever holds on this map. The cap has to keep the worst case reachable.
+  const g = quiet();
+  g.tech[ENEMY].fortify = E.TECH_MAX;
+  const top = { type: "command", level: 3, owner: ENEMY, garrison: E.nodeStats({ type: "command", level: 3 }).cap };
+  const defence = E.defenceOf(g, top);
+  const midCap = (E.nodeStats({ type: "factory", level: 0 }).cap +
+                  E.nodeStats({ type: "outpost", level: 0 }).cap) / 2;
+  const positionsNeeded = (assaultLevel) => {
+    const per = midCap * 0.75 * (1 + E.TECH.assault.perLevel * assaultLevel);
+    return Math.ceil(defence / per);
+  };
+  // This is the hardest target the game can produce: a maxed, fully
+  // fortified Command. It must stay reachable for a side that holds most
+  // of a 14-node map, and researching Assault must be a real answer to it.
+  assert.ok(positionsNeeded(0) <= 7,
+    "the strongest fortified node must fall to 7 mid-size positions even untteched, got " + positionsNeeded(0));
+  assert.ok(positionsNeeded(E.TECH_MAX) <= 5,
+    "with Assault maxed it must take clearly fewer, got " + positionsNeeded(E.TECH_MAX));
+  assert.ok(positionsNeeded(E.TECH_MAX) < positionsNeeded(0),
+    "Assault research must be a genuine counter to full Fortify");
+});
+
+test("the AI researches on the tiers that are meant to", () => {
+  const easy = E.createGame({ seed: 8, difficulty: 0 });
+  run(easy, 260);
+  assert.equal(E.techLevel(easy, ENEMY, "assault") + E.techLevel(easy, ENEMY, "fortify"), 0,
+    "the easiest tier must not research at all");
+
+  const hard = E.createGame({ seed: 8, difficulty: 2 });
+  run(hard, 260);
+  assert.ok(E.techLevel(hard, ENEMY, "assault") + E.techLevel(hard, ENEMY, "fortify") > 0,
+    "the hardest tier must spend credits on research");
+});
+
+test("difficulty tiers are ordered: a harder tier out-produces an easier one", () => {
+  // The only lever that orders reliably. Decision-quality knobs inverted
+  // the tiers twice: a thin attack margin grabs undefended neutrals fast
+  // but throws armies at dug-in positions, and early expansion dominates.
+  const rates = [0, 1, 2].map((d) => E.aiProduction(E.createGame({ seed: 1, difficulty: d })));
+  assert.ok(rates[0] < rates[1] && rates[1] < rates[2],
+    "AI production must increase monotonically with difficulty: " + rates.join(" < "));
+  assert.equal(rates[1], 1, "the middle tier must be an even fight");
+});
+
+test("the AI's production multiplier only touches the AI", () => {
+  const g = E.createGame({ seed: 3, difficulty: 2 });
+  g.ai.timer = Infinity;
+  for (const n of g.nodes) n.owner = NEUTRAL;
+  const mine = g.nodes[0], theirs = g.nodes[1];
+  mine.type = theirs.type = "factory";
+  mine.owner = PLAYER; theirs.owner = ENEMY;
+  mine.garrison = theirs.garrison = 0;
+  run(g, 10);
+  assert.ok(theirs.garrison > mine.garrison,
+    "at the hardest tier the AI must out-produce the player from the same node type");
+  const base = E.nodeStats(mine).unitRate * 10;
+  assert.ok(Math.abs(mine.garrison - base) < 0.5,
+    "the player's own rate must be untouched by the difficulty setting");
 });

@@ -124,7 +124,8 @@
     #cmd { gap: 6px; padding: 7px 10px; }
     #hud button { padding: 5px 8px; font-size: 10px; }
     .seg button { padding: 7px 9px; }
-    #stIncome, #hud .stat:nth-child(5) { display: none; }
+    #statIncome { display: none; }
+    #stFoeTech { font-size: 10px; }
     #selInfo { flex-basis: 100%; min-width: 0; order: -1; }
     .card { padding: 20px; }
     .card h1 { font-size: 20px; letter-spacing: 4px; }
@@ -138,7 +139,8 @@
     <span class="stat"><span class="k">You</span><span class="v you" id="stYou">0</span></span>
     <span class="stat"><span class="k">Enemy</span><span class="v foe" id="stFoe">0</span></span>
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
-    <span class="stat"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
+    <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
+    <span class="stat" id="statIncome"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
     <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
     <span class="spacer"></span>
     <button id="btnSound">♪</button>
@@ -163,6 +165,8 @@
           <div><i>Defenders</i> fight at ×1.25</div>
           <div><i>One node</i> never beats an equal</div>
           <div><i>Mass several</i> — that's the game</div>
+          <div><i>⚔ Assault</i> +15%/lvl attacking</div>
+          <div><i>⛨ Fortify</i> +10%/lvl defending</div>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Positions</div>
         <div class="shapes">
@@ -180,6 +184,9 @@
         <div class="row">
           <button class="primary" id="btnStart">Deploy</button>
         </div>
+        <p style="margin:0 0 10px;font-size:11px;color:var(--muted)">Research is permanent and applies to
+           your whole force, and both sides can buy it — so equal tech is still an even fight.
+           Credits come from Mines.</p>
         <p style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
       </div>
     </div>
@@ -213,6 +220,11 @@
     </div>
     <button id="btnAll">Select All</button>
     <button id="btnUpgrade">Upgrade</button>
+    <span class="grouplabel">Research</span>
+    <div class="seg" id="techSeg">
+      <button id="btnAssault" data-track="assault">⚔ Assault</button>
+      <button id="btnFortify" data-track="fortify">⛨ Fortify</button>
+    </div>
   </div>
 </div>
 
@@ -400,7 +412,9 @@
     const who = n.owner === PLAYER ? "Yours" : n.owner === ENEMY ? "Enemy" : "Neutral";
     return E.NODE_TYPES[n.type].label + " · " + who + " · " +
       Math.floor(n.garrison) + "/" + s.cap +
-      (n.owner !== NEUTRAL ? " · defends at x" + E.DEFENDER_EDGE : "");
+      (n.owner !== NEUTRAL
+        ? " · defends at \u00d7" + (E.DEFENDER_EDGE * E.fortifyMult(game, n.owner)).toFixed(2)
+        : " · no defender bonus");
   }
 
   // ---------------------------------------------------------------
@@ -436,6 +450,23 @@
     ev.currentTarget.classList.toggle("on", !muted);
     if (!muted) sfx.launch();
   });
+  document.getElementById("techSeg").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    doResearch(b.dataset.track);
+  });
+  function doResearch(track) {
+    if (!game) return;
+    const lvl = E.techLevel(game, PLAYER, track);
+    const reason = E.researchTech(game, track, PLAYER);
+    if (reason) { toast(reason); return; }
+    const spec = E.TECH[track];
+    toast(spec.label + " " + roman(lvl + 1) + " researched");
+    // Flash the whole force so a global upgrade reads as global.
+    for (const n of E.nodesOf(game, PLAYER)) { addPulse(n.id, 1.3); }
+    updateHud();
+  }
+  const roman = (n) => ["", "I", "II", "III"][n] || String(n);
+
   document.getElementById("btnPause").addEventListener("click", togglePause);
   function togglePause() {
     if (!started || game.winner) return;
@@ -475,6 +506,8 @@
     if (k === " ") { ev.preventDefault(); togglePause(); }
     else if (k === "a") document.getElementById("btnAll").click();
     else if (k === "u") doUpgrade();
+    else if (k === "q") doResearch("assault");
+    else if (k === "w") doResearch("fortify");
     else if (k === "escape") { selection.clear(); updateHud(); }
     else if (k >= "1" && k <= "4") {
       const b = document.getElementById("fracSeg").children[parseInt(k, 10) - 1];
@@ -587,6 +620,14 @@
         burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
         floatText(ev.x, ev.y, "HELD", "#cbd5e1");
         if (ev.attacker === PLAYER || ev.owner === PLAYER) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "research") {
+        if (ev.owner === PLAYER) sfx.upgrade();
+        const col = ev.track === "assault" ? "#fca5a5" : "#93c5fd";
+        for (const n of E.nodesOf(game, ev.owner)) {
+          burst(n.x, n.y, col, 8, 60, 0.6);
+        }
+        const anchor = E.nodesOf(game, ev.owner)[0];
+        if (anchor) floatText(anchor.x, anchor.y, E.TECH[ev.track].label + " " + ev.level, col);
       } else if (ev.kind === "upgrade") {
         const id = nodeIdAt(ev.x, ev.y);
         addPulse(id, 1.5);
@@ -827,13 +868,16 @@
   // learnable — otherwise a player just sees attacks failing for no
   // visible reason and assumes the game is broken.
   function previewOrder(sourceIds, tgt) {
-    let force = 0;
+    let raw = 0;
     for (const id of sourceIds) {
       if (id === tgt.id) continue;
-      force += Math.floor(game.nodes[id].garrison * sendFrac);
+      raw += Math.floor(game.nodes[id].garrison * sendFrac);
     }
+    // Shown at researched strength, so the preview matches what combat
+    // will actually do.
+    const force = Math.round(raw * E.assaultMult(game, PLAYER));
     const friendly = tgt.owner === PLAYER;
-    const defence = friendly ? 0 : E.defenceOf(tgt) - E.incoming(game, tgt.id, PLAYER);
+    const defence = friendly ? 0 : Math.max(0, E.defenceOf(game, tgt) - E.incoming(game, tgt.id, PLAYER) * E.assaultMult(game, PLAYER));
     return { force, defence: Math.max(0, defence), friendly, wins: friendly || force > defence };
   }
 
@@ -946,6 +990,23 @@
       info.innerHTML = "<b>" + sel.length + "</b> selected · " + total +
         " units · sending <b>" + willSend + "</b>";
     }
+
+    for (const track of ["assault", "fortify"]) {
+      const btn = document.getElementById(track === "assault" ? "btnAssault" : "btnFortify");
+      const lvl = E.techLevel(game, PLAYER, track);
+      const cost = E.techCost(track, lvl);
+      const icon = track === "assault" ? "\u2694" : "\u26e8";
+      const pips = "\u25cf".repeat(lvl) + "\u25cb".repeat(E.TECH_MAX - lvl);
+      btn.textContent = icon + " " + pips + (cost === null ? " MAX" : " " + cost + "c");
+      btn.disabled = cost === null || (game.credits[PLAYER] || 0) < cost;
+      btn.classList.toggle("on", lvl > 0);
+      const mult = track === "assault" ? E.assaultMult(game, PLAYER) : E.fortifyMult(game, PLAYER);
+      btn.title = E.TECH[track].label + " " + (lvl || 0) + "/" + E.TECH_MAX +
+        " \u2014 " + (track === "assault" ? "attacks" : "your positions defend") +
+        " at \u00d7" + mult.toFixed(2) + (cost === null ? "" : " \u00b7 next " + cost + "c");
+    }
+    document.getElementById("stFoeTech").textContent =
+      "\u2694" + E.techLevel(game, ENEMY, "assault") + " \u26e8" + E.techLevel(game, ENEMY, "fortify");
 
     const upBtn = document.getElementById("btnUpgrade");
     if (sel.length) {
