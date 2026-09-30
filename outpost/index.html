@@ -294,6 +294,22 @@
   let difficulty = 1;
   let sendFrac = 0.5;
 
+  // Preferences survive a reload. Wrapped because storage throws in
+  // private browsing on some mobile browsers, and losing a setting must
+  // never take the game down with it.
+  const prefs = {
+    read() {
+      try { return JSON.parse(localStorage.getItem("outpost.prefs") || "{}"); }
+      catch (e) { return {}; }
+    },
+    write(patch) {
+      try {
+        localStorage.setItem("outpost.prefs",
+          JSON.stringify(Object.assign(this.read(), patch)));
+      } catch (e) { /* not fatal */ }
+    }
+  };
+
   // View transform: the whole map is always fitted into the canvas, so
   // there is no camera to manage and nothing can happen off-screen.
   let view = { scale: 1, ox: 0, oy: 0 };
@@ -301,6 +317,7 @@
   // Presentation-only state, kept separate from the simulation.
   let selection = new Set();
   let hoverId = null;
+  let doomTargetId = null;
   let drag = null;              // { fromId, x, y, moved, touch }
   let pendingTarget = null;     // touch: target awaiting a confirming tap
   let pressTimer = null;
@@ -562,6 +579,7 @@
 
   document.getElementById("btnSound").addEventListener("click", (ev) => {
     muted = !muted;
+    prefs.write({ muted: muted });
     ev.currentTarget.textContent = muted ? "\u266a\u0338" : "\u266a";
     ev.currentTarget.classList.toggle("on", !muted);
     if (!muted) sfx.launch();
@@ -595,7 +613,8 @@
   function togglePause() {
     if (!started || game.winner) return;
     paused = !paused;
-    document.getElementById("btnPause").textContent = paused ? "Resume" : "Pause";
+    pausedByHide = false;
+    syncPauseBtn();
   }
 
   document.getElementById("btnNew").addEventListener("click", () => {
@@ -611,6 +630,7 @@
   document.getElementById("diffRow").addEventListener("click", (ev) => {
     const b = ev.target.closest("button"); if (!b) return;
     difficulty = parseInt(b.dataset.diff, 10);
+    prefs.write({ difficulty: difficulty });
     [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
   });
 
@@ -623,6 +643,23 @@
   document.getElementById("btnSameSeed").addEventListener("click", () => {
     const s = game ? game.seed : undefined; started = true; newGame(s);
   });
+
+  // A real-time game that keeps running while the tab is hidden just
+  // loses itself: lock your phone for a minute and come back to a
+  // finished match. Auto-pause, and say so rather than silently freezing.
+  let pausedByHide = false;
+  document.addEventListener("visibilitychange", () => {
+    if (!started || !game || game.winner) return;
+    if (document.hidden) {
+      if (!paused) { paused = true; pausedByHide = true; syncPauseBtn(); }
+    } else if (pausedByHide) {
+      pausedByHide = false;
+      toast("Paused while you were away \u2014 press Resume");
+    }
+  });
+  function syncPauseBtn() {
+    document.getElementById("btnPause").textContent = paused ? "Resume" : "Pause";
+  }
 
   window.addEventListener("keydown", (ev) => {
     if (!started) return;
@@ -1046,6 +1083,25 @@
         }
       }
 
+      // Enemy forces inbound. You cannot defend what you cannot see
+      // coming, and fleets take several seconds to cross the map — this
+      // is the window in which reinforcing is still possible.
+      if (n.owner === PLAYER) {
+        const inbound = E.incoming(game, n.id, ENEMY);
+        if (inbound > 0) {
+          const beats = 0.5 + 0.5 * Math.abs(Math.sin(now * 0.006));
+          ctx.strokeStyle = "#fb7185";
+          ctx.globalAlpha = 0.35 + beats * 0.5;
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(0, 0, r + 13 + beats * 3, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#fb7185";
+          ctx.font = "700 11px ui-monospace, monospace";
+          ctx.textAlign = "center"; ctx.textBaseline = "middle";
+          ctx.fillText("\u26a0 " + Math.round(inbound), 0, -r - 15);
+        }
+      }
+
       // Cut off from your Command: the position still flies your colour
       // but is running at a fraction of its output. Drawn as a broken
       // ring so it reads as "severed" rather than just damaged.
@@ -1086,6 +1142,31 @@
           ctx.beginPath(); ctx.arc(0, 0, r + 22, 0, Math.PI * 2); ctx.stroke();
           ctx.globalAlpha = 1;
         }
+      }
+
+      // Marked for the Doomstar: once your weapon is charged, the enemy
+      // position it will strike is shown, so firing is an informed choice
+      // and you can see when a better target is about to present itself.
+      if (doomTargetId === n.id) {
+        const t = now * 0.004;
+        ctx.strokeStyle = "#ff7a5c";
+        ctx.globalAlpha = 0.85;
+        ctx.lineWidth = 2;
+        const rr = r + 24 + Math.sin(t) * 3;
+        for (let k = 0; k < 4; k++) {
+          const a0 = t * 0.5 + k * Math.PI / 2;
+          ctx.beginPath(); ctx.arc(0, 0, rr, a0, a0 + 0.5); ctx.stroke();
+        }
+        ctx.beginPath(); ctx.moveTo(-rr - 5, 0); ctx.lineTo(-rr + 7, 0);
+        ctx.moveTo(rr - 7, 0); ctx.lineTo(rr + 5, 0);
+        ctx.moveTo(0, -rr - 5); ctx.lineTo(0, -rr + 7);
+        ctx.moveTo(0, rr - 7); ctx.lineTo(0, rr + 5);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#ff7a5c";
+        ctx.font = "700 10px ui-monospace, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("TARGET \u2212" + E.DOOM_DAMAGE, 0, -rr - 13);
       }
 
       // Incoming assault indicator
@@ -1348,13 +1429,19 @@
       ? relays + " Relay" + (relays === 1 ? "" : "s") + " charging (+" + relays + " every " + E.DOOM_CHARGE_INTERVAL + "s)"
       : "No Relays charging \u2014 hold uncontested Relays to charge";
 
+    // Only mark a target once the weapon could actually be used.
+    const armed = (game.charge[PLAYER] || 0) >= E.DOOM_CHARGE_NEEDED;
+    const dt2 = armed ? E.doomstarTarget(game, PLAYER) : null;
+    doomTargetId = dt2 ? dt2.id : null;
+
     const fireBtn = document.getElementById("btnFire");
     const holdsDoom = (E.doomstarNode(game) || {}).owner === PLAYER;
     fireBtn.disabled = !E.canFire(game, PLAYER);
     fireBtn.title = !holdsDoom
       ? "Hold the Doomstar at the centre to fire"
       : ch < need ? "Charging: " + ch + "/" + need
-      : "Fire \u2014 " + E.DOOM_DAMAGE + " damage to the enemy's largest position";
+      : "Fire \u2014 " + E.DOOM_DAMAGE + " damage to " +
+        (dt2 ? E.NODE_TYPES[dt2.type].label + " (" + Math.floor(dt2.garrison) + ")" : "the largest position");
 
     const upBtn = document.getElementById("btnUpgrade");
     if (sel.length) {
@@ -1436,6 +1523,24 @@
 
   // Boot: build a game immediately so the start screen has a live board
   // behind it rather than an empty rectangle.
+  // Restore saved preferences before the first paint so the start screen
+  // already reflects them.
+  (function applyPrefs() {
+    const p = prefs.read();
+    if (typeof p.difficulty === "number") {
+      difficulty = E.clamp(p.difficulty | 0, 0, 2);
+      const row = document.getElementById("diffRow");
+      [...row.children].forEach((c) =>
+        c.classList.toggle("on", parseInt(c.dataset.diff, 10) === difficulty));
+    }
+    if (p.muted) {
+      muted = true;
+      const b = document.getElementById("btnSound");
+      b.textContent = "\u266a\u0338";
+      b.classList.remove("on");
+    }
+  })();
+
   resize();
   newGame();
   started = false;
