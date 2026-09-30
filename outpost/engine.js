@@ -37,11 +37,11 @@
   // charges the superweapon. That is the whole reason to fight for the
   // scattered small nodes.
   const NODE_TYPES = {
-    command: { label: "Command", units: 0.78, cap: 70, credits: 0.00, radius: 30, shape: "hex" },
-    factory: { label: "Factory", units: 0.40, cap: 45, credits: 0.00, radius: 24, shape: "square" },
-    mine:    { label: "Mine",    units: 0.14, cap: 28, credits: 0.60, radius: 22, shape: "diamond" },
-    relay:   { label: "Relay",   units: 0.20, cap: 34, credits: 0.08, radius: 21, shape: "circle" },
-    doomstar: { label: "Doomstar", units: 0.30, cap: 40, credits: 0.00, radius: 27, shape: "star" }
+    command: { label: "Command", units: 0.78, cap: 70, credits: 0.35, radius: 30, shape: "hex" },
+    factory: { label: "Factory", units: 0.40, cap: 45, credits: 0.25, radius: 24, shape: "square" },
+    mine:    { label: "Mine",    units: 0.14, cap: 28, credits: 0.90, radius: 22, shape: "diamond" },
+    relay:   { label: "Relay",   units: 0.20, cap: 34, credits: 0.25, radius: 21, shape: "circle" },
+    doomstar: { label: "Doomstar", units: 0.30, cap: 40, credits: 0.30, radius: 27, shape: "star" }
   };
 
   // --- Doomstar objective -------------------------------------------
@@ -54,6 +54,15 @@
   const DOOM_CHARGE_INTERVAL = 3.0;  // seconds between charge ticks
   const DOOM_CHARGE_NEEDED = 20;     // charge required to fire
   const DOOM_DAMAGE = 26;            // units removed from the target
+  // The garrison sitting on the centre at kick-off.
+  //
+  // Worth knowing before touching this: the centre stayed neutral in 40
+  // of 40 measured matches, so the Doomstar is a late-game objective in
+  // practice rather than a mid-game one. Lowering this was tried as the
+  // fix and is not one -- at a garrison of 7 the weapon still only fired
+  // 0.11 times per match, because reaching the middle, not cracking it,
+  // is what costs. Do not hang a doctrine on the weapon alone.
+  const DOOM_GARRISON = 24;
   // A Relay with an enemy-held neighbour is contested and stops charging,
   // so charging is something you have to protect, not something that
   // happens for free once you have grabbed a corner.
@@ -104,6 +113,15 @@
   };
   const TECH_MAX = 3;
 
+  // Every held position earns credits, not only Mines. Measured before
+  // this: a side finished an average match having earned 12 credits
+  // against a first research level costing 90, and completed 0.13
+  // research levels per match -- the whole credit economy, and with it
+  // the research buttons, was decoration. Holding ground now funds
+  // roughly one research level or one upgrade a match, which makes the
+  // spend a decision rather than a formality. Mines stay the economy
+  // node at nearly four times a Factory's rate.
+
   // ---- doctrines -------------------------------------------------------
   // One standing choice made before the match starts. Every doctrine is a
   // SIDEGRADE: each one buys its advantage with a matching weakness, so
@@ -128,10 +146,23 @@
     defence: 1,          // defensive strength
     research: 1,         // research cost
     doom: 1,             // Doomstar strike damage
+    chargeRate: 1,       // Doomstar charge gained per tick
+    relayUnits: 1,       // unit production multiplier, Relays only
     cutoff: 0.3,         // output multiplier while cut off; OUT_OF_SUPPLY_RATE
                          // is defined from this so the two cannot drift
     contestedCharge: 0   // charge a contested Relay still contributes
   };
+
+  // Each doctrine's advantage has to land on something that happens in
+  // EVERY match, or it is decoration. Measured over 30 average matches
+  // before these numbers were set: a side earns 12 credits a match and
+  // finishes 0.13 research levels, fires the Doomstar 0.00 times, and
+  // spends 0.0% of its node-seconds at the garrison cap -- but 25% of
+  // them cut off from supply. So capacity, credit income and the weapon
+  // were all worth approximately zero as written, and the doctrines
+  // built on them did nothing a player could feel. Production, fleet
+  // speed, attack, defence and the supply penalty are the levers that
+  // are live every second, and the set below is built from those.
   const DOCTRINES = {
     standard: {
       label: "Standard", icon: "\u25c6",
@@ -141,33 +172,39 @@
     },
     vanguard: {
       label: "Vanguard", icon: "\u27a4",
-      up: "Fleets travel 15% faster",
-      down: "Positions hold 15% fewer units and build 5% slower",
-      mods: { speed: 1.15, cap: 0.85, units: 0.95 }
+      up: "Fleets travel 25% faster",
+      down: "Positions build units 12% slower",
+      mods: { speed: 1.25, units: 0.88 }
     },
     logistics: {
       label: "Deep Logistics", icon: "\u25cf",
-      up: "Cut-off positions keep 65% output, not 30%",
-      down: "Credit income \u221225%",
-      mods: { cutoff: 0.65, credits: 0.75 }
+      up: "Cut-off positions keep 90% output, not 30%",
+      down: "Credit income \u221230%",
+      mods: { cutoff: 0.90, credits: 0.70 }
     },
     relays: {
       label: "Forward Relays", icon: "\u2605",
-      up: "Contested Relays keep charging, at half rate",
-      down: "Each strike does 20 damage, not " + DOOM_DAMAGE,
-      mods: { contestedCharge: 0.5, doom: 20 / DOOM_DAMAGE }
+      up: "Relays out-build Factories, charge twice as fast, and keep charging while contested",
+      down: "Everywhere else builds 10% slower",
+      // The charge half of this used to be the whole doctrine, and it
+      // was worth nothing: across 40 measured matches neither side ever
+      // held the centre, so the weapon never fired at all. The Relay
+      // production bonus is what makes the pick pay off in the match
+      // you are actually having; the charge is the upside when it does
+      // come together.
+      mods: { relayUnits: 2.5, chargeRate: 2, contestedCharge: 1, units: 0.90 }
     },
     prospectors: {
       label: "Prospectors", icon: "\u25c8",
-      up: "Income +90%, research 20% cheaper",
-      down: "Positions build 5% slower",
-      mods: { credits: 1.90, research: 0.80, units: 0.95 }
+      up: "Income +70% and research costs 30% less",
+      down: "Positions build units 10% slower",
+      mods: { credits: 1.70, research: 0.70, units: 0.90 }
     },
     shock: {
       label: "Shock Troops", icon: "\u25b2",
       up: "Assaults land 15% harder",
-      down: "Your positions defend 5% worse",
-      mods: { attack: 1.15, defence: 0.95 }
+      down: "Positions defend 6% worse and build 20% slower",
+      mods: { attack: 1.15, defence: 0.94, units: 0.80 }
     }
   };
   const DOCTRINE_KEYS = Object.keys(DOCTRINES);
@@ -185,18 +222,23 @@
   // orders cleanly, so the ladder is built from it.
   //
   // Measured player win rate over 200 seeds at Commander:
-  //   none 67% | I 52% | II 40% | III 34% | IV 23% | V 10%
+  //   none 44% | I 39% | II 31% | III 11% | IV 7% | V 2%
+  // (measured with the person-like commander in scratchpad/harness2.js.
+  // Assault II is a cliff -- 31% to 11% -- so the first rungs are built
+  // from Fortify and Assault I to make the climb a climb. An earlier V
+  // that only added production inverted against IV: at that depth the
+  // tech gap already decides it.)
   const ASCENSION = [
-    { label: "Ascension I",   note: "The enemy starts with Assault I",
-      tech: { assault: 1, fortify: 0 } },
-    { label: "Ascension II",  note: "The enemy starts with Assault II and Fortify I",
+    { label: "Ascension I",   note: "The enemy starts with Fortify I",
+      tech: { assault: 0, fortify: 1 } },
+    { label: "Ascension II",  note: "The enemy also starts with Assault I",
+      tech: { assault: 1, fortify: 1 } },
+    { label: "Ascension III", note: "Its Assault starts at II",
       tech: { assault: 2, fortify: 1 } },
-    { label: "Ascension III", note: "The enemy starts with Assault II and Fortify II",
-      tech: { assault: 2, fortify: 2 } },
-    { label: "Ascension IV",  note: "The enemy starts with Assault III and Fortify II",
-      tech: { assault: 3, fortify: 2 } },
+    { label: "Ascension IV",  note: "The enemy starts fully researched",
+      tech: { assault: 3, fortify: 3 } },
     { label: "Ascension V",   note: "...and out-produces you by a further 25%",
-      tech: { assault: 3, fortify: 2 }, produce: true }
+      tech: { assault: 3, fortify: 3 }, produce: true }
   ];
   const ASCENSION_MAX = ASCENSION.length;
   const ASC_PRODUCE_BONUS = 1.25;
@@ -258,7 +300,8 @@
     const base = NODE_TYPES[node.type];
     const rateMult = 1 + RATE_BONUS * node.level;
     const held = game && node.owner !== NEUTRAL;
-    const dUnits = held ? docMod(game, node.owner, "units") : 1;
+    const dUnits = (held ? docMod(game, node.owner, "units") : 1)
+      * (held && node.type === "relay" ? docMod(game, node.owner, "relayUnits") : 1);
     const dCred = held ? docMod(game, node.owner, "credits") : 1;
     const dCap = held ? docMod(game, node.owner, "cap") : 1;
     return {
@@ -472,7 +515,8 @@
       const held = chargingRelays(game, owner);
       const relays = held.length;
       if (!relays) continue;
-      const gained = held.reduce((sum, n) => sum + relayCharge(game, n), 0);
+      const gained = held.reduce((sum, n) => sum + relayCharge(game, n), 0)
+        * docMod(game, owner, "chargeRate");
       const before = game.charge[owner] || 0;
       if (before >= DOOM_CHARGE_NEEDED) continue;
       game.charge[owner] = Math.min(DOOM_CHARGE_NEEDED, before + gained * DOOM_CHARGE_PER_RELAY);
@@ -597,7 +641,7 @@
     // equally far from, so holding it is always a contested decision.
     nodes.push({
       id: nodes.length, x: W / 2, y: H / 2, type: "doomstar", terrain: "open",
-      owner: NEUTRAL, garrison: 24, level: 0
+      owner: NEUTRAL, garrison: DOOM_GARRISON, level: 0
     });
 
     const lanes = buildLanes(nodes, spacing * 2.6);
@@ -1220,6 +1264,7 @@
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
     DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
     DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE,
+    DOOM_GARRISON,
     TECH, TECH_MAX, TERRAIN, FLAT_TYPES,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, createGame,

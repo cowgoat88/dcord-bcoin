@@ -260,21 +260,34 @@ test("neutral positions produce nothing", () => {
   assert.equal(n.garrison, before, "unheld ground must not reinforce itself");
 });
 
-test("mines pay credits, other positions do not", () => {
-  const g = quiet();
-  for (const n of g.nodes) n.owner = NEUTRAL;
-  const mine = nodeOf(g, "mine");
-  mine.owner = PLAYER;
-  g.credits[PLAYER] = 0;
-  run(g, 60);
-  assert.ok(g.credits[PLAYER] > 0, "a held mine must pay out");
+test("holding ground pays, and Mines pay far the best", () => {
+  // Every position earns something: a side that earns only from Mines
+  // finished an average match with 12 credits against a 90-credit
+  // research level, which made the whole spend system decoration.
+  function earned(type) {
+    const g = quiet();
+    // Keep both Commands held: strip the enemy of everything and the
+    // match ends on the first tick, and strip your own Command and the
+    // position is out of supply. Either way it earns nothing and the
+    // measurement is of the fixture, not the rule.
+    for (const n of g.nodes) if (n.type !== "command") n.owner = NEUTRAL;
+    const home = g.nodes.find((n) => n.type === "command" && n.owner === PLAYER);
+    const subject = g.nodes.find((n) => n.type === type && n.owner === NEUTRAL)
+      || nodeOf(g, type);
+    subject.owner = PLAYER;
+    g.credits[PLAYER] = 0;
+    const before = E.income(g, PLAYER).credits - E.nodeStats(home, g).creditRate;
+    run(g, 60);
+    // Count only what the position under test contributed.
+    return before * 60;
+  }
+  const mine = earned("mine"), factory = earned("factory"), relay = earned("relay");
+  assert.ok(factory > 0, "a held Factory must pay something");
+  assert.ok(relay > 0, "a held Relay must pay something");
+  assert.ok(mine > factory * 2, "a Mine must still be clearly the credit node");
 
-  const g2 = quiet();
-  for (const n of g2.nodes) n.owner = NEUTRAL;
-  nodeOf(g2, "factory").owner = PLAYER;
-  g2.credits[PLAYER] = 0;
-  run(g2, 60);
-  assert.equal(g2.credits[PLAYER], 0, "a factory must not pay credits");
+  // And a minute of holding one ordinary position must be worth having.
+  assert.ok(factory > 10, "holding ground for a minute has to move the needle, got " + factory);
 });
 
 test("upgrades raise production far more than capacity", () => {
@@ -1007,8 +1020,9 @@ test("the endgame push is an endgame, not an opening rush", () => {
 // ---------------------------------------------------------------------
 
 test("every doctrine only uses modifier keys the engine knows about", () => {
-  const known = ["speed", "cap", "units", "credits", "attack", "defence",
-                 "research", "doom", "cutoff", "contestedCharge"];
+  const known = ["speed", "cap", "units", "relayUnits", "credits", "attack",
+                 "defence", "research", "doom", "chargeRate", "cutoff",
+                 "contestedCharge"];
   for (const key of E.DOCTRINE_KEYS) {
     const d = E.DOCTRINES[key];
     assert.ok(d.label && d.up, key + " needs a label and something to say for itself");
@@ -1030,7 +1044,8 @@ test("every doctrine is a trade, never a straight upgrade", () => {
     // At least one modifier must be worse than the baseline. "cutoff" and
     // "contestedCharge" are floors rather than multipliers, so higher is
     // better for those two as well.
-    const worse = keys.some((k) => mods[k] < 1 && k !== "cutoff" && k !== "contestedCharge");
+    const higherIsBetter = ["cutoff", "contestedCharge", "chargeRate", "relayUnits"];
+    const worse = keys.some((k) => mods[k] < 1 && higherIsBetter.indexOf(k) === -1);
     assert.ok(worse, key + " has no cost");
   }
 });
@@ -1047,16 +1062,25 @@ test("an unknown doctrine is treated as Standard, never as a hole in the rules",
   assert.equal(E.doctrineOf(g, PLAYER), "shock");
 });
 
-test("Vanguard fleets arrive sooner and its positions hold less", () => {
+test("Vanguard arrives first and hits softer for it", () => {
   const fast = E.createGame({ seed: 8, doctrine: "vanguard", foeDoctrine: "standard" });
   const slow = E.createGame({ seed: 8, doctrine: "standard", foeDoctrine: "standard" });
-  assert.ok(E.fleetSpeed(fast, PLAYER) > E.fleetSpeed(slow, PLAYER));
+  assert.ok(E.fleetSpeed(fast, PLAYER) > E.fleetSpeed(slow, PLAYER) * 1.2,
+    "the speed edge has to be big enough to change when you arrive");
+  const home = fast.nodes.find((n) => n.owner === PLAYER);
+  const slowHome = slow.nodes.find((n) => n.owner === PLAYER);
+  assert.ok(E.nodeStats(home, fast).unitRate < E.nodeStats(slowHome, slow).unitRate,
+    "and it is paid for");
 
-  const a = fast.nodes.find((n) => n.owner === PLAYER);
-  const b = slow.nodes.find((n) => n.owner === PLAYER);
-  assert.ok(E.nodeStats(a, fast).cap < E.nodeStats(b, slow).cap, "the cap must be the cost");
-  // And the raw type numbers are unchanged when no game is supplied.
-  assert.equal(E.nodeStats(a).cap, E.nodeStats(b).cap);
+  // A fleet on the same route really does land sooner.
+  function trip(g) {
+    const from = g.nodes.find((n) => n.owner === PLAYER);
+    from.garrison = 40;
+    const to = g.nodes[E.neighbors(g, from.id)[0]];
+    assert.equal(E.sendFleet(g, from.id, to.id, 0.5, PLAYER), undefined);
+    return g.fleets[0].duration;
+  }
+  assert.ok(trip(fast) < trip(slow), "the same hop must take less time");
 });
 
 test("Deep Logistics keeps a severed position working", () => {
@@ -1075,7 +1099,7 @@ test("Deep Logistics keeps a severed position working", () => {
   assert.equal(output("standard"), E.OUT_OF_SUPPLY_RATE);
 });
 
-test("Forward Relays trades strike damage for charge under pressure", () => {
+test("Forward Relays actually gets the weapon fired inside a match", () => {
   function contested(doctrine) {
     const g = E.createGame({ seed: 7, doctrine, foeDoctrine: "standard" });
     for (const n of g.nodes) n.owner = PLAYER;
@@ -1086,12 +1110,44 @@ test("Forward Relays trades strike damage for charge under pressure", () => {
     return E.relayCharge(g, r);
   }
   assert.equal(contested("standard"), 0, "normally a contested Relay stops charging");
-  assert.equal(contested("relays"), 0.5);
+  assert.equal(contested("relays"), 1, "under this doctrine pressure does not stop the charge");
 
-  const soft = E.createGame({ seed: 7, doctrine: "relays", foeDoctrine: "standard" });
-  const hard = E.createGame({ seed: 7, doctrine: "standard", foeDoctrine: "standard" });
-  assert.equal(E.strikeDamage(hard, PLAYER), E.DOOM_DAMAGE);
-  assert.ok(E.strikeDamage(soft, PLAYER) < E.DOOM_DAMAGE, "the weaker strike is the price");
+  // The point of the doctrine: reaching a full charge in the time a
+  // match actually lasts. Measured before it existed, the weapon fired
+  // 0.00 times per match.
+  function chargeAfter(doctrine, seconds) {
+    const g = E.createGame({ seed: 7, doctrine, foeDoctrine: "standard" });
+    g.ai.timer = Infinity;
+    // Take the whole board but leave the enemy their Command, so the
+    // Relays are all in supply (a Relay with no chain back to a Command
+    // of yours charges nothing, whatever your doctrine) and the match
+    // does not end before the clock runs.
+    const foeHome = g.nodes.find((n) => n.type === "command" && n.owner === ENEMY);
+    for (const n of g.nodes) if (n !== foeHome) n.owner = PLAYER;
+    E.computeSupply(g);
+    run(g, seconds);
+    return g.charge[PLAYER];
+  }
+  // Ten seconds in, before either side saturates the 20-charge cap.
+  assert.ok(chargeAfter("relays", 10) > chargeAfter("standard", 10),
+    "it has to charge visibly faster");
+  assert.equal(chargeAfter("relays", 10), E.DOOM_CHARGE_NEEDED,
+    "holding four Relays, this doctrine should be ready to fire almost at once");
+  // The Relay production bonus is what makes this pick pay off in the
+  // match you are actually having; everything else builds slower for it.
+  const g = E.createGame({ seed: 7, doctrine: "relays", foeDoctrine: "standard" });
+  const plain = E.createGame({ seed: 7, doctrine: "standard", foeDoctrine: "standard" });
+  const relay = g.nodes.find((n) => n.type === "relay"); relay.owner = PLAYER;
+  const plainRelay = plain.nodes.find((n) => n.type === "relay"); plainRelay.owner = PLAYER;
+  assert.ok(E.nodeStats(relay, g).unitRate > E.nodeStats(plainRelay, plain).unitRate * 2,
+    "a Relay must become a real producer");
+  assert.ok(E.nodeStats(relay, g).unitRate > E.NODE_TYPES.factory.units,
+    "...and out-build a Factory, which is what the doctrine claims and what "
+    + "makes taking Relays worth doing in the match you are actually having");
+  const fac = g.nodes.find((n) => n.type === "factory"); fac.owner = PLAYER;
+  const plainFac = plain.nodes.find((n) => n.type === "factory"); plainFac.owner = PLAYER;
+  assert.ok(E.nodeStats(fac, g).unitRate < E.nodeStats(plainFac, plain).unitRate,
+    "and everywhere else is the price");
 });
 
 test("Prospectors earns more and researches cheaper, and builds slower", () => {
@@ -1114,17 +1170,22 @@ test("Shock Troops hits harder and holds worse", () => {
   assert.ok(E.fortifyMult(g, PLAYER) < E.fortifyMult(g, ENEMY));
 });
 
-test("a captured position is held to the captor's capacity, not the loser's", () => {
-  // Vanguard's smaller cap must follow the ground it takes.
-  const g = E.createGame({ seed: 8, doctrine: "vanguard", foeDoctrine: "standard" });
+test("a captured position is held to the cap it has AFTER changing hands", () => {
+  // Taking ground resets its upgrades, so the survivors are held to the
+  // bare capacity of a level-0 node -- not to the fortress the previous
+  // owner had built. Ownership and level have to be settled before the
+  // cap is read, which is the ordering this guards.
+  const g = E.createGame({ seed: 8, doctrine: "standard", foeDoctrine: "standard" });
   g.ai.timer = Infinity;
   const tgt = g.nodes.find((n) => n.type === "factory");
-  tgt.owner = ENEMY; tgt.garrison = 1; tgt.level = 0;
+  tgt.owner = ENEMY; tgt.garrison = 1; tgt.level = E.MAX_LEVEL;
+  const fortressCap = E.nodeStats(tgt, g).cap;
   tgt.assault = { owner: PLAYER, count: 400, fuse: 0 };
   E.resolveAssault(g, tgt);
   assert.equal(tgt.owner, PLAYER);
-  assert.equal(tgt.garrison, E.nodeStats(tgt, g).cap);
-  assert.ok(tgt.garrison < E.NODE_TYPES.factory.cap, "the captor's own cap must apply");
+  assert.equal(tgt.level, 0);
+  assert.equal(tgt.garrison, E.NODE_TYPES.factory.cap);
+  assert.ok(tgt.garrison < fortressCap, "the loser's upgraded cap must not carry over");
 });
 
 // ---------------------------------------------------------------------

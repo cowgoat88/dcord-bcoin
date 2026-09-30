@@ -27,27 +27,41 @@ measured — difficulty tiers inverted twice, and reducing lane density
 produced no chokepoints at all. Run a seed sweep and report the numbers
 rather than reasoning from the constants.
 
-Current baseline over 200 seeds: 198 / 167 / 133 player wins across the
-three difficulty tiers, zero stalemates. Difficulty must stay monotonic
-and stalemates must stay at zero.
+Current baseline over 200 seeds with the person-like commander
+(`scratchpad/harness2.js`): difficulty must stay monotonic and
+stalemates must stay at zero.
+
+### Measure how often an effect can even apply, before tuning it
+
+The first doctrine set was tuned carefully and did nothing a player
+could feel, because three of the things it was built on never happen:
+
+| | measured in real matches |
+|---|---|
+| credits earned per match | 12, against a 90-credit research level |
+| research levels completed | 0.13 per match |
+| time spent at the garrison cap | 0.0% of node-seconds |
+| Doomstar strikes | 0.00 per match; the centre stayed neutral 40/40 |
+| positions cut off from supply | 25% of node-seconds |
+
+So before pricing a lever, measure how much of the match it is live
+for. `scratchpad/felt.js` does exactly this and is worth re-running
+after any balance change.
 
 ### What the benchmark cannot see
 
-The scripted commander used for balance sweeps attacks on a fixed 1.5s
-cadence, never banks units and barely spends credits. Measured with
-single-modifier ablations over 200 seeds, it prices only three things:
+The old harness (`harness.js`) attacked on a fixed cadence, never banked
+units and barely spent credits, so it priced cap, credits and the weapon
+at exactly zero. `harness2.js` replaces it: it values Mines, commits 60%
+rather than 75%, and spends on upgrades as well as research, which
+produces 110-150s matches and a roughly even fight at Officer.
 
-- fleet **speed** (very strong: +40% speed was worth +22 points)
-- unit **production** rate
-- **defence** strength
-
-and is completely blind to **garrison cap**, **credit income** and
-**research cost** — cap cut to 80% measured as exactly 0 difference.
-Its response is also not smooth: a 1% production cut measured −7 points
-while an 8% cut measured 0. Treat anything inside ±10 points as noise,
-and never price a doctrine's *cost* on a lever the harness reports as
-free. The sweep lives in the scratchpad as `harness.js` plus the
-`tune*.js` / `iso*.js` drivers.
+Even so its response is **not monotonic** — dialling production from
+0.85 to 0.80 to 0.70 moved one doctrine's win rate 76% → 87% → 60% — and
+any attack or defence penalty hits its commit threshold like a cliff, so
+composing two separately-measured levers does not give their sum.
+Measure each candidate whole, never price a doctrine's cost on attack or
+defence alone, and treat anything inside +/-10 points as noise.
 
 ## Branch
 

@@ -74,35 +74,67 @@ doctrine is the shape of the army you brought to it.
 | Doctrine | Gets | Gives up |
 |---|---|---|
 | ◆ **Standard** | Balanced — nothing to exploit | — |
-| ➤ **Vanguard** | Fleets travel 15% faster | Positions hold 15% fewer units and build 5% slower |
-| ● **Deep Logistics** | Cut-off positions keep 65% output instead of 30% | Credit income −25% |
-| ★ **Forward Relays** | Contested Relays keep charging, at half rate | Each strike does 20 damage instead of 26 |
-| ◈ **Prospectors** | Income +90%, research 20% cheaper | Positions build 5% slower |
-| ▲ **Shock Troops** | Assaults land 15% harder | Your positions defend 5% worse |
+| ➤ **Vanguard** | Fleets travel 25% faster | Positions build units 12% slower |
+| ● **Deep Logistics** | Cut-off positions keep 90% output instead of 30% | Credit income −30% |
+| ★ **Forward Relays** | Relays out-build Factories, charge twice as fast, and keep charging while contested | Everywhere else builds 10% slower |
+| ◈ **Prospectors** | Income +70%, research 30% cheaper | Positions build units 10% slower |
+| ▲ **Shock Troops** | Assaults land 15% harder | Positions defend 6% worse and build 20% slower |
 
 Both sides always have one. Against the AI its doctrine is drawn from
 the map seed, so a given seed always fields the same opponent and a
 rematch on a new seed is a different problem; online, each player brings
-their own and the host is authoritative about both. The top bar shows
-the pairing throughout, because knowing what the other side brought is
-half of deciding what to do about it.
+their own and the host is authoritative about both.
 
-**On the balance numbers, honestly.** Measured over 200 seeds against
-the shipped AI, player win rate lands between 74% and 94% at Officer and
-57% and 76% at Commander, against 84% / 67% for Standard. That is a
-wider band than it looks, and the benchmark is the reason: the scripted
-commander used to measure it attacks on a fixed cadence and never banks
-units or hoards credits, so it prices *speed*, *production* and
-*defence* and is completely blind to **cap**, **credit income** and
-**research cost** — a garrison cap cut from 100% to 80% measured as
-exactly zero difference. Three of the six doctrines are built mostly on
-the levers it cannot see, which is why Deep Logistics and Forward Relays
-measure identical to Standard to the decimal: their effects never fire
-in a 60-second scripted match. The response is also not smooth — a 1%
-production cut measured as −7 points while an 8% cut measured as 0 — so
-anything inside roughly ±10 points is noise, not signal. The numbers
-above rule out a runaway pick; they do not prove the six are equal, and
-nothing short of people playing will.
+You should be able to *see* it working without taking the README's word
+for it. The match opens with a line naming your doctrine and what it
+does, the top bar shows the pairing throughout, selecting a position
+reports its actual units/s and credits/s, and the research buttons show
+the price your side pays. Prospectors opens on ⚔ 63c where everyone else
+opens on ⚔ 90c.
+
+### The first version of this did nothing, and why
+
+Worth writing down, because the failure is instructive. The doctrines
+shipped first were built on garrison capacity, credit income and the
+Doomstar — and measured against real matches, all three were worth
+approximately nothing:
+
+- A side finished an average match having earned **12 credits**, against
+  a first research level costing 90. It completed **0.13 research
+  levels** per match. The credit economy, and with it the research
+  buttons, was decoration.
+- Garrison capacity was reached **0.0%** of the time, so "holds 15%
+  fewer units" was a cost of literally zero.
+- The Doomstar fired **0.00 times per match**: across 40 measured
+  matches neither side ever held the centre, and it was never once
+  chosen as a target. Lowering the centre's garrison was tried as the
+  fix and is not one — at a garrison of 7 it still only fired 0.11 times
+  a match, because reaching the middle, not cracking it, is what costs.
+
+Two of those were fixed rather than designed around. **Every position
+now earns credits**, not just Mines (Mines stay the credit node at
+nearly four times a Factory's rate), which funds roughly one research
+level or one upgrade a match and makes the spend a real decision. And
+Forward Relays was rebuilt around Relay *production*, so it pays off in
+the match you are actually having; the charge bonus is the upside when
+it does come together. The Doomstar remains a late-game objective, and
+the engine says so in a comment where the constant lives.
+
+### On the balance numbers, honestly
+
+Measured over 200 seeds against the shipped AI with a commander that
+plays like a person — values Mines, does not all-in every tick, spends
+credits — every doctrine lands within about six points of Standard at
+both difficulties, with zero stalemates. That is the tightest result of
+four separate attempts, and it is still not proof they are equal.
+
+The benchmark is a proxy and it behaves badly near the edges: its
+response to a modifier is **not monotonic** (dialling production from
+0.85 to 0.80 to 0.70 moved the win rate 76% → 87% → 60%), and any
+penalty to attack or defence hits its commit threshold like a cliff
+rather than a slope, which is why no doctrine's cost is priced on those
+alone. Treat anything inside ±10 points as noise. The numbers rule out a
+runaway pick; the rest comes from people playing.
 
 ## Ascension
 
@@ -113,20 +145,22 @@ progress lives in the same local record as everything else.
 
 | Rung | The enemy | Measured player win rate |
 |---|---|---|
-| — | Commander as it comes | 67% |
-| I | starts with Assault I | 52% |
-| II | starts with Assault II and Fortify I | 40% |
-| III | starts with Assault II and Fortify II | 34% |
-| IV | starts with Assault III and Fortify II | 23% |
-| V | ...and out-produces you by a further 25% | 10% |
+| — | Commander as it comes | 46% |
+| I | starts with Fortify I | 41% |
+| II | also starts with Assault I | 31% |
+| III | its Assault starts at II | 11% |
+| IV | starts fully researched | 5% |
+| V | ...and out-produces you by a further 25% | 2% |
 
 Three other rungs were built and thrown away because they did not
 measure: a harsher supply penalty on your side (a commander who keeps a
 connected front is never cut off, so it changed nothing), faster enemy
 fleets, and cheaper enemy research — and two of those three made the
 game measurably *easier*. Starting tech is the one lever that orders
-cleanly, so the ladder is built from it. Ascension is a solo ladder; an
-online match is two people's doctrines and nothing else.
+cleanly. Assault II is a cliff in that lever (31% → 11%), so the early
+rungs are built from Fortify and Assault I to make the climb a climb.
+Ascension is a solo ladder; an online match is two people's doctrines
+and nothing else.
 
 ## The Doomstar
 
@@ -300,6 +334,13 @@ Decision-quality knobs were tried first and inverted the tiers twice
 (see the design notes below); a multiplier is the only lever that orders
 reliably, and a handicap a player can see reads as a difficulty setting
 rather than as the AI cheating.
+
+Holding ground funds the spending, too: every position earns credits,
+not just Mines. Before that it did not — a side finished an average
+match having earned 12 credits against a 90-credit research level, and
+completed 0.13 research levels a match, which made the research buttons
+decoration. Mines are still the credit node at nearly four times a
+Factory's rate.
 
 Every tier also closes out a game it has already won. A cautious AI
 capped at two attackers tops out near 49 units against a capped

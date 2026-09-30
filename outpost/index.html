@@ -545,6 +545,7 @@
     resize();
     updateHud();
     if (isOnline() && netRole === "host") session.restart(game);
+    if (started) announceDoctrine();
   }
 
   // ---------------------------------------------------------------
@@ -715,8 +716,21 @@
     updateHud();
   }
 
+  // Say out loud what you brought and what you are up against. A
+  // doctrine chosen on the start screen and never mentioned again is a
+  // doctrine nobody notices is working.
+  function announceDoctrine() {
+    if (!game) return;
+    const mine = E.DOCTRINES[E.doctrineOf(game, mySeat)];
+    const foe = E.DOCTRINES[E.doctrineOf(game, foeSeat)];
+    const line = Object.keys(mine.mods).length
+      ? mine.icon + " " + mine.label + " \u2014 " + mine.up
+      : mine.icon + " " + mine.label;
+    toast(line + "  \u00b7  against " + foe.icon + " " + foe.label);
+  }
+
   function describeNode(n) {
-    const s = E.nodeStats(n);
+    const s = E.nodeStats(n, game);
     const who = n.owner === mySeat ? "Yours" : n.owner === foeSeat ? "Enemy" : "Neutral";
     return E.NODE_TYPES[n.type].label + " · " + who + " · " +
       Math.floor(n.garrison) + "/" + s.cap +
@@ -1072,6 +1086,7 @@
         document.getElementById("endOverlay").hidden = true;
         showBadge(true, "Live");
         toast("Joined — you are the second commander");
+        setTimeout(announceDoctrine, 2200);
       },
       onState: (snap) => { if (game) E.applySnapshot(game, snap); },
       onReject: (err) => toast(err),
@@ -1127,6 +1142,7 @@
           document.getElementById("startOverlay").hidden = true;
           showBadge(true, "Live");
           toast("Joined the other tab \u2014 you are the second commander");
+          setTimeout(announceDoctrine, 2200);
         },
         onState: (snap) => { if (game) E.applySnapshot(game, snap); },
         onReject: (err) => toast(err),
@@ -1503,7 +1519,7 @@
 
   function drawNodes(now) {
     for (const n of game.nodes) {
-      const s = E.nodeStats(n);
+      const s = E.nodeStats(n, game);
       const fx = fxFor(n.id);
       const c = colorOf(n.owner);
       const sel = selection.has(n.id);
@@ -1923,7 +1939,7 @@
       // no way to see that a Command out-produces a Factory, or what an
       // upgrade was about to buy.
       const n = game.nodes[sel[0]];
-      const st = E.nodeStats(n);
+      const st = E.nodeStats(n, game);
       const cut = n.inSupply === false;
       const bits = [
         "<b>" + E.NODE_TYPES[n.type].label + "</b>" + (n.level ? " L" + n.level : ""),
@@ -1956,7 +1972,7 @@
     for (const track of ["assault", "fortify"]) {
       const btn = document.getElementById(track === "assault" ? "btnAssault" : "btnFortify");
       const lvl = E.techLevel(game, mySeat, track);
-      const cost = E.techCost(track, lvl);
+      const cost = E.techCost(track, lvl, game, mySeat);
       const icon = track === "assault" ? "\u2694" : "\u26e8";
       const pips = "\u25cf".repeat(lvl) + "\u25cb".repeat(E.TECH_MAX - lvl);
       btn.textContent = icon + " " + pips + (cost === null ? " MAX" : " " + cost + "c");
@@ -2019,8 +2035,9 @@
       upBtn.disabled = !cheapest || (game.credits[mySeat] || 0) < cost;
       if (!cheapest) { upBtn.textContent = "Max level"; upBtn.title = ""; }
       else {
-        const now = E.nodeStats(cheapest);
-        const next = E.nodeStats({ type: cheapest.type, level: cheapest.level + 1 });
+        const now = E.nodeStats(cheapest, game);
+        const next = E.nodeStats(
+          { type: cheapest.type, level: cheapest.level + 1, owner: cheapest.owner }, game);
         upBtn.textContent = "\u2191 L" + (cheapest.level + 1) + " \u00b7 " + cost + "c";
         upBtn.title = E.NODE_TYPES[cheapest.type].label + " L" + cheapest.level + " \u2192 L" +
           (cheapest.level + 1) + ": " + now.unitRate.toFixed(2) + " \u2192 " +
