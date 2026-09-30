@@ -407,7 +407,7 @@ test("matches reach a decision rather than stalling forever", () => {
         for (const tgt of g.nodes) {
           if (tgt.owner === PLAYER) continue;
           const atk = E.nodesOf(g, PLAYER)
-            .filter((s) => s.garrison >= 10 && E.findPath(g, s.id, tgt.id))
+            .filter((s) => s.garrison >= 10 && E.findPath(g, s.id, tgt.id, PLAYER))
             .sort((a, b) => E.dist(a, tgt) - E.dist(b, tgt)).slice(0, 4);
           if (!atk.length) continue;
           const force = atk.reduce((s, n) => s + Math.floor(n.garrison * 0.7), 0);
@@ -583,6 +583,13 @@ test("the AI's production multiplier only touches the AI", () => {
   mine.type = theirs.type = "factory";
   mine.owner = PLAYER; theirs.owner = ENEMY;
   mine.garrison = theirs.garrison = 0;
+  // Each needs a Command behind it or both sit out of supply at a third
+  // of output, which hides the very difference under test.
+  const myHq = g.nodes[2], theirHq = g.nodes[3];
+  myHq.type = theirHq.type = "command";
+  myHq.owner = PLAYER; theirHq.owner = ENEMY;
+  g.adjacency.set(mine.id, [myHq.id]); g.adjacency.set(myHq.id, [mine.id]);
+  g.adjacency.set(theirs.id, [theirHq.id]); g.adjacency.set(theirHq.id, [theirs.id]);
   run(g, 10);
   assert.ok(theirs.garrison > mine.garrison,
     "at the hardest tier the AI must out-produce the player from the same node type");
@@ -618,9 +625,14 @@ test("held Relays charge the Doomstar; nothing else does", () => {
     for (const n of g.nodes) if (n !== keepEnemy) n.owner = NEUTRAL;
     const held = g.nodes.find((n) => n.type === holdType && n !== keepEnemy);
     held.owner = PLAYER;
-    // Make sure nothing adjacent is enemy-held, so contest isn't the cause.
+    // Supply now gates charging, so the position needs a Command behind
+    // it; and nothing adjacent may be enemy-held or contest is the cause.
+    const hq = E.nodesOf(g, PLAYER).find((n) => n.type === "command") ||
+      g.nodes.find((n) => n !== held && n !== keepEnemy);
+    hq.type = "command"; hq.owner = PLAYER;
+    g.adjacency.set(held.id, [hq.id]); g.adjacency.set(hq.id, [held.id]);
     for (const id of E.neighbors(g, held.id)) {
-      if (g.nodes[id] !== keepEnemy) g.nodes[id].owner = NEUTRAL;
+      if (g.nodes[id] !== keepEnemy && g.nodes[id] !== hq) g.nodes[id].owner = NEUTRAL;
     }
     g.charge[PLAYER] = 0;
     run(g, E.DOOM_CHARGE_INTERVAL * 3 + 0.2);
@@ -716,4 +728,111 @@ test("the AI fires the Doomstar once it can", () => {
     if (E.drainEvents(g).some((e) => e.kind === "doomstar")) fired = true;
   }
   assert.ok(fired, "the AI must use the weapon rather than sitting on a full charge");
+});
+
+// ---------------------------------------------------------------------
+// Supply network: routing through enemy ground, and being cut off
+// ---------------------------------------------------------------------
+test("fleets cannot transit an enemy-held position", () => {
+  // Before this, every route was always open regardless of who held the
+  // ground between, so there was no such thing as a chokepoint or a flank.
+  const g = quiet();
+  // A deliberate chain A - B - C with no other link between A and C.
+  const [a, b, c] = g.nodes;
+  g.adjacency.set(a.id, [b.id]);
+  g.adjacency.set(b.id, [a.id, c.id]);
+  g.adjacency.set(c.id, [b.id]);
+  for (const n of g.nodes) if (![a, b, c].includes(n)) g.adjacency.set(n.id, []);
+  a.owner = PLAYER; b.owner = NEUTRAL; c.owner = NEUTRAL;
+
+  assert.ok(E.findPath(g, a.id, c.id, PLAYER), "neutral ground in between is passable");
+  b.owner = ENEMY;
+  assert.equal(E.findPath(g, a.id, c.id, PLAYER), null,
+    "an enemy position in the way must block the route entirely");
+  assert.ok(E.findPath(g, a.id, b.id, PLAYER),
+    "but the blocker itself must still be attackable — it is the destination");
+  b.owner = PLAYER;
+  assert.ok(E.findPath(g, a.id, c.id, PLAYER), "your own ground carries traffic");
+});
+
+test("an order with no route is refused and costs nothing", () => {
+  const g = quiet();
+  const [a, b, c] = g.nodes;
+  g.adjacency.set(a.id, [b.id]);
+  g.adjacency.set(b.id, [a.id, c.id]);
+  g.adjacency.set(c.id, [b.id]);
+  for (const n of g.nodes) if (![a, b, c].includes(n)) g.adjacency.set(n.id, []);
+  a.owner = PLAYER; a.garrison = 40;
+  b.owner = ENEMY; c.owner = ENEMY;
+  const msg = E.sendFleet(g, a.id, c.id, 0.5, PLAYER);
+  assert.match(msg, /No route/);
+  assert.equal(a.garrison, 40, "a refused order must not spend units");
+  assert.equal(g.fleets.length, 0);
+});
+
+test("a position cut off from your Command falls out of supply", () => {
+  const g = quiet();
+  const hq = E.nodesOf(g, PLAYER)[0];
+  const mid = g.nodes[E.neighbors(g, hq.id)[0]];
+  // Find something reachable only through `mid`, by cutting the graph down
+  // to a simple chain.
+  const far = g.nodes.find((n) => n !== hq && n !== mid);
+  g.adjacency.set(hq.id, [mid.id]);
+  g.adjacency.set(mid.id, [hq.id, far.id]);
+  g.adjacency.set(far.id, [mid.id]);
+  for (const n of g.nodes) if (![hq, mid, far].includes(n)) g.adjacency.set(n.id, []);
+
+  mid.owner = PLAYER; far.owner = PLAYER;
+  E.computeSupply(g);
+  assert.equal(far.inSupply, true, "a connected chain is in supply");
+  assert.equal(E.supplyMultiplier(far), 1);
+
+  mid.owner = ENEMY;                       // sever the chain
+  E.computeSupply(g);
+  assert.equal(far.inSupply, false, "cutting the chain must isolate what is beyond it");
+  assert.equal(E.supplyMultiplier(far), E.OUT_OF_SUPPLY_RATE);
+});
+
+test("an out-of-supply position produces far less", () => {
+  function output(cut) {
+    const g = quiet();
+    const keepEnemy = E.nodesOf(g, ENEMY)[0];
+    const hq = E.nodesOf(g, PLAYER)[0];
+    const far = g.nodes.find((n) => n !== hq && n !== keepEnemy && n.type === "factory");
+    for (const n of g.nodes) if (n !== keepEnemy && n !== hq) n.owner = NEUTRAL;
+    far.owner = PLAYER; far.garrison = 0;
+    // Wire it either onto the Command's chain or off on its own.
+    g.adjacency.set(far.id, cut ? [] : [hq.id]);
+    g.adjacency.set(hq.id, cut ? [] : [far.id]);
+    E.computeSupply(g);
+    run(g, 20);
+    return far.garrison;
+  }
+  const connected = output(false), isolated = output(true);
+  assert.ok(connected > 0, "a supplied position must produce");
+  assert.ok(isolated < connected * 0.5,
+    `an isolated position must produce much less (${isolated.toFixed(1)} vs ${connected.toFixed(1)})`);
+});
+
+test("a cut-off Relay stops charging the Doomstar", () => {
+  const g = quiet();
+  const keepEnemy = E.nodesOf(g, ENEMY)[0];
+  const relay = g.nodes.find((n) => n.type === "relay" && n !== keepEnemy);
+  for (const n of g.nodes) if (n !== keepEnemy) n.owner = NEUTRAL;
+  relay.owner = PLAYER;
+  g.adjacency.set(relay.id, []);            // severed from any Command
+  E.computeSupply(g);
+  assert.equal(relay.inSupply, false, "setup: the Relay must be isolated");
+  assert.equal(E.chargingRelays(g, PLAYER).length, 0,
+    "an isolated Relay must not feed the weapon");
+});
+
+test("neutral ground never counts as out of supply", () => {
+  const g = quiet();
+  E.computeSupply(g);
+  for (const n of g.nodes) {
+    if (n.owner === NEUTRAL) {
+      assert.notEqual(n.inSupply, false, "unheld ground has no supply state to lose");
+    }
+  }
 });

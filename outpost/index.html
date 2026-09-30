@@ -211,6 +211,8 @@
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
           <div><i>Relays</i> charge the Doomstar</div>
           <div><i>Hold the centre</i> to fire it</div>
+          <div><i>Enemy ground</i> blocks your routes</div>
+          <div><i>Cut off</i> = 30% output</div>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Positions</div>
         <div class="shapes">
@@ -859,6 +861,22 @@
       ctx.lineWidth = 3.2;
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
 
+      const supplyLine = sameOwner &&
+        a.inSupply !== false && b.inSupply !== false;
+      if (supplyLine) {
+        // A live supply line: thicker, brighter, with a slow flow so the
+        // player can see their network rather than infer it.
+        ctx.strokeStyle = colorOf(a.owner);
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.setLineDash([2, 12]);
+        ctx.lineDashOffset = -now * 0.05;
+        ctx.strokeStyle = "rgba(255,255,255,.9)";
+        ctx.globalAlpha = 0.5; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (sameOwner || contested) {
         const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
         grad.addColorStop(0, colorOf(a.owner));
@@ -989,6 +1007,22 @@
         }
       }
 
+      // Cut off from your Command: the position still flies your colour
+      // but is running at a fraction of its output. Drawn as a broken
+      // ring so it reads as "severed" rather than just damaged.
+      if (n.owner !== NEUTRAL && n.inSupply === false) {
+        ctx.strokeStyle = "#ff7a5c";
+        ctx.globalAlpha = 0.55 + 0.45 * Math.abs(Math.sin(now * 0.005));
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([4, 5]);
+        ctx.beginPath(); ctx.arc(0, 0, r + 9, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+        ctx.fillStyle = "#ff7a5c";
+        ctx.font = "700 9px ui-monospace, monospace";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("CUT OFF", 0, r + 21);
+      }
+
       // A Relay you hold shows whether it is feeding the Doomstar.
       if (n.type === "relay" && n.owner !== NEUTRAL) {
         const contested = E.isContested(game, n);
@@ -1040,6 +1074,7 @@
     let raw = 0;
     for (const id of sourceIds) {
       if (id === tgt.id) continue;
+      if (!E.findPath(game, id, tgt.id, PLAYER)) continue;   // can't get there
       raw += Math.floor(game.nodes[id].garrison * sendFrac);
     }
     // Shown at researched strength, so the preview matches what combat
@@ -1051,8 +1086,22 @@
   }
 
   function drawOrderPreview(sourceIds, tgt) {
-    const p = previewOrder(sourceIds, tgt);
     const r = E.nodeStats(tgt).radius;
+    // No route at all is a different answer from "not enough force", and
+    // the player needs to see which one it is.
+    const routed = sourceIds.filter((id) => E.findPath(game, id, tgt.id, PLAYER));
+    if (!routed.length) {
+      ctx.fillStyle = "rgba(248,113,113,.13)";
+      ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = "#f87171";
+      ctx.font = "700 12px ui-monospace, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("NO ROUTE", tgt.x, tgt.y - r - 26);
+      return;
+    }
+    const p = previewOrder(routed, tgt);
     const col = p.friendly ? "#22d3ee" : p.wins ? "#4ade80" : "#f87171";
 
     ctx.fillStyle = p.wins ? "rgba(74,222,128,.13)" : "rgba(248,113,113,.13)";
@@ -1091,10 +1140,19 @@
     ctx.lineWidth = 2.5; ctx.setLineDash([7, 6]);
     ctx.lineDashOffset = -performance.now() * 0.02;
     for (const id of sources) {
-      const s = game.nodes[id];
+      const sN = game.nodes[id];
       ctx.strokeStyle = valid ? "rgba(125,211,252,.85)" : "rgba(160,180,210,.45)";
-      ctx.beginPath(); ctx.moveTo(s.x, s.y);
-      ctx.lineTo(valid ? tgt.x : w.x, valid ? tgt.y : w.y);
+      const route = valid ? E.findPath(game, id, tgt.id, PLAYER) : null;
+      ctx.beginPath();
+      if (route) {
+        // Follow the lanes the fleet will actually take — the whole point
+        // of the supply network is that the long way round is a real cost.
+        ctx.moveTo(sN.x, sN.y);
+        for (let i = 1; i < route.length; i++) ctx.lineTo(game.nodes[route[i]].x, game.nodes[route[i]].y);
+      } else {
+        ctx.moveTo(sN.x, sN.y);
+        ctx.lineTo(valid ? tgt.x : w.x, valid ? tgt.y : w.y);
+      }
       ctx.stroke();
     }
     ctx.setLineDash([]);
@@ -1117,7 +1175,11 @@
     ctx.lineWidth = 2.5;
     for (const id of sources) {
       const sN = game.nodes[id];
-      ctx.beginPath(); ctx.moveTo(sN.x, sN.y); ctx.lineTo(tgt.x, tgt.y); ctx.stroke();
+      const route = E.findPath(game, id, tgt.id, PLAYER);
+      ctx.beginPath(); ctx.moveTo(sN.x, sN.y);
+      if (route) for (let i = 1; i < route.length; i++) ctx.lineTo(game.nodes[route[i]].x, game.nodes[route[i]].y);
+      else ctx.lineTo(tgt.x, tgt.y);
+      ctx.stroke();
     }
     ctx.setLineDash([]);
 
@@ -1190,10 +1252,12 @@
       // upgrade was about to buy.
       const n = game.nodes[sel[0]];
       const st = E.nodeStats(n);
+      const cut = n.inSupply === false;
       const bits = [
         "<b>" + E.NODE_TYPES[n.type].label + "</b>" + (n.level ? " L" + n.level : ""),
         Math.floor(n.garrison) + "/" + st.cap,
-        st.unitRate.toFixed(2) + "/s"
+        (st.unitRate * (cut ? E.OUT_OF_SUPPLY_RATE : 1)).toFixed(2) + "/s" +
+          (cut ? " <span style='color:var(--doom)'>(CUT OFF)</span>" : "")
       ];
       if (st.creditRate > 0) bits.push("+" + st.creditRate.toFixed(2) + "c/s");
       if (n.type === "relay") {

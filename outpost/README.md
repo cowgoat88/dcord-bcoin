@@ -81,6 +81,32 @@ no reason to fight over them, and two players could comfortably turtle in
 opposite corners. Now the small scattered nodes fuel the weapon and the
 middle of the map is worth holding.
 
+## Supply lines
+
+The lane map is a supply network, not just a set of shortcuts:
+
+- **You cannot move through enemy-held ground.** Routes run over your own
+  positions and no-man's-land; an enemy position is a roadblock, not
+  something to fly over. The target itself is always attackable — it is
+  the road *to* it that has to be open.
+- **A position is in supply** only if it can trace a chain of your own
+  positions back to one of your Commands. Cut that chain and everything
+  beyond it drops to **30% output**, stops paying credits, and — if it is
+  a Relay — stops charging the Doomstar. It still flies your colour; it
+  just barely functions.
+
+This is what makes flanking and encirclement real. Measured over 25
+maps, planting an enemy position mid-route changes **37%** of all routes
+(forcing the long way round), and in every one of 10 full test matches
+some position ended up severed. Taking the right single node can starve
+a whole wing.
+
+The board shows it: live supply lines are thick and flowing, a severed
+position gets a broken orange ring and a CUT OFF label, and an order with
+no open route previews as **NO ROUTE** instead of silently failing. Order
+previews trace the actual lane path the fleet will take, so a detour
+looks like a detour.
+
 ## The one rule that matters
 
 **Defenders fight at ×1.25, so a single position can never take an equal
@@ -160,5 +186,7 @@ arrival coalescing, capture and reinforcement, production and capacity,
 the credit economy, upgrade costs and limits, win detection, AI expansion
 and concentration, the research tracks (escalating costs, army-wide
 effect, the Assault/Fortify asymmetry, parity under equal tech, and that
-a fully fortified position stays crackable), difficulty ordering, and the
-stalemate regression.
+a fully fortified position stays crackable), difficulty ordering, the supply network (enemy ground blocking transit,
+orders refused with no route, severed positions falling out of supply and
+producing far less, cut-off Relays not charging), and the stalemate
+regression.

@@ -172,6 +172,37 @@
     return undefined;
   }
 
+  // --- supply ---------------------------------------------------------
+  // A position is IN SUPPLY when it can trace a chain of your own nodes
+  // back to one of your Command nodes. Cut that chain and the position
+  // keeps flying your colour but barely functions: this is what makes
+  // encircling and severing worth doing, rather than every node you
+  // occupy simply working at full rate wherever it sits.
+  const OUT_OF_SUPPLY_RATE = 0.3;   // production multiplier when cut off
+
+  function computeSupply(game) {
+    for (const n of game.nodes) n.inSupply = n.owner === NEUTRAL ? true : false;
+    for (const owner of [PLAYER, ENEMY]) {
+      // Seed from every Command this side holds; if they hold none, the
+      // whole side is cut off and has bigger problems than production.
+      const stack = game.nodes.filter((n) => n.owner === owner && n.type === "command").map((n) => n.id);
+      const seen = new Set(stack);
+      while (stack.length) {
+        const cur = stack.pop();
+        game.nodes[cur].inSupply = true;
+        for (const nx of neighbors(game, cur)) {
+          if (seen.has(nx)) continue;
+          if (game.nodes[nx].owner !== owner) continue;   // only your own ground carries supply
+          seen.add(nx); stack.push(nx);
+        }
+      }
+    }
+  }
+
+  function supplyMultiplier(node) {
+    return node.inSupply === false ? OUT_OF_SUPPLY_RATE : 1;
+  }
+
   // A Relay is contested when any lane-adjacent node is enemy-held. A
   // contested Relay still produces, it just stops charging — so pressure
   // on the flanks is felt at the centre.
@@ -187,7 +218,8 @@
   // Relays this owner holds that are actually charging right now.
   function chargingRelays(game, owner) {
     return game.nodes.filter(
-      (n) => n.type === "relay" && n.owner === owner && !isContested(game, n)
+      (n) => n.type === "relay" && n.owner === owner &&
+        !isContested(game, n) && n.inSupply !== false
     );
   }
 
@@ -473,7 +505,19 @@
   // impossible if every order has to be a single hop, and the map just
   // freezes. It is also far better to play: you point at what you want
   // taken, rather than hand-walking units hop by hop.
-  function findPath(game, fromId, toId) {
+  // Can a fleet of `owner` pass THROUGH this node on its way somewhere
+  // else? Your own ground and no-man's-land are open; an enemy-held node
+  // is a roadblock. This is what turns the lane graph into a real supply
+  // network: before it, every route was always available, so there was no
+  // such thing as a chokepoint, a flank, or a line worth cutting.
+  // `undefined` owner means "ignore ownership" (used for map validation).
+  function canTransit(game, owner, nodeId) {
+    if (owner === undefined || owner === null) return true;
+    const n = game.nodes[nodeId];
+    return n.owner === owner || n.owner === NEUTRAL;
+  }
+
+  function findPath(game, fromId, toId, owner) {
     if (fromId === toId) return null;
     const distTo = new Map([[fromId, 0]]);
     const prev = new Map();
@@ -492,6 +536,10 @@
       visited.add(cur);
       for (const nx of neighbors(game, cur)) {
         if (visited.has(nx)) continue;
+        // The destination may be anything — that is the attack. Every
+        // node BEFORE it has to be passable, so an enemy position blocks
+        // the road rather than being flown over.
+        if (nx !== toId && !canTransit(game, owner, nx)) continue;
         const d = (distTo.get(cur) || 0) + dist(game.nodes[cur], game.nodes[nx]);
         if (d < (distTo.get(nx) ?? Infinity)) {
           distTo.set(nx, d); prev.set(nx, cur);
@@ -515,8 +563,8 @@
     if (!from || !to) return "No such position.";
     if (from.owner !== owner) return "You don't hold that position.";
     if (fromId === toId) return "Pick a different target.";
-    const path = findPath(game, fromId, toId);
-    if (!path) return "No supply route to there.";
+    const path = findPath(game, fromId, toId, owner);
+    if (!path) return "No route \u2014 the enemy holds the way.";
 
     const frac = clamp(fraction === undefined ? 0.5 : fraction, 0.05, 1);
     const count = Math.floor(from.garrison * frac);
@@ -550,6 +598,7 @@
   function step(game, dt) {
     if (game.winner) return;
     game.time += dt;
+    computeSupply(game);
 
     // Production. Garrisons are floats internally and floored for display,
     // so a slow node still makes visible progress between ticks.
@@ -557,7 +606,7 @@
     for (const n of game.nodes) {
       if (n.owner === NEUTRAL) continue;
       const s = nodeStats(n);
-      const m = n.owner === ENEMY ? aiMult : 1;
+      const m = (n.owner === ENEMY ? aiMult : 1) * supplyMultiplier(n);
       if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * m * dt);
       if (s.creditRate > 0) game.credits[n.owner] = (game.credits[n.owner] || 0) + s.creditRate * m * dt;
     }
@@ -708,7 +757,7 @@
   const DIFFICULTY = [
     { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.70 },
     { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 1.00 },
-    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.30 }
+    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.60 }
   ];
   function aiProduction(game) {
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
@@ -736,7 +785,7 @@
       // Any owned node can contribute, not just bordering ones — the AI
       // masses from depth exactly the way the player can.
       const attackers = mine
-        .filter((s) => s.garrison >= cfg.minGarrison && findPath(game, s.id, tgt.id))
+        .filter((s) => s.garrison >= cfg.minGarrison && findPath(game, s.id, tgt.id, ENEMY))
         .sort((a, b) => dist(a, tgt) - dist(b, tgt))
         .slice(0, cfg.maxAttackers);
       if (!attackers.length) continue;
@@ -751,7 +800,14 @@
         + (tgt.type === "doomstar" ? 4 : 0)
         + (tgt.type === "relay" ? 1.5 : 0)
         + (tgt.owner === PLAYER ? 1.5 : 0);
-      const score = value / (defenceOf(game, tgt) + 4);
+      // Prefer ground that extends the existing front. Taking an isolated
+      // pocket now leaves it out of supply at a third of its output, and
+      // cutting a node that carries the player's supply is worth extra.
+      const touchesUs = neighbors(game, tgt.id).some((id) => game.nodes[id].owner === ENEMY);
+      const cutsThem = tgt.owner === PLAYER &&
+        neighbors(game, tgt.id).some((id) => game.nodes[id].owner === PLAYER);
+      const score = (value * (touchesUs ? 1.8 : 1) * (cutsThem ? 1.3 : 1)) /
+        (defenceOf(game, tgt) + 4);
       if (!best || score > best.score) best = { score, tgt, attackers };
     }
     if (best) {
@@ -832,6 +888,7 @@
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, createGame,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
+    canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
     sendFleet, upgradeNode, researchTech, fireDoomstar, step,
     isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult
