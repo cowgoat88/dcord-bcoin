@@ -63,6 +63,9 @@
         seed: game.seed,
         mapW: game.mapW,
         mapH: game.mapH,
+        // Doctrines are fixed for the match, so they ride the welcome
+        // rather than every snapshot twelve times a second.
+        doctrine: { 1: E.doctrineOf(game, 1), 2: E.doctrineOf(game, 2) },
         snapshot: E.serializeState(game)
       };
     }
@@ -87,7 +90,15 @@
           send({ type: "reject", error: "room-full" });
           return;
         }
-        guest = { token: (guest && guest.token) || randomToken(), name: msg.name || "Guest", lastSeen: now() };
+        guest = {
+          token: (guest && guest.token) || randomToken(),
+          name: msg.name || "Guest",
+          doctrine: msg.doctrine,
+          lastSeen: now()
+        };
+        // The guest chose its own doctrine before connecting; the host
+        // validates it and it applies for the rest of the match.
+        E.setDoctrine(game, GUEST_SEAT, msg.doctrine);
         send(welcomePayload(guest.token));
         if (opts.onGuest) opts.onGuest(guest, true);
         return;
@@ -123,7 +134,12 @@
       // A fresh match: the guest is told to rebuild from the new seed.
       restart: (g) => {
         game = g;
-        if (guest) send(welcomePayload(guest.token));
+        // A rematch keeps the guest's doctrine — it is their standing
+        // choice, not something the new board resets.
+        if (guest) {
+          E.setDoctrine(game, GUEST_SEAT, guest.doctrine);
+          send(welcomePayload(guest.token));
+        }
       },
       close: () => { closed = true; try { send({ type: "bye" }); } catch (e) { /* gone */ } }
     };
@@ -145,7 +161,8 @@
     }
 
     transport.onOpen(function () {
-      send({ type: "hello", name: opts.name || "Guest", token: token });
+      send({ type: "hello", name: opts.name || "Guest", token: token,
+             doctrine: opts.doctrine || "standard" });
       if (!pingTimer && typeof setInterval === "function") {
         pingTimer = setInterval(() => { if (!closed) send({ type: "ping" }); }, PING_INTERVAL);
         // A keep-alive must not keep the host process alive: under Node

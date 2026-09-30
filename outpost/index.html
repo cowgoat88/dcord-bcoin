@@ -88,6 +88,24 @@
   .seg button + button { border-left: 1px solid var(--line); }
   .grouplabel { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
 
+  /* A doctrine is picked once, before the match, so the picker has to
+     read at a glance rather than reward study: six chips, and one line
+     underneath spelling out what the highlighted one gives up. */
+  .docgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .docgrid button {
+    padding: 7px 4px; font-size: 10px; line-height: 1.25;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .docgrid button i { font-style: normal; font-size: 13px; line-height: 1; }
+  .doctrade {
+    margin-top: 7px; font-size: 10.5px; line-height: 1.55; text-align: left;
+    color: var(--muted); min-height: 30px;
+  }
+  .doctrade b { color: var(--player); font-weight: 600; }
+  #stDoc .vs { color: var(--muted); }
+  .doctrade s { color: #ffa08c; text-decoration: none; }
+  #ascRow button { flex: 1 1 auto; min-width: 0; padding: 6px 4px; }
+
   /* ---- overlays ---- */
   .overlay {
     position: absolute; inset: 0; display: flex; justify-content: center;
@@ -147,12 +165,22 @@
     0%,100% { box-shadow: 0 0 0 rgba(255,122,92,0); }
     50%     { box-shadow: 0 0 16px rgba(255,122,92,.75); }
   }
-  #profileBox { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; text-align: left; }
+  #profileBox { text-align: left; }
   .prof { display: grid; gap: 3px; font-size: 11px; margin-top: 6px; }
   .prof > div { display: flex; justify-content: space-between; }
   .prof span:first-child { color: var(--muted); }
   .prof span:last-child { font-variant-numeric: tabular-nums; }
   .netbox { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
+  /* Collapsed by default: playing a friend is the second thing most
+     people do, and on a 640px phone an always-open panel pushed Deploy
+     below the fold. */
+  .netbox > summary { cursor: pointer; list-style: none; text-align: left;
+    color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+  .netbox > summary::-webkit-details-marker { display: none; }
+  .netbox > summary::after { content: " \25be"; }
+  .netbox[open] > summary::after { content: " \25b4"; }
+  .netbox > summary:hover { color: var(--player); }
+  .netbox > :not(summary) { margin-top: 8px; }
   .netbox input {
     font-family: inherit; font-size: 15px; letter-spacing: 3px; text-transform: uppercase;
     text-align: center; width: 110px; padding: 7px 8px; border-radius: 6px;
@@ -224,9 +252,26 @@
     .seg button { padding: 7px 9px; }
     #statIncome { display: none; }
     #stFoeTech { font-size: 10px; }
+    /* The HUD is one non-wrapping row on a phone: the doctrines keep
+       their icons, which is enough to recognise them, and the names go. */
+    #stDoc .docname { display: none; }
+    #stDoc { font-size: 12px; }
     #selInfo { flex-basis: 100%; min-width: 0; order: -1; }
     .card { padding: 20px; }
     .card h1 { font-size: 20px; letter-spacing: 4px; }
+  }
+  /* A 640px-tall phone cannot fit the full start card, and Deploy
+     dropping below the fold is the difference between a game and a
+     puzzle. On a short screen the prose goes and the chrome tightens;
+     every control stays. */
+  @media (max-height: 700px) {
+    .card { padding: 16px 18px; }
+    .card > p:first-of-type { display: none; }
+    .quickstart { padding: 8px 10px; font-size: 10.5px; line-height: 1.5; margin-bottom: 10px; }
+    .docgrid button { padding: 5px 3px; font-size: 9.5px; }
+    .docgrid button i { font-size: 12px; }
+    .doctrade { min-height: 0; }
+    .netbox, #profileBox { margin-top: 10px; padding-top: 9px; }
   }
 </style>
 </head>
@@ -239,6 +284,7 @@
     <span class="stat"><span class="k">Enemy</span><span class="v foe" id="stFoe">0</span></span>
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
     <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
+    <span class="stat" id="statDoc"><span class="k">Doctrine</span><span class="v" id="stDoc">—</span></span>
     <span class="stat doomstat"><span class="k">Doomstar</span>
       <span class="chargebar" title="Charged by the Relays you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
     </span>
@@ -297,12 +343,20 @@
           <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
           <button data-diff="2" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
         </div>
+        <div class="grouplabel" style="margin-bottom:6px">Doctrine</div>
+        <div class="docgrid" id="docRow"></div>
+        <div class="doctrade" id="docTrade"></div>
+        <div id="ascBox" hidden>
+          <div class="grouplabel" style="margin:12px 0 6px">Ascension</div>
+          <div class="row" id="ascRow"></div>
+          <div class="doctrade" id="ascNote"></div>
+        </div>
         <div class="row">
           <button class="primary" id="btnStart">Deploy</button>
         </div>
-        <div id="profileBox" hidden></div>
-        <div class="netbox">
-          <div class="grouplabel" style="margin-bottom:6px">Play a friend</div>
+        <details id="profileBox" class="netbox" hidden></details>
+        <details class="netbox" id="netPanel">
+          <summary>Play a friend</summary>
           <div class="row" id="netButtons">
             <button id="btnHost">Host game</button>
             <button id="btnJoinOpen">Join with code</button>
@@ -318,7 +372,7 @@
             <div class="code" id="roomCode">—</div>
             <button id="btnCopy">Copy invite link</button>
           </div>
-        </div>
+        </details>
         <p style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
       </div>
     </div>
@@ -384,6 +438,8 @@
   let paused = false;
   let started = false;
   let difficulty = 1;
+  let doctrine = "standard";   // your standing pre-match choice
+  let ascension = 0;           // extra handicap, unlocked by beating Commander
   let sendFrac = 0.5;
 
   // Preferences survive a reload. Wrapped because storage throws in
@@ -470,7 +526,13 @@
   function newGame(seed) {
     const s = seed === undefined ? (Math.floor(Math.random() * 100000) + 1) : seed;
     const shape = boardShape();
-    game = E.createGame({ seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH });
+    game = E.createGame({
+      seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
+      doctrine: doctrine,
+      // Ascension is a solo ladder; an online match is two people's
+      // doctrines and nothing else.
+      ascension: isOnline() ? 0 : ascension
+    });
     // Seat 2 is a person online, so the bot must not also be playing it.
     if (isOnline()) { game.ai.timer = Infinity; }
     selection.clear(); pendingTarget = null;
@@ -729,7 +791,7 @@
     for (const n of E.nodesOf(game, mySeat)) { addPulse(n.id, 1.3); }
     updateHud();
   }
-  const roman = (n) => ["", "I", "II", "III"][n] || String(n);
+  const roman = (n) => ["", "I", "II", "III", "IV", "V"][n] || String(n);
 
   document.getElementById("btnPause").addEventListener("click", togglePause);
   function togglePause() {
@@ -756,6 +818,72 @@
     difficulty = parseInt(b.dataset.diff, 10);
     prefs.write({ difficulty: difficulty });
     [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+
+  // The picker is built from the engine's own table, so a doctrine can
+  // never be listed here with numbers the simulation does not run.
+  function buildDoctrinePicker() {
+    const row = document.getElementById("docRow");
+    row.innerHTML = "";
+    for (const key of E.DOCTRINE_KEYS) {
+      const d = E.DOCTRINES[key];
+      const b = document.createElement("button");
+      b.dataset.doc = key;
+      b.innerHTML = "<i>" + d.icon + "</i><span>" + d.label + "</span>";
+      b.classList.toggle("on", key === doctrine);
+      row.appendChild(b);
+    }
+    showDoctrine();
+  }
+  function showDoctrine() {
+    const d = E.DOCTRINES[doctrine];
+    // Standard has no cost, so it gets no red half — a strikethrough
+    // clause reading "and no weakness" looked like a drawback.
+    document.getElementById("docTrade").innerHTML =
+      "<b>" + d.up + ".</b>" + (d.down ? " <s>" + d.down + ".</s>" : "");
+    [...document.getElementById("docRow").children].forEach(
+      (c) => c.classList.toggle("on", c.dataset.doc === doctrine));
+  }
+  document.getElementById("docRow").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    doctrine = b.dataset.doc;
+    prefs.write({ doctrine: doctrine });
+    showDoctrine();
+  });
+
+  // The ladder only exists once you have beaten Commander, and only ever
+  // offers one rung past your best — it is a ladder, not a menu.
+  function buildAscension() {
+    const box = document.getElementById("ascBox");
+    const best = profile.read().ascBest;
+    if (typeof best !== "number" || best < 0) { box.hidden = true; ascension = 0; return; }
+    box.hidden = false;
+    const top = Math.min(E.ASCENSION_MAX, best + 1);
+    if (ascension > top) ascension = top;
+    const row = document.getElementById("ascRow");
+    row.innerHTML = "";
+    for (let lvl = 0; lvl <= top; lvl++) {
+      const b = document.createElement("button");
+      b.dataset.asc = String(lvl);
+      b.textContent = lvl === 0 ? "Off" : roman(lvl);
+      b.classList.toggle("on", lvl === ascension);
+      row.appendChild(b);
+    }
+    showAscension();
+  }
+  function showAscension() {
+    const rung = E.ASCENSION[ascension - 1];
+    document.getElementById("ascNote").innerHTML = rung
+      ? "<s>" + rung.note + ".</s> Every rung below applies too."
+      : "<b>Commander, as it comes.</b> Win to unlock the first rung.";
+    [...document.getElementById("ascRow").children].forEach(
+      (c) => c.classList.toggle("on", parseInt(c.dataset.asc, 10) === ascension));
+  }
+  document.getElementById("ascRow").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    ascension = parseInt(b.dataset.asc, 10);
+    prefs.write({ ascension: ascension });
+    showAscension();
   });
 
   document.getElementById("btnStart").addEventListener("click", () => {
@@ -849,6 +977,16 @@
   let netRole = null;     // "host" | "guest" | null
 
   const isOnline = () => !!session;
+
+  // The host is authoritative about the rules as well as the state: the
+  // guest copies both doctrines from the welcome rather than assuming its
+  // own pick went through, so the two simulations agree about what every
+  // number means.
+  function applyWelcomeDoctrines(msg) {
+    if (!msg || !msg.doctrine) return;
+    E.setDoctrine(game, PLAYER, msg.doctrine[PLAYER]);
+    E.setDoctrine(game, ENEMY, msg.doctrine[ENEMY]);
+  }
   // The guest must never advance the simulation itself, or the two copies
   // drift and the game stops agreeing with itself.
   const simulatesLocally = () => !isOnline() || netRole === "host";
@@ -919,12 +1057,13 @@
     });
     if (!link) return;
     session = window.OutpostOnline.createGuest({
-      engine: E, transport: link.transport,
+      engine: E, transport: link.transport, doctrine: doctrine,
       onWelcome: (msg) => {
         // Rebuild the identical board from the seed the host sent, then
         // take its state. No geometry crosses the wire.
         game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
         game.ai.timer = Infinity;
+        applyWelcomeDoctrines(msg);
         E.applySnapshot(game, msg.snapshot);
         selection.clear(); pendingTarget = null;
         resize();
@@ -976,10 +1115,11 @@
       showBadge(false, "Waiting");
     } else {
       session = window.OutpostOnline.createGuest({
-        engine: E, transport: link.transport,
+        engine: E, transport: link.transport, doctrine: doctrine,
         onWelcome: (msg) => {
           game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
           game.ai.timer = Infinity;
+          applyWelcomeDoctrines(msg);
           E.applySnapshot(game, msg.snapshot);
           selection.clear(); pendingTarget = null;
           resize();
@@ -1025,19 +1165,24 @@
   const TIERS = ["Cadet", "Officer", "Commander"];
   const profile = {
     blank() {
-      return { games: 0, wins: 0, streak: 0, best: 0, byTier: [{}, {}, {}].map(() => ({ w: 0, l: 0, fastest: 0 })) };
+      // ascBest: highest ascension rung CLEARED. -1 means Commander has
+      // never been beaten, so the ladder does not exist yet; 0 means it
+      // has been beaten with no rung applied, which unlocks rung I.
+      return { games: 0, wins: 0, streak: 0, best: 0, ascBest: -1,
+               byTier: [{}, {}, {}].map(() => ({ w: 0, l: 0, fastest: 0 })) };
     },
     read() {
       try {
         const p = JSON.parse(localStorage.getItem("outpost.profile") || "null");
         if (!p || !Array.isArray(p.byTier) || p.byTier.length !== 3) return this.blank();
+        if (typeof p.ascBest !== "number") p.ascBest = -1;   // records from before the ladder
         return p;
       } catch (e) { return this.blank(); }
     },
     write(p) {
       try { localStorage.setItem("outpost.profile", JSON.stringify(p)); } catch (e) { /* not fatal */ }
     },
-    record(won, tier, seconds) {
+    record(won, tier, seconds, asc) {
       const p = this.read();
       p.games += 1;
       const t = p.byTier[tier] || (p.byTier[tier] = { w: 0, l: 0, fastest: 0 });
@@ -1049,6 +1194,9 @@
         // Floor at a second: a 0 would be falsy and silently hide itself.
         const secs = Math.max(1, seconds);
         if (!t.fastest || secs < t.fastest) t.fastest = secs;
+        // Only Commander counts toward the ladder; clearing a rung there
+        // opens the next one.
+        if (tier === 2) p.ascBest = Math.max(p.ascBest, asc | 0);
       } else {
         p.streak = 0;
         t.l += 1;
@@ -1064,6 +1212,11 @@
     const p = profile.read();
     const el = document.getElementById("profileBox");
     if (!el) return;
+    // Once you have played a match you no longer need the three-line
+    // primer, and on a short phone it is exactly what pushes Deploy off
+    // the bottom of the card. "How to play" is still one tap away.
+    const qs = document.querySelector("#startOverlay .quickstart");
+    if (qs) qs.hidden = p.games > 0;
     if (!p.games) { el.hidden = true; return; }
     el.hidden = false;
     const rows = p.byTier.map((t, i) => {
@@ -1072,7 +1225,7 @@
         (t.fastest ? " \u00b7 best " + mmss(t.fastest) : "") + "</span></div>";
     }).join("");
     el.innerHTML =
-      "<div class='grouplabel'>Your record</div>" +
+      "<summary>Your record \u00b7 " + p.wins + "W/" + (p.games - p.wins) + "L</summary>" +
       "<div class='prof'><div><span>Played</span><span>" + p.games + "</span></div>" +
       "<div><span>Won</span><span>" + p.wins + " (" + Math.round(100 * p.wins / p.games) + "%)</span></div>" +
       "<div><span>Streak</span><span>" + p.streak + (p.best > p.streak ? " (best " + p.best + ")" : "") + "</span></div>" +
@@ -1817,6 +1970,19 @@
     document.getElementById("stFoeTech").textContent =
       "\u2694" + E.techLevel(game, foeSeat, "assault") + " \u26e8" + E.techLevel(game, foeSeat, "fortify");
 
+    // Both doctrines, always visible: knowing what the other side brought
+    // is half of deciding what to do about it.
+    const mineDoc = E.DOCTRINES[E.doctrineOf(game, mySeat)];
+    const foeDoc = E.DOCTRINES[E.doctrineOf(game, foeSeat)];
+    const docEl = document.getElementById("stDoc");
+    docEl.innerHTML =
+      "<span class='you'>" + mineDoc.icon + "<span class='docname'> " + mineDoc.label + "</span></span>" +
+      "<span class='vs'> vs </span>" +
+      "<span class='foe'>" + foeDoc.icon + "<span class='docname'> " + foeDoc.label + "</span></span>";
+    docEl.parentNode.title =
+      "You \u2014 " + mineDoc.up + "; " + mineDoc.down + ".\n" +
+      "Them \u2014 " + foeDoc.up + "; " + foeDoc.down + ".";
+
     const need = E.DOOM_CHARGE_NEEDED;
     const ch = Math.floor(game.charge[mySeat] || 0);
     const bar = document.querySelector(".chargebar");
@@ -1869,14 +2035,20 @@
     const won = game.winner === mySeat;
     if (won) sfx.win(); else sfx.lose();
     if (!isOnline()) {
-      const p = profile.record(won, difficulty, Math.floor(game.time));
+      const before = profile.read().ascBest;
+      const p = profile.record(won, difficulty, Math.floor(game.time), ascension);
       const line = document.getElementById("endRecord");
       if (line) {
-        line.textContent = TIERS[difficulty] + " \u00b7 " + p.wins + "W/" +
-          (p.games - p.wins) + "L" +
-          (p.streak > 1 ? " \u00b7 " + p.streak + " in a row" : "");
+        const opened = p.ascBest > before && p.ascBest < E.ASCENSION_MAX;
+        line.textContent = TIERS[difficulty] +
+          (ascension ? " \u00b7 " + E.ASCENSION[ascension - 1].label : "") +
+          " \u00b7 " + p.wins + "W/" + (p.games - p.wins) + "L" +
+          (p.streak > 1 ? " \u00b7 " + p.streak + " in a row" : "") +
+          (opened ? " \u00b7 " + E.ASCENSION[p.ascBest].label + " unlocked" : "") +
+          (won && p.ascBest === E.ASCENSION_MAX ? " \u00b7 ladder cleared" : "");
       }
       renderProfile();
+      buildAscension();
     }
     document.getElementById("endTitle").textContent = won ? "Victory" : "Defeat";
     document.getElementById("endTitle").style.color = won ? "var(--player)" : "var(--enemy)";
@@ -1956,8 +2128,12 @@
       b.textContent = "\u266a\u0338";
       b.classList.remove("on");
     }
+    if (typeof p.doctrine === "string" && E.DOCTRINES[p.doctrine]) doctrine = p.doctrine;
+    if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
   })();
 
+  buildDoctrinePicker();
+  buildAscension();
   renderProfile();
   resize();
   newGame();
@@ -1968,6 +2144,9 @@
     const m = /[?&]join=([A-Za-z0-9]+)/.exec(location.search);
     if (!m) return;
     const code = m[1].toUpperCase();
+    // Arriving on an invite link, the online panel must be open — the
+    // status messages that follow all live inside it.
+    document.getElementById("netPanel").open = true;
     document.getElementById("joinRow").hidden = false;
     document.getElementById("joinCode").value = code;
     startJoining(code);

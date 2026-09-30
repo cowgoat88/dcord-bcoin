@@ -1001,3 +1001,167 @@ test("the endgame push is an endgame, not an opening rush", () => {
       `seed ${seed}: the AI must not throw itself at the enemy Command in the opening`);
   }
 });
+
+// ---------------------------------------------------------------------
+// Doctrines
+// ---------------------------------------------------------------------
+
+test("every doctrine only uses modifier keys the engine knows about", () => {
+  const known = ["speed", "cap", "units", "credits", "attack", "defence",
+                 "research", "doom", "cutoff", "contestedCharge"];
+  for (const key of E.DOCTRINE_KEYS) {
+    const d = E.DOCTRINES[key];
+    assert.ok(d.label && d.up, key + " needs a label and something to say for itself");
+    assert.ok(!Object.keys(d.mods).length || d.down,
+      key + " changes the rules, so it must spell out the cost");
+    for (const mod of Object.keys(d.mods)) {
+      assert.ok(known.indexOf(mod) !== -1, key + " uses unknown modifier " + mod);
+    }
+  }
+});
+
+test("every doctrine is a trade, never a straight upgrade", () => {
+  // "Standard" is the one with nothing on either side of the ledger.
+  for (const key of E.DOCTRINE_KEYS) {
+    if (key === "standard") continue;
+    const mods = E.DOCTRINES[key].mods;
+    const keys = Object.keys(mods);
+    assert.ok(keys.length >= 2, key + " must give something up");
+    // At least one modifier must be worse than the baseline. "cutoff" and
+    // "contestedCharge" are floors rather than multipliers, so higher is
+    // better for those two as well.
+    const worse = keys.some((k) => mods[k] < 1 && k !== "cutoff" && k !== "contestedCharge");
+    assert.ok(worse, key + " has no cost");
+  }
+});
+
+test("an unknown doctrine is treated as Standard, never as a hole in the rules", () => {
+  const g = E.createGame({ seed: 5, doctrine: "cheatmode", foeDoctrine: "standard" });
+  assert.equal(E.doctrineOf(g, PLAYER), "standard");
+  assert.equal(E.docMod(g, PLAYER, "attack"), 1);
+  E.setDoctrine(g, PLAYER, "nonsense");
+  assert.equal(E.doctrineOf(g, PLAYER), "standard");
+  E.setDoctrine(g, PLAYER, "shock");
+  assert.equal(E.doctrineOf(g, PLAYER), "shock");
+  E.setDoctrine(g, NEUTRAL, "shock");          // not a seat; must be ignored
+  assert.equal(E.doctrineOf(g, PLAYER), "shock");
+});
+
+test("Vanguard fleets arrive sooner and its positions hold less", () => {
+  const fast = E.createGame({ seed: 8, doctrine: "vanguard", foeDoctrine: "standard" });
+  const slow = E.createGame({ seed: 8, doctrine: "standard", foeDoctrine: "standard" });
+  assert.ok(E.fleetSpeed(fast, PLAYER) > E.fleetSpeed(slow, PLAYER));
+
+  const a = fast.nodes.find((n) => n.owner === PLAYER);
+  const b = slow.nodes.find((n) => n.owner === PLAYER);
+  assert.ok(E.nodeStats(a, fast).cap < E.nodeStats(b, slow).cap, "the cap must be the cost");
+  // And the raw type numbers are unchanged when no game is supplied.
+  assert.equal(E.nodeStats(a).cap, E.nodeStats(b).cap);
+});
+
+test("Deep Logistics keeps a severed position working", () => {
+  function output(doctrine) {
+    const g = E.createGame({ seed: 8, doctrine, foeDoctrine: "standard" });
+    g.ai.timer = Infinity;
+    const n = g.nodes.find((x) => x.type === "mine");
+    n.owner = PLAYER; n.garrison = 5;
+    // Cut it off: it holds no Command and nothing links it to one.
+    for (const other of g.nodes) if (other !== n && other.owner === PLAYER) other.owner = NEUTRAL;
+    E.computeSupply(g);
+    assert.equal(n.inSupply, false);
+    return E.supplyMultiplier(n, g);
+  }
+  assert.ok(output("logistics") > output("standard"));
+  assert.equal(output("standard"), E.OUT_OF_SUPPLY_RATE);
+});
+
+test("Forward Relays trades strike damage for charge under pressure", () => {
+  function contested(doctrine) {
+    const g = E.createGame({ seed: 7, doctrine, foeDoctrine: "standard" });
+    for (const n of g.nodes) n.owner = PLAYER;
+    const r = g.nodes.find((n) => n.type === "relay");
+    g.nodes[E.neighbors(g, r.id)[0]].owner = ENEMY;
+    E.computeSupply(g);
+    assert.equal(E.isContested(g, r), true);
+    return E.relayCharge(g, r);
+  }
+  assert.equal(contested("standard"), 0, "normally a contested Relay stops charging");
+  assert.equal(contested("relays"), 0.5);
+
+  const soft = E.createGame({ seed: 7, doctrine: "relays", foeDoctrine: "standard" });
+  const hard = E.createGame({ seed: 7, doctrine: "standard", foeDoctrine: "standard" });
+  assert.equal(E.strikeDamage(hard, PLAYER), E.DOOM_DAMAGE);
+  assert.ok(E.strikeDamage(soft, PLAYER) < E.DOOM_DAMAGE, "the weaker strike is the price");
+});
+
+test("Prospectors earns more and researches cheaper, and builds slower", () => {
+  const rich = E.createGame({ seed: 8, doctrine: "prospectors", foeDoctrine: "standard" });
+  const plain = E.createGame({ seed: 8, doctrine: "standard", foeDoctrine: "standard" });
+  const mine = rich.nodes.find((n) => n.type === "mine");
+  mine.owner = PLAYER;
+  plain.nodes.find((n) => n.type === "mine").owner = PLAYER;
+
+  assert.ok(E.income(rich, PLAYER).credits > E.income(plain, PLAYER).credits);
+  assert.ok(E.income(rich, PLAYER).units < E.income(plain, PLAYER).units);
+  assert.ok(E.techCost("assault", 0, rich, PLAYER) < E.techCost("assault", 0, plain, PLAYER));
+  // The published price list is untouched for anyone who asks without a game.
+  assert.equal(E.techCost("assault", 0), E.TECH.assault.costs[0]);
+});
+
+test("Shock Troops hits harder and holds worse", () => {
+  const g = E.createGame({ seed: 8, doctrine: "shock", foeDoctrine: "standard" });
+  assert.ok(E.assaultMult(g, PLAYER) > E.assaultMult(g, ENEMY));
+  assert.ok(E.fortifyMult(g, PLAYER) < E.fortifyMult(g, ENEMY));
+});
+
+test("a captured position is held to the captor's capacity, not the loser's", () => {
+  // Vanguard's smaller cap must follow the ground it takes.
+  const g = E.createGame({ seed: 8, doctrine: "vanguard", foeDoctrine: "standard" });
+  g.ai.timer = Infinity;
+  const tgt = g.nodes.find((n) => n.type === "factory");
+  tgt.owner = ENEMY; tgt.garrison = 1; tgt.level = 0;
+  tgt.assault = { owner: PLAYER, count: 400, fuse: 0 };
+  E.resolveAssault(g, tgt);
+  assert.equal(tgt.owner, PLAYER);
+  assert.equal(tgt.garrison, E.nodeStats(tgt, g).cap);
+  assert.ok(tgt.garrison < E.NODE_TYPES.factory.cap, "the captor's own cap must apply");
+});
+
+// ---------------------------------------------------------------------
+// Ascension
+// ---------------------------------------------------------------------
+
+test("ascension grants the enemy starting tech and, at the top, production", () => {
+  const plain = E.createGame({ seed: 3, ascension: 0 });
+  assert.deepEqual(plain.tech[ENEMY], { assault: 0, fortify: 0 });
+  assert.equal(plain.tech[PLAYER].assault, 0, "your own side is never handed tech");
+
+  let last = { assault: -1, fortify: -1 };
+  for (let lvl = 1; lvl <= E.ASCENSION_MAX; lvl++) {
+    const g = E.createGame({ seed: 3, ascension: lvl });
+    const t = g.tech[ENEMY];
+    assert.ok(t.assault + t.fortify >= last.assault + last.fortify,
+      "level " + lvl + " must not hand back tech");
+    assert.deepEqual(g.tech[PLAYER], { assault: 0, fortify: 0 });
+    last = t;
+  }
+  const top = E.createGame({ seed: 3, ascension: E.ASCENSION_MAX, difficulty: 2 });
+  const base = E.createGame({ seed: 3, ascension: E.ASCENSION_MAX - 1, difficulty: 2 });
+  assert.ok(E.aiProduction(top) > E.aiProduction(base), "the last rung adds production");
+});
+
+test("ascension is clamped to the rungs that exist", () => {
+  const over = E.createGame({ seed: 3, ascension: 99 });
+  assert.equal(over.ascension, E.ASCENSION_MAX);
+  const under = E.createGame({ seed: 3, ascension: -4 });
+  assert.equal(under.ascension, 0);
+  assert.equal(E.createGame({ seed: 3 }).ascension, 0, "ascension is off unless asked for");
+});
+
+test("every ascension rung says what it does", () => {
+  assert.equal(E.ASCENSION.length, E.ASCENSION_MAX);
+  for (const rung of E.ASCENSION) {
+    assert.ok(rung.label && rung.note, "a rung with no description is not a rung");
+    assert.ok(rung.tech && rung.tech.assault <= E.TECH_MAX && rung.tech.fortify <= E.TECH_MAX);
+  }
+});

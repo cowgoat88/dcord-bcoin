@@ -18,9 +18,11 @@ function pair(opts) {
   let guestGame = null;
 
   const host = O.createHost({ engine: E, game: hostGame, transport: link.a });
+  let welcome = null;
   const guest = O.createGuest({
-    engine: E, transport: link.b,
+    engine: E, transport: link.b, doctrine: o.doctrine,
     onWelcome: (msg) => {
+      welcome = msg;
       guestGame = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
       guestGame.ai.timer = Infinity;
       E.applySnapshot(guestGame, msg.snapshot);
@@ -29,7 +31,8 @@ function pair(opts) {
     onReject: (err) => rejects.push(err)
   });
   link.b.fireOpen();
-  return { link, host, guest, hostGame, get guestGame() { return guestGame; }, received, rejects };
+  return { link, host, guest, hostGame, get guestGame() { return guestGame; },
+           get welcome() { return welcome; }, received, rejects };
 }
 
 test("a guest that says hello is welcomed and rebuilds the same board", () => {
@@ -158,4 +161,25 @@ test("snapshots stay small enough to send many times a second", () => {
   for (let i = 0; i < 60 * 60; i++) E.step(s.hostGame, 1 / 60);
   const bytes = JSON.stringify(E.serializeState(s.hostGame)).length;
   assert.ok(bytes < 8000, "a snapshot must stay well under a datachannel frame, got " + bytes);
+});
+
+test("a guest brings its own doctrine, and a bogus one becomes Standard", () => {
+  const s = pair({ doctrine: "shock" });
+  assert.equal(E.doctrineOf(s.hostGame, O.GUEST_SEAT), "shock",
+    "the host must adopt the doctrine the guest announced");
+  assert.equal(s.welcome.doctrine[O.GUEST_SEAT], "shock",
+    "and tell the guest what both sides are fighting under");
+
+  const bogus = pair({ doctrine: "invincible" });
+  assert.equal(E.doctrineOf(bogus.hostGame, O.GUEST_SEAT), "standard");
+});
+
+test("a rematch keeps the guest's doctrine", () => {
+  const s = pair({ doctrine: "vanguard" });
+  const fresh = E.createGame({ seed: 991, mapW: 1000, mapH: 640 });
+  assert.notEqual(E.doctrineOf(fresh, O.GUEST_SEAT), "vanguard",
+    "the fresh board must not already carry it, or this proves nothing");
+  s.host.restart(fresh);
+  assert.equal(E.doctrineOf(fresh, O.GUEST_SEAT), "vanguard");
+  assert.equal(s.welcome.doctrine[O.GUEST_SEAT], "vanguard");
 });

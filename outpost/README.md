@@ -63,6 +63,71 @@ hexagon **Command** (your strongest producer, and where you start),
 square **Factory** (the unit engine), diamond **Mine** (pays credits),
 circle **Outpost** (cheap ground that links lanes).
 
+## Doctrines
+
+One standing choice, made on the start screen before the match. A
+doctrine is a **sidegrade**: each one buys its advantage with a matching
+weakness, so picking one says how you intend to play rather than how
+strong you want to be. Research is the ladder you climb during a match;
+doctrine is the shape of the army you brought to it.
+
+| Doctrine | Gets | Gives up |
+|---|---|---|
+| ◆ **Standard** | Balanced — nothing to exploit | — |
+| ➤ **Vanguard** | Fleets travel 15% faster | Positions hold 15% fewer units and build 5% slower |
+| ● **Deep Logistics** | Cut-off positions keep 65% output instead of 30% | Credit income −25% |
+| ★ **Forward Relays** | Contested Relays keep charging, at half rate | Each strike does 20 damage instead of 26 |
+| ◈ **Prospectors** | Income +90%, research 20% cheaper | Positions build 5% slower |
+| ▲ **Shock Troops** | Assaults land 15% harder | Your positions defend 5% worse |
+
+Both sides always have one. Against the AI its doctrine is drawn from
+the map seed, so a given seed always fields the same opponent and a
+rematch on a new seed is a different problem; online, each player brings
+their own and the host is authoritative about both. The top bar shows
+the pairing throughout, because knowing what the other side brought is
+half of deciding what to do about it.
+
+**On the balance numbers, honestly.** Measured over 200 seeds against
+the shipped AI, player win rate lands between 74% and 94% at Officer and
+57% and 76% at Commander, against 84% / 67% for Standard. That is a
+wider band than it looks, and the benchmark is the reason: the scripted
+commander used to measure it attacks on a fixed cadence and never banks
+units or hoards credits, so it prices *speed*, *production* and
+*defence* and is completely blind to **cap**, **credit income** and
+**research cost** — a garrison cap cut from 100% to 80% measured as
+exactly zero difference. Three of the six doctrines are built mostly on
+the levers it cannot see, which is why Deep Logistics and Forward Relays
+measure identical to Standard to the decimal: their effects never fire
+in a 60-second scripted match. The response is also not smooth — a 1%
+production cut measured as −7 points while an 8% cut measured as 0 — so
+anything inside roughly ±10 points is noise, not signal. The numbers
+above rule out a runaway pick; they do not prove the six are equal, and
+nothing short of people playing will.
+
+## Ascension
+
+Beating Commander unlocks a ladder. Each rung is a rule change rather
+than another production multiplier, they are cumulative, and only one
+rung past your best is ever offered — it is a ladder, not a menu. Your
+progress lives in the same local record as everything else.
+
+| Rung | The enemy | Measured player win rate |
+|---|---|---|
+| — | Commander as it comes | 67% |
+| I | starts with Assault I | 52% |
+| II | starts with Assault II and Fortify I | 40% |
+| III | starts with Assault II and Fortify II | 34% |
+| IV | starts with Assault III and Fortify II | 23% |
+| V | ...and out-produces you by a further 25% | 10% |
+
+Three other rungs were built and thrown away because they did not
+measure: a harsher supply penalty on your side (a commander who keeps a
+connected front is never cut off, so it changed nothing), faster enemy
+fleets, and cheaper enemy research — and two of those three made the
+game measurably *easier*. Starting tech is the one lever that orders
+cleanly, so the ladder is built from it. Ascension is a solo ladder; an
+online match is two people's doctrines and nothing else.
+
 ## The Doomstar
 
 The centre of every map holds a **Doomstar**, and it is what the Relays
@@ -224,7 +289,8 @@ no private powers.
 
 Wins, losses, streak and fastest time per tier are kept on your device
 (localStorage only — no account, no server) and shown on the start
-screen and after each match. It gates nothing.
+screen and after each match. The one thing it gates is the Ascension
+ladder, which needs a Commander win to appear at all.
 
 ## Difficulty is stated, not hidden
 

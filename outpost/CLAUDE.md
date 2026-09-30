@@ -27,9 +27,27 @@ measured — difficulty tiers inverted twice, and reducing lane density
 produced no chokepoints at all. Run a seed sweep and report the numbers
 rather than reasoning from the constants.
 
-Current baseline: 16 / 15 / 10 player wins over 16 seeds across the three
-difficulty tiers, zero stalemates. Difficulty must stay monotonic and
-stalemates must stay at zero.
+Current baseline over 200 seeds: 198 / 167 / 133 player wins across the
+three difficulty tiers, zero stalemates. Difficulty must stay monotonic
+and stalemates must stay at zero.
+
+### What the benchmark cannot see
+
+The scripted commander used for balance sweeps attacks on a fixed 1.5s
+cadence, never banks units and barely spends credits. Measured with
+single-modifier ablations over 200 seeds, it prices only three things:
+
+- fleet **speed** (very strong: +40% speed was worth +22 points)
+- unit **production** rate
+- **defence** strength
+
+and is completely blind to **garrison cap**, **credit income** and
+**research cost** — cap cut to 80% measured as exactly 0 difference.
+Its response is also not smooth: a 1% production cut measured −7 points
+while an 8% cut measured 0. Treat anything inside ±10 points as noise,
+and never price a doctrine's *cost* on a lever the harness reports as
+free. The sweep lives in the scratchpad as `harness.js` plus the
+`tune*.js` / `iso*.js` drivers.
 
 ## Branch
 

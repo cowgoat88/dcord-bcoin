@@ -104,6 +104,125 @@
   };
   const TECH_MAX = 3;
 
+  // ---- doctrines -------------------------------------------------------
+  // One standing choice made before the match starts. Every doctrine is a
+  // SIDEGRADE: each one buys its advantage with a matching weakness, so
+  // picking one is a statement about how you intend to play rather than a
+  // power level. Research is the ladder you climb during a match;
+  // doctrine is the shape of the army you brought to it.
+  //
+  // They exist because two sides with identical rules converge on
+  // identical play. With doctrines a friend who always rushes and a
+  // friend who always turtles are playing recognisably different games,
+  // and the pre-match pick gives the opening a decision in it.
+  //
+  // Every effect is expressed as a modifier key read through docMod, so
+  // adding a doctrine never means threading a new branch through the
+  // simulation.
+  const MOD_DEFAULTS = {
+    speed: 1,            // fleet travel speed
+    cap: 1,              // garrison capacity
+    units: 1,            // unit production rate
+    credits: 1,          // credit income
+    attack: 1,           // assault strength
+    defence: 1,          // defensive strength
+    research: 1,         // research cost
+    doom: 1,             // Doomstar strike damage
+    cutoff: 0.3,         // output multiplier while cut off; OUT_OF_SUPPLY_RATE
+                         // is defined from this so the two cannot drift
+    contestedCharge: 0   // charge a contested Relay still contributes
+  };
+  const DOCTRINES = {
+    standard: {
+      label: "Standard", icon: "\u25c6",
+      up: "Balanced \u2014 nothing to exploit",
+      down: "",
+      mods: {}
+    },
+    vanguard: {
+      label: "Vanguard", icon: "\u27a4",
+      up: "Fleets travel 15% faster",
+      down: "Positions hold 15% fewer units and build 5% slower",
+      mods: { speed: 1.15, cap: 0.85, units: 0.95 }
+    },
+    logistics: {
+      label: "Deep Logistics", icon: "\u25cf",
+      up: "Cut-off positions keep 65% output, not 30%",
+      down: "Credit income \u221225%",
+      mods: { cutoff: 0.65, credits: 0.75 }
+    },
+    relays: {
+      label: "Forward Relays", icon: "\u2605",
+      up: "Contested Relays keep charging, at half rate",
+      down: "Each strike does 20 damage, not " + DOOM_DAMAGE,
+      mods: { contestedCharge: 0.5, doom: 20 / DOOM_DAMAGE }
+    },
+    prospectors: {
+      label: "Prospectors", icon: "\u25c8",
+      up: "Income +90%, research 20% cheaper",
+      down: "Positions build 5% slower",
+      mods: { credits: 1.90, research: 0.80, units: 0.95 }
+    },
+    shock: {
+      label: "Shock Troops", icon: "\u25b2",
+      up: "Assaults land 15% harder",
+      down: "Your positions defend 5% worse",
+      mods: { attack: 1.15, defence: 0.95 }
+    }
+  };
+  const DOCTRINE_KEYS = Object.keys(DOCTRINES);
+
+  // ---- ascension -------------------------------------------------------
+  // What you get for beating Commander: an opponent that starts the match
+  // already researched, and at the top rung out-producing you as well.
+  //
+  // Every rung had to move the measured win rate on its own, or it is not
+  // a handicap, it is flavour text. Three earlier candidates did not: a
+  // harsher supply penalty on your side (a commander who keeps a
+  // connected front is never cut off), faster enemy fleets, and cheaper
+  // enemy research all came back inside the noise, and two of the three
+  // made the game measurably EASIER. Starting tech is the one lever that
+  // orders cleanly, so the ladder is built from it.
+  //
+  // Measured player win rate over 200 seeds at Commander:
+  //   none 67% | I 52% | II 40% | III 34% | IV 23% | V 10%
+  const ASCENSION = [
+    { label: "Ascension I",   note: "The enemy starts with Assault I",
+      tech: { assault: 1, fortify: 0 } },
+    { label: "Ascension II",  note: "The enemy starts with Assault II and Fortify I",
+      tech: { assault: 2, fortify: 1 } },
+    { label: "Ascension III", note: "The enemy starts with Assault II and Fortify II",
+      tech: { assault: 2, fortify: 2 } },
+    { label: "Ascension IV",  note: "The enemy starts with Assault III and Fortify II",
+      tech: { assault: 3, fortify: 2 } },
+    { label: "Ascension V",   note: "...and out-produces you by a further 25%",
+      tech: { assault: 3, fortify: 2 }, produce: true }
+  ];
+  const ASCENSION_MAX = ASCENSION.length;
+  const ASC_PRODUCE_BONUS = 1.25;
+
+  // Starting tech granted by an ascension level (0 = none).
+  function ascensionTech(level) {
+    const rung = ASCENSION[(level | 0) - 1];
+    return rung ? { assault: rung.tech.assault, fortify: rung.tech.fortify }
+                : { assault: 0, fortify: 0 };
+  }
+  function ascensionProduce(level) {
+    const rung = ASCENSION[(level | 0) - 1];
+    return rung && rung.produce ? ASC_PRODUCE_BONUS : 1;
+  }
+
+
+  function doctrineOf(game, owner) {
+    const key = game && game.doctrine && game.doctrine[owner];
+    return DOCTRINES[key] ? key : "standard";
+  }
+  function docMod(game, owner, key) {
+    const d = DOCTRINES[doctrineOf(game, owner)];
+    const v = d.mods[key];
+    return v === undefined ? MOD_DEFAULTS[key] : v;
+  }
+
   // Fleets hitting the same node within this window fight as one force.
   // Without it, converging attacks are defeated one at a time no matter
   // how well timed, which makes concentration — the whole point —
@@ -111,6 +230,7 @@
   const COALESCE_WINDOW = 1.0;
 
   const FLEET_SPEED = 115;      // logical units per second
+  function fleetSpeed(game, owner) { return FLEET_SPEED * docMod(game, owner, "speed"); }
   const MIN_SEND = 2;           // never send a token force
   const OVERFLOW_WASTE = true;  // arriving units above cap are lost
 
@@ -132,13 +252,19 @@
   function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
-  function nodeStats(node) {
+  // `game` is optional: pass it and the owner's doctrine is applied, omit
+  // it for the raw type numbers (the legend, the map generator).
+  function nodeStats(node, game) {
     const base = NODE_TYPES[node.type];
     const rateMult = 1 + RATE_BONUS * node.level;
+    const held = game && node.owner !== NEUTRAL;
+    const dUnits = held ? docMod(game, node.owner, "units") : 1;
+    const dCred = held ? docMod(game, node.owner, "credits") : 1;
+    const dCap = held ? docMod(game, node.owner, "cap") : 1;
     return {
-      unitRate: base.units * rateMult,
-      creditRate: base.credits * rateMult,
-      cap: Math.round(base.cap * (1 + CAP_BONUS * node.level)),
+      unitRate: base.units * rateMult * dUnits,
+      creditRate: base.credits * rateMult * dCred,
+      cap: Math.round(base.cap * (1 + CAP_BONUS * node.level) * dCap),
       radius: base.radius
     };
   }
@@ -147,23 +273,29 @@
     return (game.tech && game.tech[owner] && game.tech[owner][track]) || 0;
   }
   // Cost of the *next* level, or null when the track is maxed.
-  function techCost(track, level) {
+  // `game`/`owner` are optional; pass them for the price this side
+  // actually pays, which Prospectors discounts.
+  function techCost(track, level, game, owner) {
     const spec = TECH[track];
     if (!spec || level >= TECH_MAX) return null;
-    return spec.costs[level];
+    const raw = spec.costs[level];
+    if (!game) return raw;
+    return Math.round(raw * docMod(game, owner, "research"));
   }
   function assaultMult(game, owner) {
-    return 1 + TECH.assault.perLevel * techLevel(game, owner, "assault");
+    return (1 + TECH.assault.perLevel * techLevel(game, owner, "assault"))
+      * docMod(game, owner, "attack");
   }
   function fortifyMult(game, owner) {
-    return 1 + TECH.fortify.perLevel * techLevel(game, owner, "fortify");
+    return (1 + TECH.fortify.perLevel * techLevel(game, owner, "fortify"))
+      * docMod(game, owner, "defence");
   }
 
   function researchTech(game, track, owner) {
     if (game.winner) return "The battle is over.";
     if (!TECH[track]) return "No such research.";
     const level = techLevel(game, owner, track);
-    const cost = techCost(track, level);
+    const cost = techCost(track, level, game, owner);
     if (cost === null) return TECH[track].label + " is fully researched.";
     if ((game.credits[owner] || 0) < cost) return "Need " + cost + " credits.";
     game.credits[owner] -= cost;
@@ -212,7 +344,7 @@
   // keeps flying your colour but barely functions: this is what makes
   // encircling and severing worth doing, rather than every node you
   // occupy simply working at full rate wherever it sits.
-  const OUT_OF_SUPPLY_RATE = 0.3;   // production multiplier when cut off
+  const OUT_OF_SUPPLY_RATE = MOD_DEFAULTS.cutoff;   // production when cut off
 
   function computeSupply(game) {
     for (const n of game.nodes) n.inSupply = n.owner === NEUTRAL ? true : false;
@@ -233,8 +365,10 @@
     }
   }
 
-  function supplyMultiplier(node) {
-    return node.inSupply === false ? OUT_OF_SUPPLY_RATE : 1;
+  function supplyMultiplier(node, game) {
+    if (node.inSupply !== false) return 1;
+    if (!game) return OUT_OF_SUPPLY_RATE;
+    return docMod(game, node.owner, "cutoff");
   }
 
   // A Relay is contested when any lane-adjacent node is enemy-held. A
@@ -249,12 +383,19 @@
     return false;
   }
 
+  // How much charge one held Relay contributes per tick. Normally a
+  // contested Relay contributes nothing; Forward Relays keeps it feeding
+  // at half rate, which is what makes that doctrine worth its weaker
+  // strike.
+  function relayCharge(game, node) {
+    if (node.type !== "relay" || node.inSupply === false) return 0;
+    if (!isContested(game, node)) return 1;
+    return docMod(game, node.owner, "contestedCharge");
+  }
+
   // Relays this owner holds that are actually charging right now.
   function chargingRelays(game, owner) {
-    return game.nodes.filter(
-      (n) => n.type === "relay" && n.owner === owner &&
-        !isContested(game, n) && n.inSupply !== false
-    );
+    return game.nodes.filter((n) => n.owner === owner && relayCharge(game, n) > 0);
   }
 
   function doomstarNode(game) {
@@ -303,7 +444,7 @@
 
     game.charge[owner] = 0;
     const before = target.garrison;
-    target.garrison = Math.max(0, target.garrison - DOOM_DAMAGE);
+    target.garrison = Math.max(0, target.garrison - strikeDamage(game, owner));
     const killed = before - target.garrison;
     // A strike that empties a position leaves it abandoned, not captured —
     // you still have to walk in and take it.
@@ -316,6 +457,11 @@
     return undefined;
   }
 
+  // What one strike from this side actually removes.
+  function strikeDamage(game, owner) {
+    return Math.round(DOOM_DAMAGE * docMod(game, owner, "doom"));
+  }
+
   function stepCharge(game, dt) {
     const d = doomstarNode(game);
     if (!d) return;
@@ -323,11 +469,13 @@
     if (game.chargeTimer > 0) return;
     game.chargeTimer += DOOM_CHARGE_INTERVAL;
     for (const owner of [PLAYER, ENEMY]) {
-      const relays = chargingRelays(game, owner).length;
+      const held = chargingRelays(game, owner);
+      const relays = held.length;
       if (!relays) continue;
+      const gained = held.reduce((sum, n) => sum + relayCharge(game, n), 0);
       const before = game.charge[owner] || 0;
       if (before >= DOOM_CHARGE_NEEDED) continue;
-      game.charge[owner] = Math.min(DOOM_CHARGE_NEEDED, before + relays * DOOM_CHARGE_PER_RELAY);
+      game.charge[owner] = Math.min(DOOM_CHARGE_NEEDED, before + gained * DOOM_CHARGE_PER_RELAY);
       emit(game, {
         kind: "charge", owner, relays,
         total: game.charge[owner], needed: DOOM_CHARGE_NEEDED,
@@ -515,6 +663,16 @@
   }
 
   // ---- game construction ---------------------------------------------
+  function validDoctrine(key) { return DOCTRINES[key] ? key : "standard"; }
+
+  // Used by the host when a guest announces its pick. Validation lives
+  // here rather than in the protocol so an unknown key can only ever
+  // become "standard", never a hole in the rules.
+  function setDoctrine(game, seat, key) {
+    if (seat !== PLAYER && seat !== ENEMY) return;
+    game.doctrine[seat] = validDoctrine(key);
+  }
+
   function createGame(opts) {
     const o = opts || {};
     const seed = (o.seed === undefined ? 12345 : o.seed) >>> 0;
@@ -523,14 +681,29 @@
     const adjacency = new Map(nodes.map((n) => [n.id, []]));
     for (const l of lanes) { adjacency.get(l.a).push(l.b); adjacency.get(l.b).push(l.a); }
 
+    const rng = makeRng(seed ^ 0x9e3779b9);
+    const ascension = clamp(o.ascension | 0, 0, ASCENSION_MAX);
+    const mine = validDoctrine(o.doctrine);
+    // From Ascension IV the opponent answers your pick; otherwise it draws
+    // one from the seed, so a given map always fields the same opponent
+    // and a rematch on a new seed is a different problem.
+    // The opponent's doctrine is drawn from the seed, so a given map
+    // always fields the same opponent and a rematch on a new seed is a
+    // different problem to solve.
+    const theirs = o.foeDoctrine !== undefined
+      ? validDoctrine(o.foeDoctrine)
+      : DOCTRINE_KEYS[Math.floor(rng() * DOCTRINE_KEYS.length)];
+
     return {
       seed,
-      rng: makeRng(seed ^ 0x9e3779b9),
+      rng,
       mapW, mapH,
       nodes, lanes, adjacency,
       fleets: [],
       credits: { [PLAYER]: 40, [ENEMY]: 40 },
-      tech: { [PLAYER]: { assault: 0, fortify: 0 }, [ENEMY]: { assault: 0, fortify: 0 } },
+      doctrine: { [PLAYER]: mine, [ENEMY]: theirs },
+      ascension,
+      tech: { [PLAYER]: { assault: 0, fortify: 0 }, [ENEMY]: ascensionTech(ascension) },
       charge: { [PLAYER]: 0, [ENEMY]: 0 },
       chargeTimer: DOOM_CHARGE_INTERVAL,
       time: 0,
@@ -627,7 +800,7 @@
     from.garrison -= count;
     game.fleets.push({
       owner, from: fromId, to: toId, count, path, leg: 0,
-      t: 0, duration: dist(from, game.nodes[path[1]]) / FLEET_SPEED
+      t: 0, duration: dist(from, game.nodes[path[1]]) / fleetSpeed(game, owner)
     });
     if (owner === PLAYER) game.stats.sent += count;
     emit(game, { kind: "launch", x: from.x, y: from.y, owner, count });
@@ -659,8 +832,8 @@
     const aiMult = aiProduction(game);
     for (const n of game.nodes) {
       if (n.owner === NEUTRAL) continue;
-      const s = nodeStats(n);
-      const m = (n.owner === ENEMY ? aiMult : 1) * supplyMultiplier(n);
+      const s = nodeStats(n, game);
+      const m = (n.owner === ENEMY ? aiMult : 1) * supplyMultiplier(n, game);
       if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * m * dt);
       if (s.creditRate > 0) game.credits[n.owner] = (game.credits[n.owner] || 0) + s.creditRate * m * dt;
     }
@@ -674,7 +847,7 @@
         f.leg += 1;
         f.t -= 1;
         const a = game.nodes[f.path[f.leg]], b = game.nodes[f.path[f.leg + 1]];
-        f.duration = dist(a, b) / FLEET_SPEED;
+        f.duration = dist(a, b) / fleetSpeed(game, f.owner);
         f.t *= 1; // carry the overshoot into the new leg
       }
       if (f.t < 1) { remaining.push(f); continue; }
@@ -702,7 +875,7 @@
 
   function resolveArrival(game, f) {
     const to = game.nodes[f.to];
-    const s = nodeStats(to);
+    const s = nodeStats(to, game);
 
     if (to.owner === f.owner) {
       const before = to.garrison;
@@ -741,7 +914,6 @@
     to.assault = null;
     if (!a) return;
     const f = { owner: a.owner, count: a.count, to: to.id };
-    const s = nodeStats(to);
     // Both sides fight at their researched strength. Comparisons happen in
     // "effective" strength, and anything written back to a garrison is
     // converted to real units so the numbers on screen stay honest.
@@ -752,10 +924,12 @@
       const survivors = (effAttack - defence) / atkMult;
       const previousOwner = to.owner;
       to.owner = f.owner;
-      to.garrison = Math.min(s.cap, survivors);
       // Capturing does not hand you the previous owner's upgrades; taking
-      // ground is a foothold, not a free fortress.
+      // ground is a foothold, not a free fortress. Ownership and level are
+      // settled before the cap is read, so the survivors are held to the
+      // CAPTOR's capacity rather than the defender's.
       to.level = 0;
+      to.garrison = Math.min(nodeStats(to, game).cap, survivors);
       if (f.owner === PLAYER) game.stats.captured += 1;
       if (previousOwner === PLAYER) game.stats.lost += 1;
       emit(game, {
@@ -816,7 +990,7 @@
   ];
   function aiProduction(game) {
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
-    return cfg.produce;
+    return cfg.produce * ascensionProduce(game.ascension);
   }
 
   function stepAI(game, dt) {
@@ -931,7 +1105,7 @@
   function considerSpending(game, owned) {
     const behind = owned.length < nodesOf(game, PLAYER).length;
     const track = behind ? "fortify" : "assault";
-    const cost = techCost(track, techLevel(game, ENEMY, track));
+    const cost = techCost(track, techLevel(game, ENEMY, track), game, ENEMY);
     const credits = game.credits[ENEMY] || 0;
     if (cost !== null) {
       if (credits >= cost) { researchTech(game, track, ENEMY); return; }
@@ -964,7 +1138,7 @@
     let units = 0, credits = 0;
     for (const n of game.nodes) {
       if (n.owner !== owner) continue;
-      const s = nodeStats(n);
+      const s = nodeStats(n, game);
       units += s.unitRate; credits += s.creditRate;
     }
     return { units, credits };
@@ -1055,6 +1229,9 @@
     sendFleet, upgradeNode, researchTech, fireDoomstar, step,
     serializeState, applySnapshot, applyOrderAs,
     isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
-    techLevel, techCost, assaultMult, fortifyMult
+    techLevel, techCost, assaultMult, fortifyMult,
+    DOCTRINES, DOCTRINE_KEYS, doctrineOf, docMod, setDoctrine, fleetSpeed,
+    relayCharge, strikeDamage,
+    ASCENSION, ASCENSION_MAX, ASC_PRODUCE_BONUS, ascensionTech, ascensionProduce
   };
 });
