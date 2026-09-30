@@ -214,6 +214,30 @@ only through orders (`sendFleet`, `upgradeNode`) and a drained event
 queue. The AI plays through the same `sendFleet` the player does; it has
 no private powers.
 
+## Your record
+
+Wins, losses, streak and fastest time per tier are kept on your device
+(localStorage only — no account, no server) and shown on the start
+screen and after each match. It gates nothing.
+
+## Difficulty is stated, not hidden
+
+The tiers differ mainly by an openly-applied production multiplier —
+Cadet −30%, Officer even, Commander +75% — and the buttons say so.
+Decision-quality knobs were tried first and inverted the tiers twice
+(see the design notes below); a multiplier is the only lever that orders
+reliably, and a handicap a player can see reads as a difficulty setting
+rather than as the AI cheating.
+
+Every tier also closes out a game it has already won. A cautious AI
+capped at two attackers tops out near 49 units against a capped
+Command's 87.5 defence, so it could hold fourteen positions to the
+player's one and never take the last: measured at 5 stalled matches in
+40. The endgame push only fires once the opponent is down to a position
+or two *and* the AI holds several times what is left, because both sides
+start on exactly one position — without that check it became an opening
+rush that wrecked the tiers.
+
 ## Play a friend
 
 Press **Host game** on the start screen. You get a five-character room

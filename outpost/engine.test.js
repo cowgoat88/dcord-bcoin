@@ -554,15 +554,21 @@ test("a fully fortified position is still crackable by a concentrated attack", (
 });
 
 test("the AI researches on the tiers that are meant to", () => {
-  const easy = E.createGame({ seed: 8, difficulty: 0 });
-  run(easy, 260);
-  assert.equal(E.techLevel(easy, ENEMY, "assault") + E.techLevel(easy, ENEMY, "fortify"), 0,
-    "the easiest tier must not research at all");
-
-  const hard = E.createGame({ seed: 8, difficulty: 2 });
-  run(hard, 260);
-  assert.ok(E.techLevel(hard, ENEMY, "assault") + E.techLevel(hard, ENEMY, "fortify") > 0,
-    "the hardest tier must spend credits on research");
+  // The player has to hold enough of the map that the match is still
+  // running at the end. Against an idle opponent the AI now closes a
+  // game in about 90 seconds, before it has ever banked the 90 credits
+  // Assault I costs — so an idle fixture measures nothing.
+  function contested(diff) {
+    const g = E.createGame({ seed: 8, difficulty: diff });
+    for (const n of g.nodes) {
+      if (n.type !== "doomstar" && n.owner === NEUTRAL && n.id % 2 === 0) n.owner = PLAYER;
+    }
+    for (const n of E.nodesOf(g, PLAYER)) n.garrison = E.nodeStats(n).cap;
+    run(g, 260);
+    return E.techLevel(g, ENEMY, "assault") + E.techLevel(g, ENEMY, "fortify");
+  }
+  assert.equal(contested(0), 0, "the easiest tier must not research at all");
+  assert.ok(contested(2) > 0, "the hardest tier must spend credits on research");
 });
 
 test("difficulty tiers are ordered: a harder tier out-produces an easier one", () => {
@@ -720,7 +726,14 @@ test("the AI fires the Doomstar once it can", () => {
   const g = E.createGame({ seed: 5, difficulty: 2 });
   E.doomstarNode(g).owner = ENEMY;
   for (const n of g.nodes) if (n.type === "relay") n.owner = ENEMY;
-  const victim = g.nodes.find((n) => n.owner === PLAYER);
+  // The player must hold enough ground that the AI cannot simply win
+  // before the weapon ever charges — it closes out a one-sided game in
+  // about 90 seconds now.
+  for (const n of g.nodes) {
+    if (n.owner === NEUTRAL && n.type !== "doomstar" && n.id % 2 === 0) n.owner = PLAYER;
+  }
+  for (const n of E.nodesOf(g, PLAYER)) n.garrison = E.nodeStats(n).cap;
+  const victim = E.nodesOf(g, PLAYER)[0];
   victim.garrison = 60;
   let fired = false;
   for (let i = 0; i < 60 * 120 && !fired; i++) {
@@ -919,4 +932,42 @@ test("even the strongest terrain stays crackable by a concentrated attack", () =
     "seven mid-size positions must break the worst case, got " + defence.toFixed(0));
   assert.ok(midCap * 0.75 * 5 * (1 + E.TECH.assault.perLevel * E.TECH_MAX) > defence,
     "five must do it with Assault maxed");
+});
+
+test("a cautious AI still closes out a game it has already won", () => {
+  // Regression for a real stall: capped at two attackers committing 55%,
+  // the easiest tier tops out near 49 units against a capped Command's
+  // 87.5 defence, so it could hold 14 positions to the player's 1 and
+  // never take the last one. Measured before the fix: 5 of 40 idle
+  // matches never resolved, leaving a new player with no ending.
+  let stalls = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const g = E.createGame({ seed, difficulty: 0 });
+    let t = 0;
+    while (!g.winner && t < 900) { E.step(g, 1 / 30); t += 1 / 30; g.events.length = 0; }
+    if (!g.winner) stalls++;
+  }
+  assert.equal(stalls, 0, "every idle match must reach an ending");
+});
+
+test("the endgame push is an endgame, not an opening rush", () => {
+  // Both sides start on exactly one position, so "the opponent is down to
+  // one node" is also true at kick-off. Without a dominance check the AI
+  // opened every game by hurling its whole garrison at the enemy Command.
+  // Sampled across the whole opening, not at one instant, so a rush that
+  // launched and landed between checks cannot slip through.
+  for (const seed of [1, 4, 9]) {
+    const g = E.createGame({ seed, difficulty: 2 });
+    let rushed = false;
+    for (let i = 0; i < 60 * 20; i++) {
+      E.step(g, 1 / 60);
+      if (g.fleets.some((f) => f.owner === ENEMY &&
+          g.nodes[f.to].type === "command" && g.nodes[f.to].owner === PLAYER)) {
+        rushed = true; break;
+      }
+      g.events.length = 0;
+    }
+    assert.equal(rushed, false,
+      `seed ${seed}: the AI must not throw itself at the enemy Command in the opening`);
+  }
 });

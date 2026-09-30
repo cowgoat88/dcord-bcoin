@@ -146,6 +146,11 @@
     0%,100% { box-shadow: 0 0 0 rgba(255,122,92,0); }
     50%     { box-shadow: 0 0 16px rgba(255,122,92,.75); }
   }
+  #profileBox { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; text-align: left; }
+  .prof { display: grid; gap: 3px; font-size: 11px; margin-top: 6px; }
+  .prof > div { display: flex; justify-content: space-between; }
+  .prof span:first-child { color: var(--muted); }
+  .prof span:last-child { font-variant-numeric: tabular-nums; }
   .netbox { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
   .netbox input {
     font-family: inherit; font-size: 15px; letter-spacing: 3px; text-transform: uppercase;
@@ -286,13 +291,14 @@
         </details>
         <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
         <div class="row" id="diffRow">
-          <button data-diff="0">Cadet</button>
-          <button data-diff="1" class="on">Officer</button>
-          <button data-diff="2">Commander</button>
+          <button data-diff="0" title="The AI builds at 70% of your rate, reacts slowly, and does not research">Cadet <small>−30%</small></button>
+          <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
+          <button data-diff="2" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
         </div>
         <div class="row">
           <button class="primary" id="btnStart">Deploy</button>
         </div>
+        <div id="profileBox" hidden></div>
         <div class="netbox">
           <div class="grouplabel" style="margin-bottom:6px">Play a friend</div>
           <div class="row" id="netButtons">
@@ -319,6 +325,7 @@
       <div class="card">
         <h2 id="endTitle">Victory</h2>
         <p id="endText"></p>
+        <p id="endRecord" style="margin:-6px 0 12px;font-size:11px;color:var(--muted)"></p>
         <div class="scores">
           <div><span>Time</span><b id="endTime">0:00</b></div>
           <div><span>Captured</span><b id="endCaptured">0</b></div>
@@ -714,6 +721,7 @@
 
   document.getElementById("btnNew").addEventListener("click", () => {
     document.getElementById("endOverlay").hidden = true;
+    renderProfile();
     document.getElementById("startOverlay").hidden = false;
     started = false;
   });
@@ -990,6 +998,66 @@
       );
     } else { netMsg(url); }
   });
+
+  // A match that leaves no trace gives nobody a reason to play a second
+  // one. Kept entirely on this device — there is no account and no
+  // server — and never gates anything.
+  const TIERS = ["Cadet", "Officer", "Commander"];
+  const profile = {
+    blank() {
+      return { games: 0, wins: 0, streak: 0, best: 0, byTier: [{}, {}, {}].map(() => ({ w: 0, l: 0, fastest: 0 })) };
+    },
+    read() {
+      try {
+        const p = JSON.parse(localStorage.getItem("outpost.profile") || "null");
+        if (!p || !Array.isArray(p.byTier) || p.byTier.length !== 3) return this.blank();
+        return p;
+      } catch (e) { return this.blank(); }
+    },
+    write(p) {
+      try { localStorage.setItem("outpost.profile", JSON.stringify(p)); } catch (e) { /* not fatal */ }
+    },
+    record(won, tier, seconds) {
+      const p = this.read();
+      p.games += 1;
+      const t = p.byTier[tier] || (p.byTier[tier] = { w: 0, l: 0, fastest: 0 });
+      if (won) {
+        p.wins += 1;
+        p.streak += 1;
+        if (p.streak > p.best) p.best = p.streak;
+        t.w += 1;
+        // Floor at a second: a 0 would be falsy and silently hide itself.
+        const secs = Math.max(1, seconds);
+        if (!t.fastest || secs < t.fastest) t.fastest = secs;
+      } else {
+        p.streak = 0;
+        t.l += 1;
+      }
+      this.write(p);
+      return p;
+    }
+  };
+
+  const mmss = (s) => Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+
+  function renderProfile() {
+    const p = profile.read();
+    const el = document.getElementById("profileBox");
+    if (!el) return;
+    if (!p.games) { el.hidden = true; return; }
+    el.hidden = false;
+    const rows = p.byTier.map((t, i) => {
+      if (!t.w && !t.l) return "";
+      return "<div><span>" + TIERS[i] + "</span><span>" + t.w + "W " + t.l + "L" +
+        (t.fastest ? " \u00b7 best " + mmss(t.fastest) : "") + "</span></div>";
+    }).join("");
+    el.innerHTML =
+      "<div class='grouplabel'>Your record</div>" +
+      "<div class='prof'><div><span>Played</span><span>" + p.games + "</span></div>" +
+      "<div><span>Won</span><span>" + p.wins + " (" + Math.round(100 * p.wins / p.games) + "%)</span></div>" +
+      "<div><span>Streak</span><span>" + p.streak + (p.best > p.streak ? " (best " + p.best + ")" : "") + "</span></div>" +
+      rows + "</div>";
+  }
 
   let toastTimer = null;
   function toast(msg) {
@@ -1750,6 +1818,16 @@
   function showEnd() {
     const won = game.winner === mySeat;
     if (won) sfx.win(); else sfx.lose();
+    if (!isOnline()) {
+      const p = profile.record(won, difficulty, Math.floor(game.time));
+      const line = document.getElementById("endRecord");
+      if (line) {
+        line.textContent = TIERS[difficulty] + " \u00b7 " + p.wins + "W/" +
+          (p.games - p.wins) + "L" +
+          (p.streak > 1 ? " \u00b7 " + p.streak + " in a row" : "");
+      }
+      renderProfile();
+    }
     document.getElementById("endTitle").textContent = won ? "Victory" : "Defeat";
     document.getElementById("endTitle").style.color = won ? "var(--player)" : "var(--enemy)";
     document.getElementById("endText").textContent = won
@@ -1830,6 +1908,7 @@
     }
   })();
 
+  renderProfile();
   resize();
   newGame();
   started = false;

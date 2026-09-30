@@ -817,6 +817,8 @@
 
     if (cfg.upgrade) considerSpending(game, mine);
 
+    if (finishingBlow(game, mine)) return;
+
     // Pick the best target on the whole map, then throw *everything that
     // borders it* at once. Attacking with one node at a time can never
     // beat the defender edge, so an AI that does that simply never takes
@@ -874,6 +876,45 @@
   // It leans Assault when it is even or ahead (it still has to attack to
   // win) and Fortify when it is losing ground, and keeps a margin so it
   // is not left permanently broke.
+  // When the opponent is nearly finished, stop being careful.
+  //
+  // A cautious tier is capped at two attackers committing 55% each, which
+  // tops out around 49 units — less than the 87.5 defence of a capped
+  // Command. So an AI that had already won on material would sit on 14
+  // nodes against the player's 1 and never be able to take the last one.
+  // Measured before this: Cadet failed to finish on 5 of 40 idle matches,
+  // leaving a new player in a game with no resolution.
+  //
+  // This only fires when the opponent is down to their last position or
+  // two AND the force actually clears the defence, so it closes out a
+  // decided game without making the AI reckless in a live one.
+  const FINISH_NODES = 2;
+  const FINISH_MIN_OWN = 4;      // it must actually have built an empire
+  const FINISH_DOMINANCE = 3;    // ...and hold several times what is left
+  function finishingBlow(game, mine) {
+    const foes = nodesOf(game, PLAYER);
+    if (!foes.length || foes.length > FINISH_NODES) return false;
+    // Both sides start on exactly one position, so "the opponent is down
+    // to one node" is also true at kick-off. Without these two extra
+    // conditions the AI opened every game by hurling its whole garrison
+    // at the enemy Command, which wrecked the difficulty tiers (measured
+    // 16/16/1 instead of 16/15/10). This has to mean *endgame*, not
+    // *opening*.
+    if (mine.length < FINISH_MIN_OWN) return false;
+    if (mine.length < foes.length * FINISH_DOMINANCE) return false;
+    // Go for whichever is softest; the rest follows next tick.
+    const tgt = foes.slice().sort((a, b) => defenceOf(game, a) - defenceOf(game, b))[0];
+    const attackers = mine.filter((s) => s.garrison >= 4 && findPath(game, s.id, tgt.id, ENEMY));
+    if (!attackers.length) return false;
+    const force = attackers.reduce((sum, s) => sum + Math.floor(s.garrison * 0.9), 0)
+      * assaultMult(game, ENEMY);
+    if (force <= defenceOf(game, tgt) - incoming(game, tgt.id, ENEMY) * assaultMult(game, ENEMY)) {
+      return false;   // not yet enough — keep massing rather than feeding it
+    }
+    for (const src of attackers) sendFleet(game, src.id, tgt.id, 0.9, ENEMY);
+    return true;
+  }
+
   function considerSpending(game, owned) {
     const behind = owned.length < nodesOf(game, PLAYER).length;
     const track = behind ? "fortify" : "assault";
