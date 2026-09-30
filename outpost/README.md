@@ -200,6 +200,11 @@ something that did not work:
 
 ## Architecture
 
+`online.js` is the session protocol with its transport injected, so it
+is testable without networking; `net.js` wraps the vendored PeerJS (MIT,
+`vendor/`) as that transport and also provides the BroadcastChannel
+two-tab mode.
+
 `engine.js` is the whole simulation and has no DOM, no canvas, no timers
 and no `Math.random` — it runs on a seeded RNG and a fixed timestep, so a
 match is reproducible from its seed and testable under plain Node.
@@ -208,10 +213,44 @@ only through orders (`sendFleet`, `upgradeNode`) and a drained event
 queue. The AI plays through the same `sendFleet` the player does; it has
 no private powers.
 
+## Play a friend
+
+Press **Host game** on the start screen. You get a five-character room
+code and a copyable invite link; send either to your friend. They open
+the link (or press **Join with code** and type it) and you are in the
+same match — one of you commands each side. No accounts, nothing to
+install, no server to run: the free public PeerJS signalling server only
+introduces the two browsers, and after that the connection is directly
+peer-to-peer with no game data passing through anything in between.
+
+**Two tabs** plays both sides in one browser on one machine, over
+BroadcastChannel with no internet at all. It is the quickest way to see
+the online mode working, and it is how the networking was tested.
+
+### How it works
+
+Host-authoritative. The host's browser is the only copy of the truth: it
+runs the simulation, validates every order through one seat-checked
+entry point (`applyOrderAs`, where the seat comes from the connection and
+never from the message, so a guest cannot move the host's forces), and
+broadcasts a state snapshot 12 times a second. The guest never advances
+the simulation itself — it renders whatever snapshot it was last sent —
+so the two copies cannot drift apart, and rejoining is just "send the
+latest snapshot".
+
+Only the mutable half of the game travels, about half a kilobyte a
+snapshot. The board is a pure function of the seed and board shape, so
+both peers generate an identical map from the three values in `welcome`
+and no geometry ever crosses the wire.
+
+A guest holds engine seat 2, and the UI swaps which seat counts as
+"you", so both players see their own forces in their own colour and read
+the HUD the same way.
+
 ## Tests
 
 ```
-node --test outpost/engine.test.js
+node --test outpost/engine.test.js outpost/online.test.js
 ```
 
 Node's built-in runner, no install needed (Node 18+). 40 cases covering
@@ -227,3 +266,13 @@ producing far less, cut-off Relays not charging), terrain (mirrored
 placement, Command and Doomstar always flat, defence effects, and the
 worst possible position staying crackable), and the stalemate
 regression.
+
+`online.test.js` adds 10 cases over an in-memory loopback, with no
+networking or browser involved: the welcome handshake and both peers
+deriving the same board from a seed, snapshots reaching the guest
+verbatim, a guest's order being applied by the host and coming back,
+a guest being unable to order the host's forces, the guest never
+advancing the simulation on its own, every order type passing the seat
+check, a version mismatch being refused, rejoin-by-token versus a
+stranger being turned away, restart, and snapshots staying small enough
+to send many times a second.

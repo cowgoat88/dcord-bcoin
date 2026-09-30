@@ -913,6 +913,72 @@
     return { units, credits };
   }
 
+  // --- networking support ----------------------------------------------
+  // Only the mutable half of the game travels. The board itself (node
+  // positions, types, terrain, lanes) is a pure function of the seed and
+  // board shape, so both peers generate an identical map from `welcome`
+  // and never have to ship geometry.
+  function serializeState(game) {
+    return {
+      t: game.time,
+      w: game.winner,
+      cr: { 1: game.credits[PLAYER] || 0, 2: game.credits[ENEMY] || 0 },
+      ch: { 1: game.charge[PLAYER] || 0, 2: game.charge[ENEMY] || 0 },
+      ct: game.chargeTimer,
+      tc: {
+        1: { a: techLevel(game, PLAYER, "assault"), f: techLevel(game, PLAYER, "fortify") },
+        2: { a: techLevel(game, ENEMY, "assault"), f: techLevel(game, ENEMY, "fortify") }
+      },
+      n: game.nodes.map((n) => [
+        n.owner, Math.round(n.garrison * 100) / 100, n.level,
+        n.assault ? [n.assault.owner, Math.round(n.assault.count * 100) / 100, n.assault.fuse] : 0
+      ]),
+      f: game.fleets.map((f) => [f.owner, f.count, f.t, f.leg, f.duration, f.path]),
+      st: game.stats
+    };
+  }
+
+  function applySnapshot(game, snap) {
+    if (!snap) return;
+    game.time = snap.t;
+    game.winner = snap.w;
+    game.credits[PLAYER] = snap.cr[1]; game.credits[ENEMY] = snap.cr[2];
+    game.charge[PLAYER] = snap.ch[1]; game.charge[ENEMY] = snap.ch[2];
+    game.chargeTimer = snap.ct;
+    game.tech[PLAYER] = { assault: snap.tc[1].a, fortify: snap.tc[1].f };
+    game.tech[ENEMY] = { assault: snap.tc[2].a, fortify: snap.tc[2].f };
+    for (let i = 0; i < game.nodes.length && i < snap.n.length; i++) {
+      const n = game.nodes[i], row = snap.n[i];
+      n.owner = row[0]; n.garrison = row[1]; n.level = row[2];
+      n.assault = row[3] ? { owner: row[3][0], count: row[3][1], fuse: row[3][2] } : null;
+    }
+    game.fleets = snap.f.map((r) => ({
+      owner: r[0], count: r[1], t: r[2], leg: r[3], duration: r[4], path: r[5],
+      from: r[5][0], to: r[5][r[5].length - 1]
+    }));
+    if (snap.st) game.stats = snap.st;
+    computeSupply(game);
+  }
+
+  // Every order a networked peer can ask for, funnelled through one
+  // seat-checked entry point. The seat comes from the connection, never
+  // from the message, so a guest cannot move the host's forces.
+  function applyOrderAs(game, order, seat) {
+    if (!order || typeof order !== "object") return "Malformed order.";
+    switch (order.kind) {
+      case "send":
+        return sendFleet(game, order.from | 0, order.to | 0, +order.frac || 0.5, seat);
+      case "upgrade":
+        return upgradeNode(game, order.id | 0, seat);
+      case "research":
+        return researchTech(game, String(order.track), seat);
+      case "fire":
+        return fireDoomstar(game, seat);
+      default:
+        return "Unknown order.";
+    }
+  }
+
   function drainEvents(game) {
     const e = game.events;
     game.events = [];
@@ -930,6 +996,7 @@
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
     terrainOf, terrainDefence,
     sendFleet, upgradeNode, researchTech, fireDoomstar, step,
+    serializeState, applySnapshot, applyOrderAs,
     isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult
   };
