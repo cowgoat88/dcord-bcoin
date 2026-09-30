@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#070b14">
+<title>OUTPOST</title>
+<style>
+  :root {
+    --bg:        #070b14;
+    --bg-panel:  rgba(14, 20, 34, 0.82);
+    --line:      rgba(120, 150, 190, 0.14);
+    --text:      #dbe4f0;
+    --muted:     #7c8ba3;
+    --player:    #22d3ee;
+    --player-dim:rgba(34, 211, 238, 0.16);
+    --enemy:     #fb7185;
+    --enemy-dim: rgba(251, 113, 133, 0.16);
+    --neutral:   #64748b;
+    --gold:      #fbbf24;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    /* The map must never need scrolling or zooming to read. */
+    overscroll-behavior: none; touch-action: none;
+    user-select: none; -webkit-user-select: none;
+  }
+
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---- top status strip ---- */
+  #hud {
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 14px; padding-top: max(8px, env(safe-area-inset-top));
+    background: var(--bg-panel); border-bottom: 1px solid var(--line);
+    font-size: 12px; flex-wrap: wrap; z-index: 5;
+  }
+  #hud .brand {
+    font-weight: 700; letter-spacing: 3px; font-size: 13px;
+    color: var(--player); text-shadow: 0 0 14px rgba(34,211,238,.5);
+  }
+  .stat { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+  .stat .k { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+  .stat .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .v.you { color: var(--player); } .v.foe { color: var(--enemy); } .v.gold { color: var(--gold); }
+  #hud .spacer { flex: 1 1 auto; }
+
+  button {
+    font-family: inherit; font-size: 11px; color: var(--text);
+    background: rgba(255,255,255,.05); border: 1px solid var(--line);
+    padding: 6px 11px; border-radius: 6px; cursor: pointer;
+    transition: background .12s, border-color .12s, transform .08s;
+  }
+  button:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: rgba(120,150,190,.35); }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .35; cursor: default; }
+  button.on { background: var(--player-dim); border-color: var(--player); color: var(--player); }
+
+  /* ---- board ---- */
+  #boardWrap { position: relative; flex: 1 1 auto; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+
+  /* ---- bottom command bar: every order lives in one place, so the
+         player's attention never has to split across the screen ---- */
+  #cmd {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; padding-bottom: max(9px, env(safe-area-inset-bottom));
+    background: var(--bg-panel); border-top: 1px solid var(--line);
+    font-size: 11px; flex-wrap: wrap; z-index: 5;
+  }
+  #selInfo { color: var(--muted); min-width: 150px; flex: 1 1 150px; }
+  #selInfo b { color: var(--player); font-weight: 600; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 6px 10px; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .grouplabel { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+
+  /* ---- overlays ---- */
+  .overlay {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(7, 11, 20, .9); backdrop-filter: blur(6px); z-index: 10; padding: 20px;
+  }
+  .overlay[hidden] { display: none; }
+  .card {
+    background: rgba(17, 24, 40, .96); border: 1px solid var(--line);
+    border-radius: 14px; padding: 26px 30px; max-width: 460px; width: 100%;
+    box-shadow: 0 24px 70px rgba(0,0,0,.6); text-align: center;
+  }
+  .card h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: 7px; color: var(--player);
+             text-shadow: 0 0 26px rgba(34,211,238,.45); }
+  .card h2 { margin: 0 0 10px; font-size: 22px; letter-spacing: 3px; }
+  .card p { margin: 0 0 16px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+  .card .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .card button.primary {
+    background: var(--player-dim); border-color: var(--player); color: var(--player);
+    padding: 10px 26px; font-size: 13px; letter-spacing: 1px;
+  }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 14px 0;
+            font-size: 11px; color: var(--muted); text-align: left; }
+  .legend i { color: var(--text); font-style: normal; }
+  .shapes { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 0 0 16px;
+            font-size: 11px; color: var(--muted); text-align: left; }
+  .shapes span { display: flex; align-items: center; gap: 7px; }
+  .scores { display: flex; justify-content: center; gap: 22px; margin-bottom: 14px; font-size: 12px; }
+  .scores div span { display: block; color: var(--muted); font-size: 10px;
+                     text-transform: uppercase; letter-spacing: .5px; }
+
+  #toast {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    bottom: 16px; background: rgba(17,24,40,.95); border: 1px solid var(--line);
+    padding: 7px 14px; border-radius: 7px; font-size: 11px; color: var(--text);
+    pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 8; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  @media (max-width: 620px) {
+    #hud { gap: 10px; padding: 6px 10px; font-size: 11px; }
+    #hud .brand { font-size: 11px; letter-spacing: 2px; }
+    .stat .k { display: none; }
+    #cmd { gap: 6px; padding: 7px 10px; }
+    #hud button { padding: 5px 8px; font-size: 10px; }
+    .seg button { padding: 7px 9px; }
+    #stIncome, #hud .stat:nth-child(5) { display: none; }
+    #selInfo { flex-basis: 100%; min-width: 0; order: -1; }
+    .card { padding: 20px; }
+    .card h1 { font-size: 20px; letter-spacing: 4px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <span class="brand">OUTPOST</span>
+    <span class="stat"><span class="k">You</span><span class="v you" id="stYou">0</span></span>
+    <span class="stat"><span class="k">Enemy</span><span class="v foe" id="stFoe">0</span></span>
+    <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
+    <span class="stat"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
+    <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
+    <span class="spacer"></span>
+    <button id="btnSound">♪</button>
+    <button id="btnPause">Pause</button>
+    <button id="btnHelp">?</button>
+    <button id="btnNew">New</button>
+  </div>
+
+  <div id="boardWrap">
+    <canvas id="board"></canvas>
+    <div id="toast"></div>
+
+    <div class="overlay" id="startOverlay">
+      <div class="card">
+        <h1>OUTPOST</h1>
+        <p>Take the map. Every position you hold builds units; send them down the
+           supply lanes and take everything your opponent has.</p>
+        <div class="legend">
+          <div><i>Drag</i> node → target</div>
+          <div><i>Tap</i> nodes to group</div>
+          <div><i>Tap target</i> to send all</div>
+          <div><i>Defenders</i> fight at ×1.25</div>
+          <div><i>One node</i> never beats an equal</div>
+          <div><i>Mass several</i> — that's the game</div>
+        </div>
+        <div class="grouplabel" style="margin-bottom:6px">Positions</div>
+        <div class="shapes">
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="8.66,5 0,10 -8.66,5 -8.66,-5 0,-10 8.66,-5" fill="none" stroke="#22d3ee" stroke-width="2"/></svg> Command</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><rect x="-8" y="-8" width="16" height="16" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Factory · units</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 9,0 0,9 -9,0" fill="none" stroke="#fbbf24" stroke-width="2"/></svg> Mine · credits</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Outpost</span>
+        </div>
+        <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
+        <div class="row" id="diffRow">
+          <button data-diff="0">Cadet</button>
+          <button data-diff="1" class="on">Officer</button>
+          <button data-diff="2">Commander</button>
+        </div>
+        <div class="row">
+          <button class="primary" id="btnStart">Deploy</button>
+        </div>
+        <p style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
+      </div>
+    </div>
+
+    <div class="overlay" id="endOverlay" hidden>
+      <div class="card">
+        <h2 id="endTitle">Victory</h2>
+        <p id="endText"></p>
+        <div class="scores">
+          <div><span>Time</span><b id="endTime">0:00</b></div>
+          <div><span>Captured</span><b id="endCaptured">0</b></div>
+          <div><span>Lost</span><b id="endLost">0</b></div>
+          <div><span>Sent</span><b id="endSent">0</b></div>
+        </div>
+        <div class="row">
+          <button class="primary" id="btnAgain">New Match</button>
+          <button id="btnSameSeed">Retry Seed</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cmd">
+    <span id="selInfo">No positions selected</span>
+    <span class="grouplabel">Commit</span>
+    <div class="seg" id="fracSeg">
+      <button data-frac="0.25">25%</button>
+      <button data-frac="0.5" class="on">50%</button>
+      <button data-frac="0.75">75%</button>
+      <button data-frac="1">All</button>
+    </div>
+    <button id="btnAll">Select All</button>
+    <button id="btnUpgrade">Upgrade</button>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script>
+(function () {
+  "use strict";
+  const E = window.OutpostEngine;
+  const { PLAYER, ENEMY, NEUTRAL, MAP_W, MAP_H } = E;
+
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+
+  let game = null;
+  let paused = false;
+  let started = false;
+  let difficulty = 1;
+  let sendFrac = 0.5;
+
+  // View transform: the whole map is always fitted into the canvas, so
+  // there is no camera to manage and nothing can happen off-screen.
+  let view = { scale: 1, ox: 0, oy: 0 };
+
+  // Presentation-only state, kept separate from the simulation.
+  let selection = new Set();
+  let hoverId = null;
+  let drag = null;              // { fromId, x, y, moved }
+  let particles = [];
+  let floaters = [];
+  let shake = { mag: 0, t: 0 };
+  let nodeFx = new Map();       // id -> { flash, pulse, ownerMix }
+  let stars = [];
+
+  // ---------------------------------------------------------------
+  // Sizing
+  // ---------------------------------------------------------------
+  // The map is generated to match the board's aspect ratio (keeping its
+  // area constant so pacing doesn't change), rather than letterboxing a
+  // fixed-shape map. A fixed 1000x640 map squeezed into a portrait phone
+  // left the playfield in a thin band with most of the screen empty and
+  // the nodes too small to tap.
+  function boardShape() {
+    const wrap = document.getElementById("boardWrap");
+    const w = Math.max(240, wrap.clientWidth), h = Math.max(240, wrap.clientHeight);
+    const area = MAP_W * MAP_H;
+    const aspect = w / h;
+    return { mapW: Math.sqrt(area * aspect), mapH: Math.sqrt(area / aspect) };
+  }
+
+  function resize() {
+    const wrap = document.getElementById("boardWrap");
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const mw = game ? game.mapW : MAP_W, mh = game ? game.mapH : MAP_H;
+    // Fit with a margin so node glow near the edges isn't clipped.
+    const pad = 30;
+    const s = Math.min((w - pad * 2) / mw, (h - pad * 2) / mh);
+    view.scale = s;
+    view.ox = (w - mw * s) / 2;
+    view.oy = (h - mh * s) / 2;
+
+    if (!stars.length) {
+      const rng = E.makeRng(7);
+      for (let i = 0; i < 140; i++) {
+        stars.push({ x: rng(), y: rng(), r: rng() * 1.3 + 0.2, a: rng() * 0.5 + 0.12, tw: rng() * 6 });
+      }
+    }
+  }
+  window.addEventListener("resize", resize);
+
+  const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
+  const toScreen = (wx, wy) => ({ x: wx * view.scale + view.ox, y: wy * view.scale + view.oy });
+
+  // ---------------------------------------------------------------
+  // Game lifecycle
+  // ---------------------------------------------------------------
+  function newGame(seed) {
+    const s = seed === undefined ? (Math.floor(Math.random() * 100000) + 1) : seed;
+    const shape = boardShape();
+    game = E.createGame({ seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH });
+    selection.clear();
+    particles = []; floaters = []; nodeFx.clear();
+    shake = { mag: 0, t: 0 };
+    paused = false;
+    document.getElementById("btnPause").textContent = "Pause";
+    document.getElementById("endOverlay").hidden = true;
+    document.getElementById("seedLabel").textContent = s;
+    resize();
+    updateHud();
+  }
+
+  // ---------------------------------------------------------------
+  // Input
+  // ---------------------------------------------------------------
+  function nodeAt(px, py) {
+    const w = toWorld(px, py);
+    let best = null, bestD = Infinity;
+    for (const n of game.nodes) {
+      const r = E.nodeStats(n).radius + 10;
+      const d = Math.hypot(n.x - w.x, n.y - w.y);
+      if (d < r && d < bestD) { best = n; bestD = d; }
+    }
+    return best;
+  }
+
+  function localPt(ev) {
+    const r = canvas.getBoundingClientRect();
+    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
+  }
+
+  canvas.addEventListener("pointerdown", (ev) => {
+    if (!started || !game || game.winner) return;
+    canvas.setPointerCapture(ev.pointerId);
+    const p = localPt(ev);
+    const n = nodeAt(p.x, p.y);
+    drag = n && n.owner === PLAYER
+      ? { fromId: n.id, x: p.x, y: p.y, moved: false }
+      : { fromId: null, x: p.x, y: p.y, moved: false };
+  });
+
+  canvas.addEventListener("pointermove", (ev) => {
+    const p = localPt(ev);
+    const n = nodeAt(p.x, p.y);
+    hoverId = n ? n.id : null;
+    if (drag) {
+      if (Math.hypot(p.x - drag.x, p.y - drag.y) > 8) drag.moved = true;
+      drag.x = p.x; drag.y = p.y;
+    }
+  });
+
+  canvas.addEventListener("pointerup", (ev) => {
+    if (!started || !game || game.winner || !drag) { drag = null; return; }
+    const p = localPt(ev);
+    const target = nodeAt(p.x, p.y);
+    const d = drag; drag = null;
+
+    // Drag from one of your nodes onto another node: a quick order that
+    // bypasses the selection entirely.
+    if (d.moved && d.fromId !== null && target && target.id !== d.fromId) {
+      // If the dragged node is part of a group, the whole group goes.
+      const sources = selection.has(d.fromId) ? [...selection] : [d.fromId];
+      orderAttack(sources, target.id);
+      return;
+    }
+    if (d.moved) return;
+
+    // Tap.
+    if (!target) { selection.clear(); updateHud(); return; }
+    if (target.owner === PLAYER) {
+      if (selection.has(target.id)) selection.delete(target.id);
+      else selection.add(target.id);
+      updateHud();
+    } else if (selection.size) {
+      orderAttack([...selection], target.id);
+    } else {
+      toast(describeNode(target));
+    }
+  });
+
+  canvas.addEventListener("pointercancel", () => { drag = null; });
+
+  function orderAttack(sourceIds, targetId) {
+    let sent = 0, reason = null;
+    for (const id of sourceIds) {
+      if (id === targetId) continue;
+      const r = E.sendFleet(game, id, targetId, sendFrac, PLAYER);
+      if (r) reason = r; else sent++;
+    }
+    if (sent) {
+      const t = game.nodes[targetId];
+      addPulse(targetId, 1);
+      toast(sent + (sent === 1 ? " force" : " forces") + " → " + E.NODE_TYPES[t.type].label);
+    } else if (reason) {
+      toast(reason);
+    }
+    updateHud();
+  }
+
+  function describeNode(n) {
+    const s = E.nodeStats(n);
+    const who = n.owner === PLAYER ? "Yours" : n.owner === ENEMY ? "Enemy" : "Neutral";
+    return E.NODE_TYPES[n.type].label + " · " + who + " · " +
+      Math.floor(n.garrison) + "/" + s.cap +
+      (n.owner !== NEUTRAL ? " · defends at x" + E.DEFENDER_EDGE : "");
+  }
+
+  // ---------------------------------------------------------------
+  // Commands
+  // ---------------------------------------------------------------
+  document.getElementById("fracSeg").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    sendFrac = parseFloat(b.dataset.frac);
+    [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+
+  document.getElementById("btnAll").addEventListener("click", () => {
+    selection.clear();
+    for (const n of E.nodesOf(game, PLAYER)) selection.add(n.id);
+    updateHud();
+  });
+
+  document.getElementById("btnUpgrade").addEventListener("click", doUpgrade);
+  function doUpgrade() {
+    if (!game || !selection.size) { toast("Select one of your positions first."); return; }
+    let ok = 0, reason = null;
+    for (const id of [...selection].sort((a, b) => game.nodes[a].level - game.nodes[b].level)) {
+      const r = E.upgradeNode(game, id, PLAYER);
+      if (r) reason = r; else { ok++; addPulse(id, 1.4); }
+    }
+    toast(ok ? "Upgraded " + ok : (reason || "Cannot upgrade."));
+    updateHud();
+  }
+
+  document.getElementById("btnSound").addEventListener("click", (ev) => {
+    muted = !muted;
+    ev.currentTarget.textContent = muted ? "\u266a\u0338" : "\u266a";
+    ev.currentTarget.classList.toggle("on", !muted);
+    if (!muted) sfx.launch();
+  });
+  document.getElementById("btnPause").addEventListener("click", togglePause);
+  function togglePause() {
+    if (!started || game.winner) return;
+    paused = !paused;
+    document.getElementById("btnPause").textContent = paused ? "Resume" : "Pause";
+  }
+
+  document.getElementById("btnNew").addEventListener("click", () => {
+    document.getElementById("endOverlay").hidden = true;
+    document.getElementById("startOverlay").hidden = false;
+    started = false;
+  });
+  document.getElementById("btnHelp").addEventListener("click", () => {
+    document.getElementById("startOverlay").hidden = false;
+    started = false;
+  });
+
+  document.getElementById("diffRow").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button"); if (!b) return;
+    difficulty = parseInt(b.dataset.diff, 10);
+    [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+
+  document.getElementById("btnStart").addEventListener("click", () => {
+    document.getElementById("startOverlay").hidden = true;
+    started = true;
+    newGame();
+  });
+  document.getElementById("btnAgain").addEventListener("click", () => { started = true; newGame(); });
+  document.getElementById("btnSameSeed").addEventListener("click", () => {
+    const s = game ? game.seed : undefined; started = true; newGame(s);
+  });
+
+  window.addEventListener("keydown", (ev) => {
+    if (!started) return;
+    const k = ev.key.toLowerCase();
+    if (k === " ") { ev.preventDefault(); togglePause(); }
+    else if (k === "a") document.getElementById("btnAll").click();
+    else if (k === "u") doUpgrade();
+    else if (k === "escape") { selection.clear(); updateHud(); }
+    else if (k >= "1" && k <= "4") {
+      const b = document.getElementById("fracSeg").children[parseInt(k, 10) - 1];
+      if (b) b.click();
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Audio — synthesised on the fly, so the game stays a single folder
+  // with no asset files to host. The context is created on the first
+  // click (the Deploy button), which satisfies autoplay policies.
+  // ---------------------------------------------------------------
+  let actx = null, muted = false;
+  function audio() {
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) actx = new AC();
+    }
+    if (actx && actx.state === "suspended") actx.resume();
+    return actx;
+  }
+  function blip(freq, dur, type, gain, slideTo) {
+    if (muted) return;
+    const a = audio(); if (!a) return;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || "sine";
+    o.frequency.setValueAtTime(freq, a.currentTime);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, a.currentTime + dur);
+    g.gain.setValueAtTime(0.0001, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(gain || 0.06, a.currentTime + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(); o.stop(a.currentTime + dur + 0.02);
+  }
+  const sfx = {
+    launch:  () => blip(420, 0.11, "triangle", 0.05, 680),
+    capture: () => { blip(330, 0.22, "sawtooth", 0.05, 520); setTimeout(() => blip(494, 0.26, "triangle", 0.045), 70); },
+    big:     () => { blip(180, 0.4, "sawtooth", 0.07, 90); setTimeout(() => blip(660, 0.3, "triangle", 0.05), 90); },
+    lost:    () => blip(300, 0.35, "sawtooth", 0.06, 110),
+    repulse: () => blip(150, 0.16, "square", 0.045, 90),
+    upgrade: () => blip(520, 0.2, "triangle", 0.05, 900),
+    win:     () => [0, 120, 240, 400].forEach((d, i) => setTimeout(() => blip([392, 523, 659, 784][i], 0.45, "triangle", 0.06), d)),
+    lose:    () => [0, 160, 340].forEach((d, i) => setTimeout(() => blip([392, 311, 233][i], 0.5, "sawtooth", 0.06), d))
+  };
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), 1600);
+  }
+
+  // ---------------------------------------------------------------
+  // Effects
+  // ---------------------------------------------------------------
+  function fxFor(id) {
+    let f = nodeFx.get(id);
+    if (!f) { f = { flash: 0, pulse: 0 }; nodeFx.set(id, f); }
+    return f;
+  }
+  function addPulse(id, amt) { fxFor(id).pulse = Math.max(fxFor(id).pulse, amt || 1); }
+
+  function burst(x, y, color, count, speed, life) {
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const v = (0.4 + Math.random() * 0.8) * (speed || 90);
+      particles.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+        life: life || 0.7, max: life || 0.7, color, r: 1.4 + Math.random() * 2
+      });
+    }
+  }
+  function floatText(x, y, text, color) {
+    floaters.push({ x, y, text, color, life: 1.1, max: 1.1 });
+  }
+  function addShake(mag) { shake.mag = Math.max(shake.mag, mag); shake.t = 0.34; }
+
+  const colorOf = (owner) =>
+    owner === PLAYER ? "#22d3ee" : owner === ENEMY ? "#fb7185" : "#64748b";
+
+  function consumeEvents() {
+    for (const ev of E.drainEvents(game)) {
+      const c = colorOf(ev.owner);
+      if (ev.kind === "launch") {
+        if (ev.owner === PLAYER) sfx.launch();
+        burst(ev.x, ev.y, c, 8, 70, 0.45);
+        addPulse(nodeIdAt(ev.x, ev.y), 0.8);
+      } else if (ev.kind === "massing") {
+        burst(ev.x, ev.y, c, 5, 50, 0.4);
+      } else if (ev.kind === "reinforce") {
+        const id = nodeIdAt(ev.x, ev.y);
+        addPulse(id, 0.9);
+        if (ev.count > 0) floatText(ev.x, ev.y, "+" + ev.count, c);
+      } else if (ev.kind === "capture") {
+        const id = nodeIdAt(ev.x, ev.y);
+        fxFor(id).flash = 1;
+        burst(ev.x, ev.y, c, ev.big ? 46 : 26, ev.big ? 190 : 130, 0.95);
+        floatText(ev.x, ev.y, "CAPTURED", c);
+        // Only shake for things the player actually cares about, so the
+        // effect keeps its weight instead of firing constantly.
+        if (ev.owner === PLAYER || ev.from === PLAYER) {
+          addShake(ev.big ? 15 : 8);
+          if (ev.big) sfx.big(); else if (ev.owner === PLAYER) sfx.capture(); else sfx.lost();
+        }
+      } else if (ev.kind === "repulsed") {
+        const id = nodeIdAt(ev.x, ev.y);
+        fxFor(id).flash = 0.7;
+        burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
+        floatText(ev.x, ev.y, "HELD", "#cbd5e1");
+        if (ev.attacker === PLAYER || ev.owner === PLAYER) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "upgrade") {
+        const id = nodeIdAt(ev.x, ev.y);
+        addPulse(id, 1.5);
+        if (ev.owner === PLAYER) sfx.upgrade();
+        floatText(ev.x, ev.y, "LVL " + ev.level, "#fbbf24");
+        burst(ev.x, ev.y, "#fbbf24", 14, 80, 0.7);
+      }
+    }
+  }
+  function nodeIdAt(x, y) {
+    for (const n of game.nodes) if (Math.abs(n.x - x) < 1 && Math.abs(n.y - y) < 1) return n.id;
+    return -1;
+  }
+
+  // ---------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------
+  function shapePath(c, n, r, shape) {
+    c.beginPath();
+    if (shape === "circle") { c.arc(0, 0, r, 0, Math.PI * 2); return; }
+    if (shape === "square") {
+      const s = r * 0.88; c.rect(-s, -s, s * 2, s * 2); return;
+    }
+    if (shape === "diamond") {
+      c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath(); return;
+    }
+    for (let i = 0; i < 6; i++) { // hexagon
+      const a = Math.PI / 6 + i * Math.PI / 3;
+      const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      i ? c.lineTo(x, y) : c.moveTo(x, y);
+    }
+    c.closePath();
+  }
+
+  function render(now, dt) {
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    // Background: deep field + drifting starfield + vignette.
+    const g0 = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.75);
+    g0.addColorStop(0, "#0c1424");
+    g0.addColorStop(1, "#060910");
+    ctx.fillStyle = g0; ctx.fillRect(0, 0, w, h);
+
+    for (const s of stars) {
+      const a = s.a * (0.6 + 0.4 * Math.sin(now * 0.0011 + s.tw));
+      ctx.globalAlpha = a;
+      ctx.fillStyle = "#9fb4d4";
+      ctx.fillRect(s.x * w, s.y * h, s.r, s.r);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.save();
+    if (shake.t > 0) {
+      const k = shake.t / 0.34;
+      const m = shake.mag * k * k; // eased decay
+      ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
+    }
+    ctx.translate(view.ox, view.oy);
+    ctx.scale(view.scale, view.scale);
+
+    drawLanes(now);
+    drawFleets(now);
+    drawNodes(now);
+    drawDragArrow();
+    drawHoverPreview();
+    drawParticles();
+    drawFloaters();
+
+    ctx.restore();
+  }
+
+  // Lanes are the whole strategic skeleton — which positions can support
+  // which — so they are drawn as real infrastructure rather than hairlines.
+  // A lane between two of your own positions lights up in your colour; a
+  // contested one glows on both ends and meets in the middle.
+  function drawLanes(now) {
+    for (const l of game.lanes) {
+      const a = game.nodes[l.a], b = game.nodes[l.b];
+      const sameOwner = a.owner === b.owner && a.owner !== NEUTRAL;
+      const contested = a.owner !== b.owner && a.owner !== NEUTRAL && b.owner !== NEUTRAL;
+
+      // Base conduit.
+      ctx.strokeStyle = "rgba(125,155,200,0.55)";
+      ctx.globalAlpha = 0.30;
+      ctx.lineWidth = 3.2;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+
+      if (sameOwner || contested) {
+        const grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+        grad.addColorStop(0, colorOf(a.owner));
+        grad.addColorStop(1, colorOf(b.owner));
+        ctx.strokeStyle = grad;
+        ctx.globalAlpha = sameOwner ? 0.62 : 0.48;
+        ctx.lineWidth = sameOwner ? 3.4 : 2.6;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+
+      // A contested lane is a front line: mark it with a live dashed flow
+      // so the player can see where the fighting will happen.
+      if (contested) {
+        ctx.setLineDash([6, 10]);
+        ctx.lineDashOffset = -now * 0.02;
+        ctx.strokeStyle = "rgba(255,255,255,0.75)";
+        ctx.globalAlpha = 0.35;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function fleetPos(f) {
+    const a = game.nodes[f.path[f.leg]], b = game.nodes[f.path[f.leg + 1]];
+    const t = Math.max(0, Math.min(1, f.t));
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, ax: b.x - a.x, ay: b.y - a.y };
+  }
+
+  function drawFleets(now) {
+    for (const f of game.fleets) {
+      const p = fleetPos(f);
+      const c = colorOf(f.owner);
+      const ang = Math.atan2(p.ay, p.ax);
+
+      // Trail
+      ctx.globalAlpha = 0.28;
+      ctx.strokeStyle = c; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(p.x - Math.cos(ang) * 22, p.y - Math.sin(ang) * 22);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      // Chevron
+      const size = 5 + Math.min(9, Math.sqrt(f.count) * 0.9);
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(ang);
+      ctx.fillStyle = c;
+      ctx.shadowColor = c; ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.moveTo(size, 0); ctx.lineTo(-size * 0.7, size * 0.62);
+      ctx.lineTo(-size * 0.3, 0); ctx.lineTo(-size * 0.7, -size * 0.62);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.shadowBlur = 0;
+
+      // Count
+      ctx.fillStyle = "rgba(230,240,255,.92)";
+      ctx.font = "600 11px ui-monospace, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(Math.round(f.count), p.x, p.y - size - 8);
+    }
+  }
+
+  function drawNodes(now) {
+    for (const n of game.nodes) {
+      const s = E.nodeStats(n);
+      const fx = fxFor(n.id);
+      const c = colorOf(n.owner);
+      const sel = selection.has(n.id);
+      const hov = hoverId === n.id;
+      const r = s.radius * (1 + fx.pulse * 0.13);
+
+      ctx.save();
+      ctx.translate(n.x, n.y);
+
+      // Selection ring
+      if (sel) {
+        ctx.strokeStyle = "#e2f7ff"; ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.lineDashOffset = -now * 0.012;
+        ctx.beginPath(); ctx.arc(0, 0, r + 11, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Capacity arc — how full this position is, at a glance.
+      const frac = Math.max(0, Math.min(1, n.garrison / s.cap));
+      ctx.strokeStyle = "rgba(255,255,255,.09)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, r + 5, 0, Math.PI * 2); ctx.stroke();
+      if (n.owner !== NEUTRAL) {
+        ctx.strokeStyle = c; ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(0, 0, r + 5, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // Body
+      ctx.shadowColor = c;
+      ctx.shadowBlur = (hov || sel ? 26 : 14) + fx.flash * 30;
+      shapePath(ctx, n, r, E.NODE_TYPES[n.type].shape);
+      ctx.fillStyle = n.owner === PLAYER ? "rgba(34,211,238,.17)"
+        : n.owner === ENEMY ? "rgba(251,113,133,.17)" : "rgba(100,116,139,.13)";
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = fx.flash > 0.01
+        ? "rgba(255,255,255," + (0.4 + fx.flash * 0.6) + ")" : c;
+      ctx.stroke();
+
+      // Garrison
+      ctx.fillStyle = "#f1f6ff";
+      ctx.font = "700 " + Math.round(r * 0.78) + "px ui-monospace, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(Math.floor(n.garrison), 0, 1);
+
+      // Level pips
+      if (n.level > 0) {
+        for (let i = 0; i < n.level; i++) {
+          ctx.fillStyle = "#fbbf24";
+          ctx.beginPath();
+          ctx.arc((i - (n.level - 1) / 2) * 7, r + 13, 2.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Incoming assault indicator
+      if (n.assault) {
+        const ac = colorOf(n.assault.owner);
+        ctx.strokeStyle = ac; ctx.globalAlpha = 0.85;
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.arc(0, 0, r + 17, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+        ctx.fillStyle = ac;
+        ctx.font = "700 12px ui-monospace, monospace";
+        ctx.fillText("⚔ " + Math.round(n.assault.count), 0, -r - 20);
+      }
+
+      ctx.restore();
+    }
+  }
+
+  // Force that an order would actually deliver, and whether it beats the
+  // target. Showing this up front is what makes the defender-edge rule
+  // learnable — otherwise a player just sees attacks failing for no
+  // visible reason and assumes the game is broken.
+  function previewOrder(sourceIds, tgt) {
+    let force = 0;
+    for (const id of sourceIds) {
+      if (id === tgt.id) continue;
+      force += Math.floor(game.nodes[id].garrison * sendFrac);
+    }
+    const friendly = tgt.owner === PLAYER;
+    const defence = friendly ? 0 : E.defenceOf(tgt) - E.incoming(game, tgt.id, PLAYER);
+    return { force, defence: Math.max(0, defence), friendly, wins: friendly || force > defence };
+  }
+
+  function drawOrderPreview(sourceIds, tgt) {
+    const p = previewOrder(sourceIds, tgt);
+    const r = E.nodeStats(tgt).radius;
+    const col = p.friendly ? "#22d3ee" : p.wins ? "#4ade80" : "#f87171";
+
+    ctx.fillStyle = p.wins ? "rgba(74,222,128,.13)" : "rgba(248,113,113,.13)";
+    ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = .9;
+    ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    const label = p.friendly
+      ? "+" + p.force + " reinforce"
+      : p.force + " vs " + Math.ceil(p.defence) + (p.wins ? "  TAKES IT" : "  TOO WEAK");
+    ctx.font = "700 13px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const w = ctx.measureText(label).width + 16;
+    const ly = tgt.y - r - 26;
+    ctx.fillStyle = "rgba(10,14,24,.92)";
+    ctx.beginPath();
+    (ctx.roundRect ? ctx.roundRect(tgt.x - w / 2, ly - 11, w, 22, 6)
+                   : ctx.rect(tgt.x - w / 2, ly - 11, w, 22));
+    ctx.fill();
+    ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = col;
+    ctx.fillText(label, tgt.x, ly);
+  }
+
+  function drawDragArrow() {
+    if (!drag || drag.fromId === null || !drag.moved) return;
+    const a = game.nodes[drag.fromId];
+    const w = toWorld(drag.x, drag.y);
+    const tgt = nodeAt(drag.x, drag.y);
+    const valid = tgt && tgt.id !== drag.fromId;
+    const sources = selection.has(drag.fromId) ? [...selection] : [drag.fromId];
+
+    // Draw a lane-following preview from every contributing position, so a
+    // grouped order visibly shows all the forces that will converge.
+    ctx.lineWidth = 2.5; ctx.setLineDash([7, 6]);
+    ctx.lineDashOffset = -performance.now() * 0.02;
+    for (const id of sources) {
+      const s = game.nodes[id];
+      ctx.strokeStyle = valid ? "rgba(125,211,252,.85)" : "rgba(160,180,210,.45)";
+      ctx.beginPath(); ctx.moveTo(s.x, s.y);
+      ctx.lineTo(valid ? tgt.x : w.x, valid ? tgt.y : w.y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    if (valid) drawOrderPreview(sources, tgt);
+  }
+
+  // Same preview on hover when a group is already selected, so tap-to-order
+  // gets the same information as drag-to-order.
+  function drawHoverPreview() {
+    if (drag || !selection.size || hoverId === null) return;
+    const tgt = game.nodes[hoverId];
+    if (!tgt || selection.has(tgt.id)) return;
+    drawOrderPreview([...selection], tgt);
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      const a = Math.max(0, p.life / p.max);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r * a, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFloaters() {
+    for (const f of floaters) {
+      const k = f.life / f.max;
+      ctx.globalAlpha = Math.min(1, k * 1.5);
+      ctx.fillStyle = f.color;
+      ctx.font = "700 14px ui-monospace, monospace";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(f.text, f.x, f.y - 34 - (1 - k) * 22);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------
+  // HUD
+  // ---------------------------------------------------------------
+  function updateHud() {
+    if (!game) return;
+    const mine = E.nodesOf(game, PLAYER), foe = E.nodesOf(game, ENEMY);
+    document.getElementById("stYou").textContent = mine.length;
+    document.getElementById("stFoe").textContent = foe.length;
+    document.getElementById("stCredits").textContent = Math.floor(game.credits[PLAYER] || 0);
+    const inc = E.income(game, PLAYER);
+    document.getElementById("stIncome").textContent =
+      inc.units.toFixed(1) + "/s  +" + inc.credits.toFixed(1) + "c";
+    const t = Math.floor(game.time);
+    document.getElementById("stTime").textContent =
+      Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
+
+    const sel = [...selection].filter((id) => game.nodes[id].owner === PLAYER);
+    if (sel.length !== selection.size) { selection = new Set(sel); }
+    const info = document.getElementById("selInfo");
+    if (!sel.length) {
+      info.innerHTML = "Drag a node to attack · tap to group";
+    } else {
+      const total = sel.reduce((s, id) => s + Math.floor(game.nodes[id].garrison), 0);
+      const willSend = sel.reduce((s, id) => s + Math.floor(game.nodes[id].garrison * sendFrac), 0);
+      info.innerHTML = "<b>" + sel.length + "</b> selected · " + total +
+        " units · sending <b>" + willSend + "</b>";
+    }
+
+    const upBtn = document.getElementById("btnUpgrade");
+    if (sel.length) {
+      const cheapest = sel.map((id) => game.nodes[id]).filter((n) => n.level < E.MAX_LEVEL)
+        .sort((a, b) => a.level - b.level)[0];
+      upBtn.disabled = !cheapest;
+      upBtn.textContent = cheapest ? "Upgrade (" + E.upgradeCost(cheapest.level) + "c)" : "Max level";
+    } else {
+      upBtn.disabled = true; upBtn.textContent = "Upgrade";
+    }
+  }
+
+  function showEnd() {
+    const won = game.winner === PLAYER;
+    if (won) sfx.win(); else sfx.lose();
+    document.getElementById("endTitle").textContent = won ? "Victory" : "Defeat";
+    document.getElementById("endTitle").style.color = won ? "var(--player)" : "var(--enemy)";
+    document.getElementById("endText").textContent = won
+      ? "The map is yours. Every enemy position has fallen."
+      : "Your last position was overrun.";
+    const t = Math.floor(game.time);
+    document.getElementById("endTime").textContent =
+      Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
+    document.getElementById("endCaptured").textContent = game.stats.captured;
+    document.getElementById("endLost").textContent = game.stats.lost;
+    document.getElementById("endSent").textContent = game.stats.sent;
+    document.getElementById("endOverlay").hidden = false;
+  }
+
+  // ---------------------------------------------------------------
+  // Main loop — fixed simulation step, variable render.
+  // ---------------------------------------------------------------
+  const STEP = 1 / 60;
+  let acc = 0, last = performance.now(), hudAcc = 0, wasOver = false;
+
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    if (game && started && !paused && !game.winner) {
+      acc += dt;
+      let guard = 0;
+      while (acc >= STEP && guard++ < 8) { E.step(game, STEP); acc -= STEP; }
+      consumeEvents();
+    }
+
+    // Effect integration runs regardless of pause so nothing freezes mid-pop.
+    if (shake.t > 0) shake.t = Math.max(0, shake.t - dt);
+    for (const f of nodeFx.values()) {
+      f.flash = Math.max(0, f.flash - dt * 2.4);
+      f.pulse = Math.max(0, f.pulse - dt * 3.2);
+    }
+    particles = particles.filter((p) => {
+      p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      p.vx *= 0.94; p.vy *= 0.94;
+      return p.life > 0;
+    });
+    floaters = floaters.filter((f) => { f.life -= dt; return f.life > 0; });
+
+    if (game) render(now, dt);
+
+    hudAcc += dt;
+    if (hudAcc > 0.12) { hudAcc = 0; updateHud(); }
+
+    if (game && game.winner && !wasOver) { wasOver = true; showEnd(); }
+    if (game && !game.winner) wasOver = false;
+
+    requestAnimationFrame(frame);
+  }
+
+  // Boot: build a game immediately so the start screen has a live board
+  // behind it rather than an empty rectangle.
+  resize();
+  newGame();
+  started = false;
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
