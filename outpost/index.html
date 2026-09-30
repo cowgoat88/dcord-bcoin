@@ -7,17 +7,18 @@
 <title>OUTPOST</title>
 <style>
   :root {
-    --bg:        #070b14;
-    --bg-panel:  rgba(14, 20, 34, 0.82);
-    --line:      rgba(120, 150, 190, 0.14);
-    --text:      #dbe4f0;
-    --muted:     #7c8ba3;
+    --bg:        #070c18;
+    --bg-panel:  rgba(13, 20, 36, 0.93);
+    --line:      rgba(145, 172, 255, 0.22);
+    --text:      #edf4ff;
+    --muted:     #a8b7d8;
     --player:    #22d3ee;
     --player-dim:rgba(34, 211, 238, 0.16);
     --enemy:     #fb7185;
     --enemy-dim: rgba(251, 113, 133, 0.16);
     --neutral:   #64748b;
-    --gold:      #fbbf24;
+    --gold:      #ffd166;
+    --doom:      #ff7a5c;
   }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -55,7 +56,10 @@
     padding: 6px 11px; border-radius: 6px; cursor: pointer;
     transition: background .12s, border-color .12s, transform .08s;
   }
-  button:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: rgba(120,150,190,.35); }
+  @media (hover: hover) {
+    button:hover:not(:disabled) { background: rgba(255,255,255,.1); border-color: rgba(120,150,190,.35); }
+  }
+  button { touch-action: manipulation; }
   button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: .35; cursor: default; }
   button.on { background: var(--player-dim); border-color: var(--player); color: var(--player); }
@@ -102,6 +106,31 @@
   .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 14px 0;
             font-size: 11px; color: var(--muted); text-align: left; }
   .legend i { color: var(--text); font-style: normal; }
+  .chargebar {
+    position: relative; display: inline-block; width: 74px; height: 14px;
+    border: 1px solid var(--line); border-radius: 7px; overflow: hidden;
+    background: rgba(255,255,255,.05); vertical-align: middle;
+  }
+  .chargebar i {
+    position: absolute; inset: 0 auto 0 0; width: 0%;
+    background: linear-gradient(90deg, #7c3aed, var(--doom));
+    transition: width .25s ease;
+  }
+  .chargebar b {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.8);
+  }
+  .chargebar.ready i { background: linear-gradient(90deg, var(--doom), #ffd166); }
+  .chargebar.ready { box-shadow: 0 0 12px rgba(255,122,92,.7); border-color: var(--doom); }
+  button.fire {
+    background: rgba(255,122,92,.14); border-color: var(--doom); color: var(--doom);
+    font-weight: 700; letter-spacing: .5px;
+  }
+  button.fire:not(:disabled) { animation: firePulse 1.3s ease-in-out infinite; }
+  @keyframes firePulse {
+    0%,100% { box-shadow: 0 0 0 rgba(255,122,92,0); }
+    50%     { box-shadow: 0 0 16px rgba(255,122,92,.75); }
+  }
   .shapes { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 0 0 16px;
             font-size: 11px; color: var(--muted); text-align: left; }
   .shapes span { display: flex; align-items: center; gap: 7px; }
@@ -118,10 +147,20 @@
   #toast.show { opacity: 1; }
 
   @media (max-width: 620px) {
-    #hud { gap: 10px; padding: 6px 10px; font-size: 11px; }
-    #hud .brand { font-size: 11px; letter-spacing: 2px; }
+    #hud { gap: 7px; padding: 5px 8px; font-size: 11px; flex-wrap: nowrap; overflow: hidden; }
+    #hud .brand { font-size: 10px; letter-spacing: 1px; }
+    #hud button { padding: 4px 7px; font-size: 10px; }
+    .chargebar { width: 56px; height: 13px; }
+    /* The board is the game; chrome gets whatever is left, not the
+       reverse. Keeping the HUD to a single row is worth more than
+       showing decoration -- but never at the cost of a control, so the
+       title goes and every button stays reachable. */
+    #hud .brand { display: none; }
     .stat .k { display: none; }
-    #cmd { gap: 6px; padding: 7px 10px; }
+    #cmd { gap: 5px; padding: 6px 8px; }
+    #cmd button { padding: 7px 9px; font-size: 10px; }
+    #cmd .grouplabel { display: none; }
+    #selInfo { font-size: 11px; }
     #hud button { padding: 5px 8px; font-size: 10px; }
     .seg button { padding: 7px 9px; }
     #statIncome { display: none; }
@@ -140,6 +179,9 @@
     <span class="stat"><span class="k">Enemy</span><span class="v foe" id="stFoe">0</span></span>
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
     <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
+    <span class="stat doomstat"><span class="k">Doomstar</span>
+      <span class="chargebar" title="Charged by the Relays you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
+    </span>
     <span class="stat" id="statIncome"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
     <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
     <span class="spacer"></span>
@@ -167,13 +209,16 @@
           <div><i>Mass several</i> — that's the game</div>
           <div><i>⚔ Assault</i> +15%/lvl attacking</div>
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
+          <div><i>Relays</i> charge the Doomstar</div>
+          <div><i>Hold the centre</i> to fire it</div>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Positions</div>
         <div class="shapes">
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="8.66,5 0,10 -8.66,5 -8.66,-5 0,-10 8.66,-5" fill="none" stroke="#22d3ee" stroke-width="2"/></svg> Command</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><rect x="-8" y="-8" width="16" height="16" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Factory · units</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 9,0 0,9 -9,0" fill="none" stroke="#fbbf24" stroke-width="2"/></svg> Mine · credits</span>
-          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Outpost</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Relay · charges</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 2.6,-2.8 9,-2.8 3.8,1.2 5.8,7.6 0,3.8 -5.8,7.6 -3.8,1.2 -9,-2.8 -2.6,-2.8" fill="none" stroke="#ff7a5c" stroke-width="1.6"/></svg> Doomstar · centre</span>
         </div>
         <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
         <div class="row" id="diffRow">
@@ -218,8 +263,9 @@
       <button data-frac="0.75">75%</button>
       <button data-frac="1">All</button>
     </div>
-    <button id="btnAll">Select All</button>
+    <button id="btnAll" title="Select all your positions">All Pos</button>
     <button id="btnUpgrade">Upgrade</button>
+    <button id="btnFire" class="fire" disabled>☀ FIRE</button>
     <span class="grouplabel">Research</span>
     <div class="seg" id="techSeg">
       <button id="btnAssault" data-track="assault">⚔ Assault</button>
@@ -251,7 +297,9 @@
   // Presentation-only state, kept separate from the simulation.
   let selection = new Set();
   let hoverId = null;
-  let drag = null;              // { fromId, x, y, moved }
+  let drag = null;              // { fromId, x, y, moved, touch }
+  let pendingTarget = null;     // touch: target awaiting a confirming tap
+  let pressTimer = null;
   let particles = [];
   let floaters = [];
   let shake = { mag: 0, t: 0 };
@@ -309,7 +357,7 @@
     const s = seed === undefined ? (Math.floor(Math.random() * 100000) + 1) : seed;
     const shape = boardShape();
     game = E.createGame({ seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH });
-    selection.clear();
+    selection.clear(); pendingTarget = null;
     particles = []; floaters = []; nodeFx.clear();
     shake = { mag: 0, t: 0 };
     paused = false;
@@ -323,13 +371,22 @@
   // ---------------------------------------------------------------
   // Input
   // ---------------------------------------------------------------
-  function nodeAt(px, py) {
+  // Hit testing with slack. A fingertip lands far less precisely than a
+  // cursor, so touch gets a generous extra radius (converted from screen
+  // pixels, so it is the same real-world finger size at any zoom). Without
+  // this, nodes near each other are genuinely hard to hit on a phone.
+  function nodeAt(px, py, touch) {
     const w = toWorld(px, py);
+    const slack = (touch ? 24 : 9) / view.scale;
     let best = null, bestD = Infinity;
     for (const n of game.nodes) {
-      const r = E.nodeStats(n).radius + 10;
+      const r = E.nodeStats(n).radius + slack;
       const d = Math.hypot(n.x - w.x, n.y - w.y);
-      if (d < r && d < bestD) { best = n; bestD = d; }
+      // Rank by how far inside the target the tap landed, so the nearest
+      // node wins rather than whichever happens to come first.
+      if (d < r && d - E.nodeStats(n).radius < bestD) {
+        best = n; bestD = d - E.nodeStats(n).radius;
+      }
     }
     return best;
   }
@@ -341,56 +398,108 @@
 
   canvas.addEventListener("pointerdown", (ev) => {
     if (!started || !game || game.winner) return;
-    canvas.setPointerCapture(ev.pointerId);
+    // Pointer capture is a nicety (it keeps a drag alive if the finger
+    // leaves the canvas) but it throws in enough real situations — a
+    // pointer the browser has already released, a synthetic event, some
+    // mobile browsers mid-gesture — that letting it run first means one
+    // throw silently kills the entire input handler and the game stops
+    // responding to taps. Never let it break the actual input path.
+    try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* not fatal */ }
+    const touch = ev.pointerType !== "mouse";
     const p = localPt(ev);
-    const n = nodeAt(p.x, p.y);
-    drag = n && n.owner === PLAYER
-      ? { fromId: n.id, x: p.x, y: p.y, moved: false }
-      : { fromId: null, x: p.x, y: p.y, moved: false };
+    const n = nodeAt(p.x, p.y, touch);
+    drag = {
+      fromId: n && n.owner === PLAYER ? n.id : null,
+      overId: n ? n.id : null,
+      x: p.x, y: p.y, moved: false, touch
+    };
+    // Long-press on one of your positions adds it to the group. This is
+    // the only way to build a multi-node group by touch, because a plain
+    // tap on a friendly node has to stay available as "reinforce this".
+    clearTimeout(pressTimer);
+    if (n && n.owner === PLAYER) {
+      pressTimer = setTimeout(() => {
+        if (!drag || drag.moved) return;
+        selection.add(n.id);
+        drag.consumed = true;      // don't also treat the release as a tap
+        pendingTarget = null;
+        addPulse(n.id, 1.2);
+        toast("Added to group (" + selection.size + ")");
+        updateHud();
+      }, 420);
+    }
   });
 
   canvas.addEventListener("pointermove", (ev) => {
     const p = localPt(ev);
-    const n = nodeAt(p.x, p.y);
+    const touch = ev.pointerType !== "mouse";
+    const n = nodeAt(p.x, p.y, touch && !!drag);
     hoverId = n ? n.id : null;
     if (drag) {
-      if (Math.hypot(p.x - drag.x, p.y - drag.y) > 8) drag.moved = true;
+      if (Math.hypot(p.x - drag.x, p.y - drag.y) > 10) {
+        drag.moved = true;
+        clearTimeout(pressTimer);
+      }
       drag.x = p.x; drag.y = p.y;
     }
   });
 
   canvas.addEventListener("pointerup", (ev) => {
+    clearTimeout(pressTimer);
     if (!started || !game || game.winner || !drag) { drag = null; return; }
-    const p = localPt(ev);
-    const target = nodeAt(p.x, p.y);
     const d = drag; drag = null;
+    if (d.consumed) return;                       // long-press already handled it
+    const p = localPt(ev);
+    const target = nodeAt(p.x, p.y, d.touch);
 
-    // Drag from one of your nodes onto another node: a quick order that
-    // bypasses the selection entirely.
-    if (d.moved && d.fromId !== null && target && target.id !== d.fromId) {
-      // If the dragged node is part of a group, the whole group goes.
-      const sources = selection.has(d.fromId) ? [...selection] : [d.fromId];
-      orderAttack(sources, target.id);
+    // A drag is unambiguous — it names its own source and target — so it
+    // commits straight away on mouse and touch alike.
+    if (d.moved) {
+      if (d.fromId !== null && target && target.id !== d.fromId) {
+        const sources = selection.has(d.fromId) ? [...selection] : [d.fromId];
+        issueOrder(sources, target.id);
+      }
       return;
     }
-    if (d.moved) return;
 
-    // Tap.
-    if (!target) { selection.clear(); updateHud(); return; }
-    if (target.owner === PLAYER) {
-      if (selection.has(target.id)) selection.delete(target.id);
-      else selection.add(target.id);
+    // --- taps ---------------------------------------------------------
+    if (!target) { selection.clear(); pendingTarget = null; updateHud(); return; }
+
+    // Tapping something already in the group takes it back out.
+    if (selection.has(target.id)) {
+      selection.delete(target.id);
+      pendingTarget = null;
       updateHud();
-    } else if (selection.size) {
-      orderAttack([...selection], target.id);
-    } else {
-      toast(describeNode(target));
+      return;
     }
+
+    // Nothing selected yet: a tap on your own position picks it up, and a
+    // tap on anything else just tells you about it.
+    if (!selection.size) {
+      if (target.owner === PLAYER) { selection.add(target.id); updateHud(); }
+      else toast(describeNode(target));
+      return;
+    }
+
+    // Something is selected, and this is not part of the group — so it is
+    // a destination. Crucially this includes your OWN positions, which is
+    // how reinforcing works; previously a tap on a friendly node always
+    // toggled selection instead, making it impossible to move units
+    // between your own positions by tapping at all.
+    if (d.touch && pendingTarget !== target.id) {
+      // Touch confirms: first tap previews, second tap on the same target
+      // commits. Stops a mis-aimed fingertip from throwing an army away.
+      pendingTarget = target.id;
+      updateHud();
+      return;
+    }
+    issueOrder([...selection], target.id);
+    pendingTarget = null;
   });
 
-  canvas.addEventListener("pointercancel", () => { drag = null; });
+  canvas.addEventListener("pointercancel", () => { clearTimeout(pressTimer); drag = null; });
 
-  function orderAttack(sourceIds, targetId) {
+  function issueOrder(sourceIds, targetId) {
     let sent = 0, reason = null;
     for (const id of sourceIds) {
       if (id === targetId) continue;
@@ -400,10 +509,13 @@
     if (sent) {
       const t = game.nodes[targetId];
       addPulse(targetId, 1);
-      toast(sent + (sent === 1 ? " force" : " forces") + " → " + E.NODE_TYPES[t.type].label);
+      const verb = t.owner === PLAYER ? "Reinforcing " : "Attacking ";
+      toast(verb + E.NODE_TYPES[t.type].label + " \u00b7 " + sent +
+        (sent === 1 ? " position" : " positions"));
     } else if (reason) {
       toast(reason);
     }
+    pendingTarget = null;
     updateHud();
   }
 
@@ -450,6 +562,14 @@
     ev.currentTarget.classList.toggle("on", !muted);
     if (!muted) sfx.launch();
   });
+  document.getElementById("btnFire").addEventListener("click", doFire);
+  function doFire() {
+    if (!game) return;
+    const reason = E.fireDoomstar(game, PLAYER);
+    if (reason) toast(reason);
+    updateHud();
+  }
+
   document.getElementById("techSeg").addEventListener("click", (ev) => {
     const b = ev.target.closest("button"); if (!b) return;
     doResearch(b.dataset.track);
@@ -506,9 +626,10 @@
     if (k === " ") { ev.preventDefault(); togglePause(); }
     else if (k === "a") document.getElementById("btnAll").click();
     else if (k === "u") doUpgrade();
+    else if (k === "f") doFire();
     else if (k === "q") doResearch("assault");
     else if (k === "w") doResearch("fortify");
-    else if (k === "escape") { selection.clear(); updateHud(); }
+    else if (k === "escape") { selection.clear(); pendingTarget = null; updateHud(); }
     else if (k >= "1" && k <= "4") {
       const b = document.getElementById("fracSeg").children[parseInt(k, 10) - 1];
       if (b) b.click();
@@ -620,6 +741,18 @@
         burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
         floatText(ev.x, ev.y, "HELD", "#cbd5e1");
         if (ev.attacker === PLAYER || ev.owner === PLAYER) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "doomstar") {
+        fxFor(ev.nodeId).flash = 1;
+        burst(ev.x, ev.y, "#ff7a5c", 60, 240, 1.2);
+        burst(ev.x, ev.y, "#ffd166", 30, 150, 0.9);
+        floatText(ev.x, ev.y, "-" + ev.damage, "#ff7a5c");
+        addShake(ev.owner === PLAYER ? 14 : 20);
+        if (ev.owner === PLAYER) sfx.big(); else sfx.lost();
+      } else if (ev.kind === "charge") {
+        if (ev.owner === PLAYER && ev.ready) {
+          toast("Doomstar charged \u2014 hold the centre and FIRE");
+          sfx.upgrade();
+        }
       } else if (ev.kind === "research") {
         if (ev.owner === PLAYER) sfx.upgrade();
         const col = ev.track === "assault" ? "#fca5a5" : "#93c5fd";
@@ -650,6 +783,15 @@
     if (shape === "circle") { c.arc(0, 0, r, 0, Math.PI * 2); return; }
     if (shape === "square") {
       const s = r * 0.88; c.rect(-s, -s, s * 2, s * 2); return;
+    }
+    if (shape === "star") {
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rr = i % 2 ? r * 0.48 : r;
+        const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+        i ? c.lineTo(x, y) : c.moveTo(x, y);
+      }
+      c.closePath(); return;
     }
     if (shape === "diamond") {
       c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath(); return;
@@ -693,6 +835,7 @@
     drawFleets(now);
     drawNodes(now);
     drawDragArrow();
+    drawPendingTarget(now);
     drawHoverPreview();
     drawParticles();
     drawFloaters();
@@ -846,6 +989,32 @@
         }
       }
 
+      // A Relay you hold shows whether it is feeding the Doomstar.
+      if (n.type === "relay" && n.owner !== NEUTRAL) {
+        const contested = E.isContested(game, n);
+        ctx.fillStyle = contested ? "#ff7a5c" : "#ffd166";
+        ctx.globalAlpha = contested ? 0.9 : 0.55 + 0.45 * Math.abs(Math.sin(now * 0.004));
+        ctx.beginPath(); ctx.arc(0, -r - 11, 3.2, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      // The Doomstar itself gets a slow halo so the centre always reads as
+      // the prize on the map.
+      if (n.type === "doomstar") {
+        const owner = n.owner;
+        const glow = 0.5 + 0.5 * Math.sin(now * 0.0022);
+        ctx.strokeStyle = owner === NEUTRAL ? "rgba(255,209,102,.5)" : colorOf(owner);
+        ctx.globalAlpha = 0.25 + glow * 0.35;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, r + 14 + glow * 5, 0, Math.PI * 2); ctx.stroke();
+        ctx.globalAlpha = 1;
+        if (owner !== NEUTRAL && (game.charge[owner] || 0) >= E.DOOM_CHARGE_NEEDED) {
+          ctx.strokeStyle = "#ff7a5c"; ctx.lineWidth = 3; ctx.globalAlpha = 0.85;
+          ctx.beginPath(); ctx.arc(0, 0, r + 22, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+      }
+
       // Incoming assault indicator
       if (n.assault) {
         const ac = colorOf(n.assault.owner);
@@ -932,6 +1101,37 @@
     if (valid) drawOrderPreview(sources, tgt);
   }
 
+  // Touch: the target awaiting its confirming tap. Drawn loudly, because
+  // the whole point is that the player can see what they are about to do
+  // before it costs them an army.
+  function drawPendingTarget(now) {
+    if (pendingTarget === null || !game.nodes[pendingTarget]) return;
+    const tgt = game.nodes[pendingTarget];
+    const sources = [...selection];
+    if (!sources.length) return;
+    const r = E.nodeStats(tgt).radius;
+
+    ctx.setLineDash([7, 6]);
+    ctx.lineDashOffset = -now * 0.02;
+    ctx.strokeStyle = "rgba(125,211,252,.85)";
+    ctx.lineWidth = 2.5;
+    for (const id of sources) {
+      const sN = game.nodes[id];
+      ctx.beginPath(); ctx.moveTo(sN.x, sN.y); ctx.lineTo(tgt.x, tgt.y); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    const pulse = 1 + Math.sin(now * 0.008) * 0.06;
+    ctx.strokeStyle = "#e2f7ff"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(tgt.x, tgt.y, (r + 20) * pulse, 0, Math.PI * 2); ctx.stroke();
+    drawOrderPreview(sources, tgt);
+
+    ctx.fillStyle = "#e2f7ff";
+    ctx.font = "700 12px ui-monospace, monospace";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("TAP AGAIN TO CONFIRM", tgt.x, tgt.y + r + 30);
+  }
+
   // Same preview on hover when a group is already selected, so tap-to-order
   // gets the same information as drag-to-order.
   function drawHoverPreview() {
@@ -983,12 +1183,31 @@
     if (sel.length !== selection.size) { selection = new Set(sel); }
     const info = document.getElementById("selInfo");
     if (!sel.length) {
-      info.innerHTML = "Drag a node to attack · tap to group";
+      info.innerHTML = "Tap a position \u00b7 hold to add to group";
+    } else if (sel.length === 1) {
+      // One position: show what it actually is and does. The old UI gave
+      // no way to see that a Command out-produces a Factory, or what an
+      // upgrade was about to buy.
+      const n = game.nodes[sel[0]];
+      const st = E.nodeStats(n);
+      const bits = [
+        "<b>" + E.NODE_TYPES[n.type].label + "</b>" + (n.level ? " L" + n.level : ""),
+        Math.floor(n.garrison) + "/" + st.cap,
+        st.unitRate.toFixed(2) + "/s"
+      ];
+      if (st.creditRate > 0) bits.push("+" + st.creditRate.toFixed(2) + "c/s");
+      if (n.type === "relay") {
+        bits.push(E.isContested(game, n)
+          ? "<span style='color:var(--doom)'>CONTESTED</span>"
+          : "<span style='color:var(--gold)'>charging</span>");
+      }
+      bits.push("sending <b>" + Math.floor(n.garrison * sendFrac) + "</b>");
+      info.innerHTML = bits.join(" \u00b7 ");
     } else {
       const total = sel.reduce((s, id) => s + Math.floor(game.nodes[id].garrison), 0);
       const willSend = sel.reduce((s, id) => s + Math.floor(game.nodes[id].garrison * sendFrac), 0);
-      info.innerHTML = "<b>" + sel.length + "</b> selected · " + total +
-        " units · sending <b>" + willSend + "</b>";
+      info.innerHTML = "<b>" + sel.length + "</b> positions \u00b7 " + total +
+        " units \u00b7 sending <b>" + willSend + "</b>";
     }
 
     for (const track of ["assault", "fortify"]) {
@@ -1008,14 +1227,42 @@
     document.getElementById("stFoeTech").textContent =
       "\u2694" + E.techLevel(game, ENEMY, "assault") + " \u26e8" + E.techLevel(game, ENEMY, "fortify");
 
+    const need = E.DOOM_CHARGE_NEEDED;
+    const ch = Math.floor(game.charge[PLAYER] || 0);
+    const bar = document.querySelector(".chargebar");
+    document.getElementById("chargeFill").style.width = Math.round(100 * ch / need) + "%";
+    const relays = E.chargingRelays(game, PLAYER).length;
+    document.getElementById("chargeTxt").textContent = ch + "/" + need;
+    bar.classList.toggle("ready", ch >= need);
+    bar.title = relays
+      ? relays + " Relay" + (relays === 1 ? "" : "s") + " charging (+" + relays + " every " + E.DOOM_CHARGE_INTERVAL + "s)"
+      : "No Relays charging \u2014 hold uncontested Relays to charge";
+
+    const fireBtn = document.getElementById("btnFire");
+    const holdsDoom = (E.doomstarNode(game) || {}).owner === PLAYER;
+    fireBtn.disabled = !E.canFire(game, PLAYER);
+    fireBtn.title = !holdsDoom
+      ? "Hold the Doomstar at the centre to fire"
+      : ch < need ? "Charging: " + ch + "/" + need
+      : "Fire \u2014 " + E.DOOM_DAMAGE + " damage to the enemy's largest position";
+
     const upBtn = document.getElementById("btnUpgrade");
     if (sel.length) {
       const cheapest = sel.map((id) => game.nodes[id]).filter((n) => n.level < E.MAX_LEVEL)
         .sort((a, b) => a.level - b.level)[0];
-      upBtn.disabled = !cheapest;
-      upBtn.textContent = cheapest ? "Upgrade (" + E.upgradeCost(cheapest.level) + "c)" : "Max level";
+      const cost = cheapest ? E.upgradeCost(cheapest.level) : null;
+      upBtn.disabled = !cheapest || (game.credits[PLAYER] || 0) < cost;
+      if (!cheapest) { upBtn.textContent = "Max level"; upBtn.title = ""; }
+      else {
+        const now = E.nodeStats(cheapest);
+        const next = E.nodeStats({ type: cheapest.type, level: cheapest.level + 1 });
+        upBtn.textContent = "\u2191 L" + (cheapest.level + 1) + " \u00b7 " + cost + "c";
+        upBtn.title = E.NODE_TYPES[cheapest.type].label + " L" + cheapest.level + " \u2192 L" +
+          (cheapest.level + 1) + ": " + now.unitRate.toFixed(2) + " \u2192 " +
+          next.unitRate.toFixed(2) + " units/s, cap " + now.cap + " \u2192 " + next.cap;
+      }
     } else {
-      upBtn.disabled = true; upBtn.textContent = "Upgrade";
+      upBtn.disabled = true; upBtn.textContent = "Upgrade"; upBtn.title = "";
     }
   }
 

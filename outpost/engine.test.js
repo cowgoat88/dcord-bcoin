@@ -39,8 +39,13 @@ test("every generated map is fully connected", () => {
 test("maps are point-symmetric, so neither side gets a better position", () => {
   for (let seed = 1; seed <= 20; seed++) {
     const g = E.createGame({ seed });
-    for (let i = 0; i < g.nodes.length; i += 2) {
-      const a = g.nodes[i], b = g.nodes[i + 1];
+    const pairs = g.nodes.filter((n) => n.type !== "doomstar");
+    assert.equal(pairs.length % 2, 0, "every node but the Doomstar must be paired");
+    const centre = g.nodes.find((n) => n.type === "doomstar");
+    assert.ok(Math.abs(centre.x - g.mapW / 2) < 1e-6 && Math.abs(centre.y - g.mapH / 2) < 1e-6,
+      "the Doomstar must sit exactly at the centre, equidistant from both sides");
+    for (let i = 0; i < pairs.length; i += 2) {
+      const a = pairs[i], b = pairs[i + 1];
       assert.equal(a.type, b.type, `seed ${seed}: paired nodes must share a type`);
       assert.ok(Math.abs((a.x + b.x) - g.mapW) < 1e-6, "x coordinates must mirror about the centre");
       assert.ok(Math.abs((a.y + b.y) - g.mapH) < 1e-6, "y coordinates must mirror about the centre");
@@ -532,7 +537,7 @@ test("a fully fortified position is still crackable by a concentrated attack", (
   const top = { type: "command", level: 3, owner: ENEMY, garrison: E.nodeStats({ type: "command", level: 3 }).cap };
   const defence = E.defenceOf(g, top);
   const midCap = (E.nodeStats({ type: "factory", level: 0 }).cap +
-                  E.nodeStats({ type: "outpost", level: 0 }).cap) / 2;
+                  E.nodeStats({ type: "relay", level: 0 }).cap) / 2;
   const positionsNeeded = (assaultLevel) => {
     const per = midCap * 0.75 * (1 + E.TECH.assault.perLevel * assaultLevel);
     return Math.ceil(defence / per);
@@ -584,4 +589,131 @@ test("the AI's production multiplier only touches the AI", () => {
   const base = E.nodeStats(mine).unitRate * 10;
   assert.ok(Math.abs(mine.garrison - base) < 0.5,
     "the player's own rate must be untouched by the difficulty setting");
+});
+
+// ---------------------------------------------------------------------
+// The Doomstar objective (what Relays are actually for)
+// ---------------------------------------------------------------------
+test("every map has exactly one Doomstar, dead centre, reachable by both sides", () => {
+  for (let seed = 1; seed <= 15; seed++) {
+    const g = E.createGame({ seed });
+    const doom = g.nodes.filter((n) => n.type === "doomstar");
+    assert.equal(doom.length, 1, `seed ${seed}: exactly one Doomstar`);
+    assert.equal(doom[0].owner, NEUTRAL, "it must start unheld");
+    assert.ok(E.neighbors(g, doom[0].id).length > 0, "it must be connected to the lane network");
+    for (const side of [PLAYER, ENEMY]) {
+      const home = E.nodesOf(g, side)[0];
+      assert.ok(E.findPath(g, home.id, doom[0].id), `seed ${seed}: ${side} must be able to reach it`);
+    }
+  }
+});
+
+test("held Relays charge the Doomstar; nothing else does", () => {
+  // Both sides must keep a node or the match ends instantly and the
+  // simulation stops stepping, which silently makes any timing assertion
+  // below pass for the wrong reason.
+  function bench(holdType) {
+    const g = quiet();
+    const keepEnemy = E.nodesOf(g, ENEMY)[0];
+    for (const n of g.nodes) if (n !== keepEnemy) n.owner = NEUTRAL;
+    const held = g.nodes.find((n) => n.type === holdType && n !== keepEnemy);
+    held.owner = PLAYER;
+    // Make sure nothing adjacent is enemy-held, so contest isn't the cause.
+    for (const id of E.neighbors(g, held.id)) {
+      if (g.nodes[id] !== keepEnemy) g.nodes[id].owner = NEUTRAL;
+    }
+    g.charge[PLAYER] = 0;
+    run(g, E.DOOM_CHARGE_INTERVAL * 3 + 0.2);
+    assert.equal(g.winner, null, "setup: the match must still be running");
+    return g.charge[PLAYER];
+  }
+  assert.ok(bench("relay") > 0, "a held Relay must charge the weapon");
+  assert.equal(bench("factory"), 0, "a Factory must not charge the weapon");
+});
+
+test("a Relay with an enemy neighbour is contested and stops charging", () => {
+  // This is what stops charging being free once you have grabbed a corner.
+  const g = quiet();
+  const keepEnemy = E.nodesOf(g, ENEMY)[0];
+  for (const n of g.nodes) if (n !== keepEnemy) n.owner = NEUTRAL;
+  const relay = g.nodes.find((n) => n.type === "relay" &&
+    E.neighbors(g, n.id).every((id) => g.nodes[id] !== keepEnemy));
+  relay.owner = PLAYER;
+  assert.equal(E.isContested(g, relay), false);
+  assert.equal(E.chargingRelays(g, PLAYER).length, 1);
+
+  g.nodes[E.neighbors(g, relay.id)[0]].owner = ENEMY;
+  assert.equal(E.isContested(g, relay), true, "an enemy-held neighbour must contest it");
+  assert.equal(E.chargingRelays(g, PLAYER).length, 0);
+
+  g.charge[PLAYER] = 0;
+  run(g, E.DOOM_CHARGE_INTERVAL * 3 + 0.2);
+  assert.equal(g.charge[PLAYER], 0, "a contested Relay must not charge");
+});
+
+test("firing needs both a full charge and the centre", () => {
+  const g = quiet();
+  const doom = E.doomstarNode(g);
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  doom.owner = ENEMY;
+  assert.equal(E.fireDoomstar(g, PLAYER), "You must hold the Doomstar to fire it.");
+
+  doom.owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED - 1;
+  assert.ok(/^Charge /.test(E.fireDoomstar(g, PLAYER)), "an undercharged weapon must refuse");
+  assert.equal(E.canFire(g, PLAYER), false);
+
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  assert.equal(E.canFire(g, PLAYER), true);
+});
+
+test("the strike hits the enemy's largest position and spends the charge", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const foes = g.nodes.filter((n) => n.id !== E.doomstarNode(g).id);
+  foes[0].owner = ENEMY; foes[0].garrison = 20;
+  foes[1].owner = ENEMY; foes[1].garrison = 60;   // the biggest
+  assert.equal(E.doomstarTarget(g, PLAYER).id, foes[1].id);
+
+  assert.equal(E.fireDoomstar(g, PLAYER), undefined);
+  assert.equal(g.charge[PLAYER], 0, "firing must spend the whole charge");
+  assert.equal(Math.round(foes[1].garrison), 60 - E.DOOM_DAMAGE);
+  assert.equal(foes[0].garrison, 20, "other positions must be untouched");
+});
+
+test("a strike that empties a position abandons it rather than capturing it", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const victim = g.nodes.find((n) => n.type !== "doomstar");
+  for (const n of g.nodes) if (n !== victim && n.type !== "doomstar") n.owner = NEUTRAL;
+  victim.owner = ENEMY; victim.garrison = 5; victim.level = 2;
+  E.fireDoomstar(g, PLAYER);
+  assert.equal(victim.owner, NEUTRAL, "a wiped position goes neutral, not to the attacker");
+  assert.equal(victim.garrison, 0);
+  assert.equal(victim.level, 0);
+});
+
+test("Command clearly out-produces a Factory", () => {
+  // The owner's note: the main base should matter more than a satellite.
+  const cmd = E.nodeStats({ type: "command", level: 0 }).unitRate;
+  const fac = E.nodeStats({ type: "factory", level: 0 }).unitRate;
+  assert.ok(cmd > fac * 1.6, `Command ${cmd}/s must clearly beat Factory ${fac}/s`);
+  assert.ok(E.nodeStats({ type: "command", level: 0 }).cap >
+            E.nodeStats({ type: "factory", level: 0 }).cap);
+});
+
+test("the AI fires the Doomstar once it can", () => {
+  const g = E.createGame({ seed: 5, difficulty: 2 });
+  E.doomstarNode(g).owner = ENEMY;
+  for (const n of g.nodes) if (n.type === "relay") n.owner = ENEMY;
+  const victim = g.nodes.find((n) => n.owner === PLAYER);
+  victim.garrison = 60;
+  let fired = false;
+  for (let i = 0; i < 60 * 120 && !fired; i++) {
+    E.step(g, 1 / 60);
+    if (E.drainEvents(g).some((e) => e.kind === "doomstar")) fired = true;
+  }
+  assert.ok(fired, "the AI must use the weapon rather than sitting on a full charge");
 });

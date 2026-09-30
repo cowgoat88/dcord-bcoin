@@ -9,9 +9,14 @@ the map is yours. A match runs about two to five minutes.
 
 ## How it plays
 
-- **Drag** one of your positions onto any other node to order an attack.
-- **Tap** your positions to build a group, then **tap a target** to send
-  the whole group at once.
+- **Tap** one of your positions to pick it up, then **tap a target** —
+  the first tap previews the order, a second tap on the same target sends
+  it. The target can be an enemy position *or one of your own*, which is
+  how you reinforce and shuffle units around your territory.
+- **Press and hold** one of your positions to add it to a group, then
+  order the whole group at once.
+- **Drag** from a position straight onto a target to skip the confirm
+  step (handy with a mouse).
 - **Commit** (25/50/75/All) sets how much of each garrison an order sends.
 - **Credits** come from Mines and pay for two different things: **node
   upgrades** (a single position produces more) and **research** (a
@@ -57,6 +62,24 @@ Positions are shaped by role, so the map is readable without labels:
 hexagon **Command** (your strongest producer, and where you start),
 square **Factory** (the unit engine), diamond **Mine** (pays credits),
 circle **Outpost** (cheap ground that links lanes).
+
+## The Doomstar
+
+The centre of every map holds a **Doomstar**, and it is what the Relays
+are for:
+
+- Every **uncontested Relay you hold** adds charge every few seconds.
+- A Relay is **contested** — and stops charging — while any lane-adjacent
+  node is enemy-held, so charging is something you have to protect.
+- At full charge, **if you also hold the Doomstar itself**, you can fire:
+  it strips units from the enemy's single largest position. A position
+  emptied by the strike is abandoned, not captured — you still have to go
+  and take it.
+
+It exists to answer two problems at once. Relays used to be filler with
+no reason to fight over them, and two players could comfortably turtle in
+opposite corners. Now the small scattered nodes fuel the weapon and the
+middle of the map is worth holding.
 
 ## The one rule that matters
 

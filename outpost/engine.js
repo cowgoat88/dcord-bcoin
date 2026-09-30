@@ -28,12 +28,36 @@
   //   factory  square   — the unit engine; taking these wins games
   //   mine     diamond  — pays Credits instead of units (the upgrade economy)
   //   outpost  circle   — cheap filler, but holds ground and links lanes
+  // Command is deliberately and visibly the best producer on the map —
+  // roughly double a Factory. Losing your home should hurt, and a Factory
+  // should read as a useful satellite rather than a replacement base.
+  //
+  // Relay (was "cheap filler with no purpose") is the Doomstar's fuel: it
+  // produces least of anything, but every uncontested Relay you hold
+  // charges the superweapon. That is the whole reason to fight for the
+  // scattered small nodes.
   const NODE_TYPES = {
-    command: { label: "Command", units: 0.62, cap: 70, credits: 0.00, radius: 30, shape: "hex" },
-    factory: { label: "Factory", units: 0.46, cap: 45, credits: 0.00, radius: 24, shape: "square" },
+    command: { label: "Command", units: 0.78, cap: 70, credits: 0.00, radius: 30, shape: "hex" },
+    factory: { label: "Factory", units: 0.40, cap: 45, credits: 0.00, radius: 24, shape: "square" },
     mine:    { label: "Mine",    units: 0.14, cap: 28, credits: 0.60, radius: 22, shape: "diamond" },
-    outpost: { label: "Outpost", units: 0.26, cap: 32, credits: 0.10, radius: 20, shape: "circle" }
+    relay:   { label: "Relay",   units: 0.20, cap: 34, credits: 0.08, radius: 21, shape: "circle" },
+    doomstar: { label: "Doomstar", units: 0.30, cap: 40, credits: 0.00, radius: 27, shape: "star" }
   };
+
+  // --- Doomstar objective -------------------------------------------
+  // Borrowed from the Doomstar prototype and adapted to a lane map: hold
+  // Relays to charge the weapon, hold the centre to fire it. It answers
+  // two problems at once — it gives the small nodes a reason to exist,
+  // and it forces a fight over the middle of the map instead of letting
+  // two players turtle on opposite corners.
+  const DOOM_CHARGE_PER_RELAY = 1;   // per charge tick, per uncontested Relay
+  const DOOM_CHARGE_INTERVAL = 3.0;  // seconds between charge ticks
+  const DOOM_CHARGE_NEEDED = 20;     // charge required to fire
+  const DOOM_DAMAGE = 26;            // units removed from the target
+  // A Relay with an enemy-held neighbour is contested and stops charging,
+  // so charging is something you have to protect, not something that
+  // happens for free once you have grabbed a corner.
+  const DOOM_CONTESTED_BLOCKS = true;
 
   const MAX_LEVEL = 3;
   // Upgrades boost production hard but capacity only gently, and the split
@@ -148,6 +172,91 @@
     return undefined;
   }
 
+  // A Relay is contested when any lane-adjacent node is enemy-held. A
+  // contested Relay still produces, it just stops charging — so pressure
+  // on the flanks is felt at the centre.
+  function isContested(game, node) {
+    if (!DOOM_CONTESTED_BLOCKS) return false;
+    for (const id of neighbors(game, node.id)) {
+      const n = game.nodes[id];
+      if (n.owner !== NEUTRAL && n.owner !== node.owner) return true;
+    }
+    return false;
+  }
+
+  // Relays this owner holds that are actually charging right now.
+  function chargingRelays(game, owner) {
+    return game.nodes.filter(
+      (n) => n.type === "relay" && n.owner === owner && !isContested(game, n)
+    );
+  }
+
+  function doomstarNode(game) {
+    return game.nodes.find((n) => n.type === "doomstar") || null;
+  }
+  // You may only fire if you hold the centre and the weapon is charged.
+  function canFire(game, owner) {
+    const d = doomstarNode(game);
+    return !!d && d.owner === owner && (game.charge[owner] || 0) >= DOOM_CHARGE_NEEDED;
+  }
+  // The strike lands on whatever the enemy has massed hardest — always
+  // relevant, and it needs no extra targeting UI on a phone.
+  function doomstarTarget(game, owner) {
+    const foe = owner === PLAYER ? ENEMY : PLAYER;
+    let best = null;
+    for (const n of game.nodes) {
+      if (n.owner !== foe) continue;
+      if (!best || n.garrison > best.garrison) best = n;
+    }
+    return best;
+  }
+
+  function fireDoomstar(game, owner) {
+    if (game.winner) return "The battle is over.";
+    const d = doomstarNode(game);
+    if (!d) return "No Doomstar on this map.";
+    if (d.owner !== owner) return "You must hold the Doomstar to fire it.";
+    if ((game.charge[owner] || 0) < DOOM_CHARGE_NEEDED) {
+      return "Charge " + Math.floor(game.charge[owner] || 0) + "/" + DOOM_CHARGE_NEEDED + ".";
+    }
+    const target = doomstarTarget(game, owner);
+    if (!target) return "Nothing left to fire at.";
+
+    game.charge[owner] = 0;
+    const before = target.garrison;
+    target.garrison = Math.max(0, target.garrison - DOOM_DAMAGE);
+    const killed = before - target.garrison;
+    // A strike that empties a position leaves it abandoned, not captured —
+    // you still have to walk in and take it.
+    const wiped = target.garrison <= 0.001;
+    if (wiped) { target.owner = NEUTRAL; target.level = 0; target.garrison = 0; target.assault = null; }
+    emit(game, {
+      kind: "doomstar", x: target.x, y: target.y, owner,
+      nodeId: target.id, damage: Math.round(killed), wiped
+    });
+    return undefined;
+  }
+
+  function stepCharge(game, dt) {
+    const d = doomstarNode(game);
+    if (!d) return;
+    game.chargeTimer -= dt;
+    if (game.chargeTimer > 0) return;
+    game.chargeTimer += DOOM_CHARGE_INTERVAL;
+    for (const owner of [PLAYER, ENEMY]) {
+      const relays = chargingRelays(game, owner).length;
+      if (!relays) continue;
+      const before = game.charge[owner] || 0;
+      if (before >= DOOM_CHARGE_NEEDED) continue;
+      game.charge[owner] = Math.min(DOOM_CHARGE_NEEDED, before + relays * DOOM_CHARGE_PER_RELAY);
+      emit(game, {
+        kind: "charge", owner, relays,
+        total: game.charge[owner], needed: DOOM_CHARGE_NEEDED,
+        ready: game.charge[owner] >= DOOM_CHARGE_NEEDED && before < DOOM_CHARGE_NEEDED
+      });
+    }
+  }
+
   // Defence strength of a node against an incoming fleet. Neutral ground
   // has nobody dug in, so it gets neither the defender edge nor tech.
   function defenceOf(game, node) {
@@ -179,6 +288,7 @@
       const along = margin + rng() * (span / 2 - margin - spacing * 0.35);
       const across = margin + rng() * ((vertical ? W : H) - margin * 2);
       const p = vertical ? { x: across, y: along } : { x: along, y: across };
+      if (dist(p, { x: W / 2, y: H / 2 }) < spacing * 1.15) continue;
       let ok = true;
       for (const q of pts) if (dist(p, q) < spacing) { ok = false; break; }
       if (ok) pts.push(p);
@@ -206,6 +316,15 @@
         const a = vertical ? "y" : "x", c = vertical ? "x" : "y";
         p[a] = clamp(p[a], loA, hiA);
         p[c] = clamp(p[c], loC, hiC);
+        const cx = W / 2, cy = H / 2;
+        const dc = dist(p, { x: cx, y: cy });
+        if (dc < spacing * 1.15 && dc > 0.001) {
+          const push = (spacing * 1.15) / dc;
+          p.x = cx + (p.x - cx) * push;
+          p.y = cy + (p.y - cy) * push;
+          p[a] = clamp(p[a], loA, hiA);
+          p[c] = clamp(p[c], loC, hiC);
+        }
       }
     }
 
@@ -217,7 +336,7 @@
     let hqIdx = 0;
     for (let i = 1; i < pts.length; i++) if (alongOf(pts[i]) < alongOf(pts[hqIdx])) hqIdx = i;
 
-    const typePool = ["factory", "mine", "outpost", "factory", "mine", "outpost", "outpost"];
+    const typePool = ["factory", "mine", "relay", "factory", "mine", "factory", "relay"];
     pts.forEach((p, i) => {
       const type = i === hqIdx ? "command" : typePool[(i * 3 + seed) % typePool.length];
       nodes.push({ id: nodes.length, x: p.x, y: p.y, type, owner: NEUTRAL, garrison: 0, level: 0 });
@@ -239,6 +358,13 @@
         n.garrison = n.type === "factory" ? 20 : n.type === "mine" ? 16 : 11;
       }
     }
+
+    // The Doomstar sits dead centre — the one node both sides start
+    // equally far from, so holding it is always a contested decision.
+    nodes.push({
+      id: nodes.length, x: W / 2, y: H / 2, type: "doomstar",
+      owner: NEUTRAL, garrison: 24, level: 0
+    });
 
     const lanes = buildLanes(nodes, spacing * 2.6);
     return { nodes, lanes, mapW: W, mapH: H };
@@ -319,6 +445,8 @@
       fleets: [],
       credits: { [PLAYER]: 40, [ENEMY]: 40 },
       tech: { [PLAYER]: { assault: 0, fortify: 0 }, [ENEMY]: { assault: 0, fortify: 0 } },
+      charge: { [PLAYER]: 0, [ENEMY]: 0 },
+      chargeTimer: DOOM_CHARGE_INTERVAL,
       time: 0,
       winner: null,
       difficulty: o.difficulty === undefined ? 1 : o.difficulty,
@@ -452,7 +580,9 @@
     game.fleets = remaining;
 
     stepAssaults(game, dt);
+    stepCharge(game, dt);
 
+    if (canFire(game, ENEMY)) fireDoomstar(game, ENEMY);
     stepAI(game, dt);
 
     // Win check. A side is eliminated when it holds no nodes and has
@@ -615,7 +745,11 @@
       const need = (defenceOf(game, tgt) / assaultMult(game, ENEMY)) * cfg.margin - incoming(game, tgt.id, ENEMY);
       if (force <= need) continue;
 
+      // The centre and the Relays are worth more than their raw output:
+      // one wins the weapon, the others fuel it.
       const value = NODE_TYPES[tgt.type].units * 2 + NODE_TYPES[tgt.type].credits * 3
+        + (tgt.type === "doomstar" ? 4 : 0)
+        + (tgt.type === "relay" ? 1.5 : 0)
         + (tgt.owner === PLAYER ? 1.5 : 0);
       const score = value / (defenceOf(game, tgt) + 4);
       if (!best || score > best.score) best = { score, tgt, attackers };
@@ -644,11 +778,17 @@
   // is not left permanently broke.
   function considerSpending(game, owned) {
     const behind = owned.length < nodesOf(game, PLAYER).length;
-    for (const track of behind ? ["fortify", "assault"] : ["assault", "fortify"]) {
-      const cost = techCost(track, techLevel(game, ENEMY, track));
-      if (cost !== null && (game.credits[ENEMY] || 0) >= cost * 1.25) {
-        if (!researchTech(game, track, ENEMY)) return;
-      }
+    const track = behind ? "fortify" : "assault";
+    const cost = techCost(track, techLevel(game, ENEMY, track));
+    const credits = game.credits[ENEMY] || 0;
+    if (cost !== null) {
+      if (credits >= cost) { researchTech(game, track, ENEMY); return; }
+      // Save toward the next level instead of dribbling the credits away
+      // on cheap node upgrades. Without this the AI hovered just under
+      // the price of Assault I for an entire match — measured at 89-95
+      // credits banked against a 90-credit cost — and never researched
+      // at all, because every spare 60 went on a node upgrade first.
+      if (credits >= cost * 0.5) return;
     }
     considerUpgrade(game, owned);
   }
@@ -687,11 +827,13 @@
   return {
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
     DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
+    DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE,
     TECH, TECH_MAX,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, createGame,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
-    sendFleet, upgradeNode, researchTech, step, resolveArrival, resolveAssault, drainEvents,
+    sendFleet, upgradeNode, researchTech, fireDoomstar, step,
+    isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult
   };
 });
