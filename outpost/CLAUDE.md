@@ -135,6 +135,15 @@ reinforcing a position clamped it down to its cap, and the AI's
 defensive map. Both are fixed and tested. If a mission's fortification
 appears to melt, check those two first.
 
+### Overlays opened over a live match must be able to close
+
+`?` in the top bar called `resetFlow()` and cleared `started`, which
+abandoned the match to show the rules. Anything opened over a running
+game -- help, the record, a dialog -- pauses rather than ends it,
+restores the previous pause state on close, and answers Escape and a
+backdrop click. `scratchpad/help.js` checks the clock actually freezes
+and actually resumes, which is the part a visual check misses.
+
 ### The online flow needs its own smoke test
 
 `scratchpad/net2tab.js` drives two tabs through the whole thing: host,

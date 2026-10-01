@@ -462,6 +462,14 @@ to a screen of its own, reached from "Your record" on the first screen —
 it is something to look up between matches, not a decision to make
 before one.
 
+**How to play** is its own screen, reachable from the start card and
+from `?` in the top bar at any time. Opening it mid-match pauses the
+clock and closing it resumes — unless you were already paused, in which
+case it leaves you paused. It used to be a disclosure inside the start
+card, which meant the in-game `?` could only reach it by throwing you
+back to the menu and abandoning the match: reported as a hang, and
+fairly, since nothing on that screen offered a way back to the game.
+
 **Getting out.** `Menu` in the top bar leaves any match and returns to
 the first screen, and so does Escape — which backs out of the innermost
 thing first: an aim, then a selection, and only then the match.
