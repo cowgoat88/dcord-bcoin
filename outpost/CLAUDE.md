@@ -85,6 +85,19 @@ play to a clock, and it never takes the centre. So "only this doctrine
 can win this map" is a claim this toolchain cannot support. Use it to
 rule out broken missions, then hand the rest to a person.
 
+### Do not gate features behind the hardest thing in the game
+
+The ascension ladder shipped locked until a Commander win, and the
+owner — who could not beat Commander — simply had no access to a
+finished feature. Progression is fine as a *record*; it is not fine as a
+*lock* on content someone already has. The same instinct nearly buried
+the campaign, which was a collapsed `<details>` that read as a section
+heading rather than a control.
+
+Related: five mission rows open by default push Deploy below the fold on
+every phone size measured (390x844 and 360x640 both). Check
+`scratchpad/fold.js` after anything that adds height to the start card.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

@@ -189,6 +189,15 @@
   .netbox > summary::after { content: " \25be"; }
   .netbox[open] > summary::after { content: " \25b4"; }
   .netbox > summary:hover { color: var(--player); }
+  /* The campaign is the one panel someone has to find rather than
+     stumble on, so it gets the accent and a marker that reads as "open
+     me" instead of the muted section-heading treatment. */
+  #campaignBox > summary {
+    color: var(--player); font-size: 11px; letter-spacing: .3px;
+    background: var(--player-dim); border: 1px solid var(--player);
+    border-radius: 6px; padding: 7px 10px; text-align: center;
+  }
+  #campaignBox[open] > summary { margin-bottom: 2px; }
   .netbox > :not(summary) { margin-top: 8px; }
   .netbox input {
     font-family: inherit; font-size: 15px; letter-spacing: 3px; text-transform: uppercase;
@@ -351,7 +360,8 @@
         <div class="row" id="diffRow">
           <button data-diff="0" title="The AI builds at 70% of your rate, reacts slowly, and does not research">Cadet <small>−30%</small></button>
           <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
-          <button data-diff="2" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
+          <button data-diff="2" title="The AI builds at 130% of your rate and presses harder than an even fight">Captain <small>+30%</small></button>
+          <button data-diff="3" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
         </div>
         <details class="netbox" id="campaignBox">
           <summary id="campaignSummary">Campaign</summary>
@@ -870,10 +880,15 @@
     const done = campaignRecord();
     const cleared = CAMPAIGN.MISSIONS.filter((m) => done[m.id] && done[m.id].won).length;
     document.getElementById("campaignSummary").textContent =
-      "Campaign \u00b7 " + cleared + "/" + CAMPAIGN.MISSIONS.length;
+      "Campaign \u00b7 " + CAMPAIGN.MISSIONS.length + " missions" +
+      (cleared ? " \u00b7 " + cleared + " cleared" : "");
     // With a mission armed the panel stays open: coming back from a
     // match to a collapsed panel hides the thing you are in the middle
     // of doing.
+    // Not auto-opened: five mission rows push Deploy off the bottom of
+    // the card on every phone size. It is the summary that has to do the
+    // work instead -- see the accent styling, which is what makes it
+    // read as a control rather than a section heading.
     if (mission) document.getElementById("campaignBox").open = true;
     const list = document.getElementById("missionList");
     list.innerHTML = "";
@@ -954,70 +969,48 @@
 
   // The ladder only exists once you have beaten Commander, and only ever
   // offers one rung past your best — it is a ladder, not a menu.
-  // The ladder is always on the card, locked or not. Hiding it outright
-  // until the first Commander win meant nobody knew there was anything
-  // to earn -- a reward you cannot see is not a reward.
+  // No gate. The ladder shipped locked behind a Commander win, which put
+  // a whole feature behind the hardest thing in the game -- and the one
+  // person it was built for could not get at it. Extra difficulty is
+  // something you should be able to simply ask for. What is earned is
+  // the RECORD: which rung you have cleared, and on which tier, so
+  // "cleared III" never quietly means "cleared III on Cadet".
   function buildAscension() {
-    const best = profile.read().ascBest;
-    const locked = typeof best !== "number" || best < 0;
+    const p = profile.read();
     const row = document.getElementById("ascRow");
-    const box = document.getElementById("ascBox");
     row.innerHTML = "";
-    // Open when there is a rung to choose, shut when there is only a
-    // promise. Either way the summary line is on the card, so the ladder
-    // is never invisible -- which is how it shipped, and nobody knew it
-    // was there.
-    box.open = !locked;
-    document.getElementById("ascSummary").textContent =
-      locked ? "Ascension \u00b7 locked"
-             : "Ascension \u00b7 " + (best >= E.ASCENSION_MAX
-                 ? "ladder cleared"
-                 : "cleared " + (best === 0 ? "none" : roman(best)));
-    if (locked) {
-      ascension = 0;
-      // Show the rungs greyed out, so the shape of what is coming is
-      // visible even while none of it can be picked.
-      for (let lvl = 1; lvl <= E.ASCENSION_MAX; lvl++) {
-        const b = document.createElement("button");
-        b.textContent = roman(lvl);
-        b.disabled = true;
-        row.appendChild(b);
-      }
-      document.getElementById("ascNote").innerHTML =
-        "<b>Locked.</b> Beat <b>Commander</b> to open the first rung \u2014 " +
-        E.ASCENSION_MAX + " of them, each one a tougher opponent.";
-      return;
-    }
-    const top = Math.min(E.ASCENSION_MAX, best + 1);
-    if (ascension > top) ascension = top;
-    for (let lvl = 0; lvl <= top; lvl++) {
+    for (let lvl = 0; lvl <= E.ASCENSION_MAX; lvl++) {
       const b = document.createElement("button");
       b.dataset.asc = String(lvl);
       b.textContent = lvl === 0 ? "Off" : roman(lvl);
       b.classList.toggle("on", lvl === ascension);
       row.appendChild(b);
     }
-    // Rungs still to earn, shown greyed so the climb has a visible top.
-    for (let lvl = top + 1; lvl <= E.ASCENSION_MAX; lvl++) {
-      const b = document.createElement("button");
-      b.textContent = roman(lvl);
-      b.disabled = true;
-      row.appendChild(b);
-    }
+    document.getElementById("ascSummary").textContent =
+      "Ascension \u00b7 " + bestRung(p);
+    if (ascension > 0) document.getElementById("ascBox").open = true;
     showAscension();
+  }
+  // The best rung cleared anywhere, named with the tier it happened on.
+  function bestRung(p) {
+    const by = p.ascBy || [];
+    let bestTier = -1, bestLvl = -1;
+    for (let t = 0; t < by.length; t++) {
+      if (by[t] > bestLvl || (by[t] === bestLvl && t > bestTier)) {
+        if (by[t] >= 1) { bestLvl = by[t]; bestTier = t; }
+      }
+    }
+    if (bestLvl < 1) return "none cleared";
+    return roman(bestLvl) + " on " + TIERS[bestTier];
   }
   function showAscension() {
     const rung = E.ASCENSION[ascension - 1];
-    const best = profile.read().ascBest;
-    // ascBest is the highest rung CLEARED, and the one above it is the
-    // highest you may pick -- which is ASCENSION[best], since the array
-    // is zero-indexed and the rungs are numbered from one.
-    const next = typeof best === "number" && best >= 0 ? E.ASCENSION[best] : null;
     document.getElementById("ascNote").innerHTML = rung
-      ? "<s>" + rung.note + ".</s> Every rung below applies too."
-      : next
-        ? "<b>Commander, as it comes.</b> " + next.label + " is open \u2014 win on it to earn the next."
-        : "<b>Commander, as it comes.</b> You have cleared every rung.";
+      ? "<s>" + rung.note + ".</s> Every rung below applies too \u2014 this stacks " +
+        "on whichever opponent you picked above."
+      : "<b>Off.</b> The opponent you picked above, and nothing extra. " +
+        "The rungs stack on any tier, so they are a way to make Cadet " +
+        "interesting as much as to make Commander worse.";
     [...document.getElementById("ascRow").children].forEach(
       (c) => c.classList.toggle("on", parseInt(c.dataset.asc, 10) === ascension));
   }
@@ -1306,20 +1299,31 @@
   // A match that leaves no trace gives nobody a reason to play a second
   // one. Kept entirely on this device — there is no account and no
   // server — and never gates anything.
-  const TIERS = ["Cadet", "Officer", "Commander"];
+  const TIERS = ["Cadet", "Officer", "Captain", "Commander"];
   const profile = {
     blank() {
       // ascBest: highest ascension rung CLEARED. -1 means Commander has
       // never been beaten, so the ladder does not exist yet; 0 means it
       // has been beaten with no rung applied, which unlocks rung I.
       return { games: 0, wins: 0, streak: 0, best: 0, ascBest: -1,
-               byTier: [{}, {}, {}].map(() => ({ w: 0, l: 0, fastest: 0 })) };
+               ascBy: TIERS.map(() => -1),
+               byTier: TIERS.map(() => ({ w: 0, l: 0, fastest: 0 })) };
     },
     read() {
       try {
         const p = JSON.parse(localStorage.getItem("outpost.profile") || "null");
-        if (!p || !Array.isArray(p.byTier) || p.byTier.length !== 3) return this.blank();
+        if (!p || !Array.isArray(p.byTier)) return this.blank();
+        // Records written before Captain existed have three tiers. Pad
+        // rather than discard: throwing away someone's history because a
+        // button was added is not an acceptable migration.
+        while (p.byTier.length < TIERS.length) p.byTier.push({ w: 0, l: 0, fastest: 0 });
         if (typeof p.ascBest !== "number") p.ascBest = -1;   // records from before the ladder
+        if (!Array.isArray(p.ascBy)) {
+          p.ascBy = TIERS.map(() => -1);
+          // The old single number only ever counted Commander wins.
+          if (p.ascBest >= 0) p.ascBy[TIERS.length - 1] = p.ascBest;
+        }
+        while (p.ascBy.length < TIERS.length) p.ascBy.push(-1);
         return p;
       } catch (e) { return this.blank(); }
     },
@@ -1352,9 +1356,10 @@
         // Floor at a second: a 0 would be falsy and silently hide itself.
         const secs = Math.max(1, seconds);
         if (!t.fastest || secs < t.fastest) t.fastest = secs;
-        // Only Commander counts toward the ladder; clearing a rung there
-        // opens the next one.
-        if (tier === 2) p.ascBest = Math.max(p.ascBest, asc | 0);
+        // Every tier counts, and the record remembers which one, so
+        // "cleared III" never quietly means "cleared III on Cadet".
+        p.ascBy[tier] = Math.max(p.ascBy[tier] === undefined ? -1 : p.ascBy[tier], asc | 0);
+        if (tier === TIERS.length - 1) p.ascBest = Math.max(p.ascBest, asc | 0);
       } else {
         p.streak = 0;
         t.l += 1;
@@ -2227,17 +2232,18 @@
       }
       buildCampaign();
     } else if (!isOnline()) {
-      const before = profile.read().ascBest;
+      const before = (profile.read().ascBy || [])[difficulty];
       const p = profile.record(won, difficulty, Math.floor(game.time), ascension);
       const line = document.getElementById("endRecord");
       if (line) {
-        const opened = p.ascBest > before && p.ascBest < E.ASCENSION_MAX;
+        // Nothing "unlocks" any more, so say what was actually achieved:
+        // a new best rung on this tier.
+        const newBest = won && ascension > 0 && p.ascBy[difficulty] > (before === undefined ? -1 : before);
         line.textContent = TIERS[difficulty] +
           (ascension ? " \u00b7 " + E.ASCENSION[ascension - 1].label : "") +
           " \u00b7 " + p.wins + "W/" + (p.games - p.wins) + "L" +
           (p.streak > 1 ? " \u00b7 " + p.streak + " in a row" : "") +
-          (opened ? " \u00b7 " + E.ASCENSION[p.ascBest].label + " unlocked" : "") +
-          (won && p.ascBest === E.ASCENSION_MAX ? " \u00b7 ladder cleared" : "");
+          (newBest ? " \u00b7 best yet on " + TIERS[difficulty] : "");
       }
       renderProfile();
       buildAscension();
@@ -2322,7 +2328,7 @@
   (function applyPrefs() {
     const p = prefs.read();
     if (typeof p.difficulty === "number") {
-      difficulty = E.clamp(p.difficulty | 0, 0, 2);
+      difficulty = E.clamp(p.difficulty | 0, 0, E.TOP_TIER);
       const row = document.getElementById("diffRow");
       [...row.children].forEach((c) =>
         c.classList.toggle("on", parseInt(c.dataset.diff, 10) === difficulty));

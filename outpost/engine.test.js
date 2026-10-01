@@ -1419,3 +1419,21 @@ test("every shipped mission is coherent", () => {
     }
   }
 });
+
+test("the difficulty tiers climb without a cliff in the middle", () => {
+  // Officer to Commander used to be 1.00 to 1.75 in one step, which is
+  // most of the range in a single button.
+  let last = 0;
+  for (const tier of E.DIFFICULTY) {
+    assert.ok(tier.produce > last, "production must rise with every tier");
+    last = tier.produce;
+  }
+  assert.equal(E.TOP_TIER, E.DIFFICULTY.length - 1);
+  // No single step may be more than half the whole range.
+  const span = E.DIFFICULTY[E.TOP_TIER].produce - E.DIFFICULTY[0].produce;
+  for (let i = 1; i < E.DIFFICULTY.length; i++) {
+    const step = E.DIFFICULTY[i].produce - E.DIFFICULTY[i - 1].produce;
+    assert.ok(step <= span * 0.5,
+      "tier " + i + " is a cliff: +" + step.toFixed(2) + " of a " + span.toFixed(2) + " range");
+  }
+});

@@ -1151,11 +1151,17 @@
   // multiplier is monotonic by construction, which is why almost every
   // RTS uses one. It is applied openly to the AI's own output; the AI
   // still plays through the same orders the player does.
+  // The jump from Officer to Commander used to be 1.00 to 1.75 in one
+  // step, which is most of the game's whole difficulty range in a single
+  // button. Captain fills it, so there is somewhere to go after an even
+  // fight stops being a fight.
   const DIFFICULTY = [
     { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.70 },
     { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 1.00 },
+    { interval: 1.5, margin: 1.45, minGarrison: 11, maxAttackers: 5, send: 0.75, upgrade: true,  produce: 1.30 },
     { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.75 }
   ];
+  const TOP_TIER = DIFFICULTY.length - 1;
   function aiProduction(game) {
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
     return cfg.produce * ascensionProduce(game.ascension);
@@ -1386,7 +1392,7 @@
 
   return {
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
-    DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
+    DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, TOP_TIER, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
     DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE,
     DOOM_GARRISON,
     TECH, TECH_MAX, TERRAIN, FLAT_TYPES,

@@ -138,16 +138,18 @@ runaway pick; the rest comes from people playing.
 
 ## Ascension
 
-Beating Commander unlocks a ladder. Each rung is a rule change rather
-than another production multiplier, they are cumulative, and only one
-rung past your best is ever offered — it is a ladder, not a menu. Your
-progress lives in the same local record as everything else.
+Five cumulative rungs of extra difficulty, **not gated behind
+anything**. Each one is a rule change rather than another production
+multiplier, and they stack on whichever opponent tier you picked — so
+they are as much a way to make Cadet interesting as to make Commander
+worse.
 
-The panel is on the start screen from the first launch, shut and marked
-**locked**, with the five rungs greyed out so you can see the shape of
-what is there to earn. It shipped hidden outright until the first
-Commander win, which meant nobody knew it existed — a reward you cannot
-see is not a reward.
+It shipped the other way: locked until you beat Commander. That put a
+whole feature behind the hardest thing in the game, and the person it
+was built for simply could not get at it. Extra difficulty is something
+you should be able to ask for. What is earned is the *record* — which
+rung you have cleared, and on which tier, so "cleared III" never
+quietly means "cleared III on Cadet".
 
 | Rung | The enemy | Measured player win rate |
 |---|---|---|
@@ -406,7 +408,12 @@ ladder, which needs a Commander win to appear at all.
 ## Difficulty is stated, not hidden
 
 The tiers differ mainly by an openly-applied production multiplier —
-Cadet −30%, Officer even, Commander +75% — and the buttons say so.
+Cadet −30%, Officer even, Captain +30%, Commander +75% — and the buttons
+say so. Captain exists because Officer to Commander was a jump of 1.00
+to 1.75 in one press, most of the game's whole difficulty range in a
+single step, with nothing in between for someone who has outgrown an
+even fight but is not ready to be out-produced by three quarters. A
+test now fails if any one tier step is more than half the total range.
 Decision-quality knobs were tried first and inverted the tiers twice
 (see the design notes below); a multiplier is the only lever that orders
 reliably, and a handicap a player can see reads as a difficulty setting
