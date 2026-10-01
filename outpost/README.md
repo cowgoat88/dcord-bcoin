@@ -523,37 +523,28 @@ rush that wrecked the tiers.
 
 ## Play a friend
 
-Press **Host game** on the start screen. You get a five-character room
-code and a copyable invite link; send either to your friend. They open
-the link (or press **Join with code** and type it) and you are in the
-same match — one of you commands each side. No accounts, nothing to
-install, no server to run: the free public PeerJS signalling server only
-introduces the two browsers, and after that the connection is directly
-peer-to-peer with no game data passing through anything in between.
+Press **Play a friend**, pick a doctrine, then **Host game**. You get a
+five-character room code and a copyable invite link; send either one.
+The room stays open while you switch windows to send it, and **the match
+starts by itself the moment they arrive** — there is nothing to press
+afterwards. Your friend opens the link, or presses **Join with code**
+and types it.
 
-**Two tabs** plays both sides in one browser on one machine, over
-BroadcastChannel with no internet at all. It is the quickest way to see
-the online mode working, and it is how the networking was tested.
+**Two tabs** runs both sides in one browser on one machine, which is
+also how the whole online stack is tested without a second person.
 
-### How it works
+It shipped briefly with no way to start at all: the stepped start flow
+hid the primary button on the online screen, so a host could open a
+room, watch a guest connect, and have no Deploy to press — while the
+guest was already dropped into a board the host could not see. The match
+now begins on the connection itself, which removes the button rather
+than fixing it. `scratchpad/net2tab.js` drives the whole thing end to
+end and asserts both sides enter the match, their clocks agree, the
+seats are mirrored, and leaving tells the other person.
 
-Host-authoritative. The host's browser is the only copy of the truth: it
-runs the simulation, validates every order through one seat-checked
-entry point (`applyOrderAs`, where the seat comes from the connection and
-never from the message, so a guest cannot move the host's forces), and
-broadcasts a state snapshot 12 times a second. The guest never advances
-the simulation itself — it renders whatever snapshot it was last sent —
-so the two copies cannot drift apart, and rejoining is just "send the
-latest snapshot".
-
-Only the mutable half of the game travels, about half a kilobyte a
-snapshot. The board is a pure function of the seed and board shape, so
-both peers generate an identical map from the three values in `welcome`
-and no geometry ever crosses the wire.
-
-A guest holds engine seat 2, and the UI swaps which seat counts as
-"you", so both players see their own forces in their own colour and read
-the HUD the same way.
+If the host leaves, or the connection drops, the other side gets a
+notice saying so and a way back to the menu, rather than being left
+tapping a frozen board.
 
 ## Tests
 

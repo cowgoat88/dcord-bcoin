@@ -481,7 +481,6 @@
         </div>
 
         <div class="step" id="stepOnline" hidden>
-          <div class="grouplabel" style="margin-bottom:6px">Play a friend</div>
           <div class="row" id="netButtons">
             <button id="btnHost">Host game</button>
             <button id="btnJoinOpen">Join with code</button>
@@ -492,6 +491,7 @@
                    autocapitalize="characters" spellcheck="false">
             <button id="btnJoin">Join</button>
           </div>
+          <p id="netHint" class="doctrade" style="margin:10px 0 0"></p>
           <p id="netMsg" style="margin:8px 0 0"></p>
           <div id="inviteRow" hidden>
             <div class="code" id="roomCode">—</div>
@@ -989,13 +989,20 @@
   // whatever opened it. The simulation holds still while it is up, so a
   // misclick cannot cost you the match you are deciding whether to quit.
   let confirmAction = null, confirmReturnFocus = null, confirmWasPaused = false;
+  let confirmNotice = false;
 
   function askConfirm(opts) {
     const ov = document.getElementById("confirmOverlay");
     document.getElementById("confirmTitle").textContent = opts.title;
     document.getElementById("confirmBody").textContent = opts.body;
     document.getElementById("confirmOk").textContent = opts.ok || "Leave";
-    document.getElementById("confirmCancel").textContent = opts.cancel || "Keep playing";
+    const cancel = document.getElementById("confirmCancel");
+    // A notice has nothing to decline: one button, and it is the safe
+    // one, so Enter and Escape both do the only sensible thing.
+    cancel.hidden = !!opts.notice;
+    cancel.textContent = opts.cancel || "Keep playing";
+    document.getElementById("confirmOk").classList.toggle("danger", !opts.notice);
+    document.getElementById("confirmOk").classList.toggle("primary", !!opts.notice);
     confirmAction = opts.onConfirm;
     confirmReturnFocus = document.activeElement;
     confirmWasPaused = paused;
@@ -1003,7 +1010,9 @@
     syncPauseBtn();
     ov.hidden = false;
     // Default to the safe answer: Enter should never destroy anything.
-    document.getElementById("confirmCancel").focus();
+    (opts.notice ? document.getElementById("confirmOk")
+                 : document.getElementById("confirmCancel")).focus();
+    confirmNotice = !!opts.notice;
   }
   function closeConfirm(run) {
     const ov = document.getElementById("confirmOverlay");
@@ -1025,7 +1034,7 @@
   // Backdrop click cancels, as it does everywhere else. A click that
   // started inside the card and ended outside it does not.
   document.getElementById("confirmOverlay").addEventListener("mousedown", (ev) => {
-    if (ev.target.id === "confirmOverlay") closeConfirm(false);
+    if (ev.target.id === "confirmOverlay") closeConfirm(confirmNotice);
   });
 
   // ---- leaving --------------------------------------------------------
@@ -1120,9 +1129,12 @@
     }
 
     if (name === "online") {
-      // Hosting and joining are their own actions; there is nothing to
-      // deploy until a connection exists.
+      // Hosting and joining are the actions on this screen. The match
+      // itself begins when the other person arrives -- see onGuest --
+      // so there is no Deploy here, and the button saying so was how
+      // this screen ended up with no way out at all.
       start.hidden = true;
+      syncNetHint();
     } else {
       start.hidden = false;
       start.disabled = name === "mission" && !mission;
@@ -1370,7 +1382,7 @@
     // A modal owns the keyboard: Enter commits, Escape cancels, and Tab
     // cannot wander out of it onto the screen underneath.
     if (confirmOpen()) {
-      if (key === "escape") { ev.preventDefault(); closeConfirm(false); }
+      if (key === "escape") { ev.preventDefault(); closeConfirm(confirmNotice); }
       else if (key === "enter") { ev.preventDefault(); closeConfirm(document.activeElement &&
         document.activeElement.id === "confirmOk"); }
       else if (key === "tab") {
@@ -1497,6 +1509,41 @@
     document.getElementById("netBadge").hidden = true;
   }
 
+  // What the online screen should be telling you right now. Hosting
+  // with nobody there, hosting with someone there, joining, joined --
+  // each has a different next step and none of them is a button press.
+  function syncNetHint() {
+    const el = document.getElementById("netHint");
+    if (!el) return;
+    if (!isOnline()) {
+      el.textContent = "Host a room and send the code, or join one you were sent.";
+      return;
+    }
+    const live = session && session.isConnected && session.isConnected();
+    if (netRole === "host") {
+      el.textContent = live
+        ? "Opponent connected \u2014 starting the match\u2026"
+        : "Waiting for someone to join. Send them the code or the link \u2014 "
+          + "the room stays open while you do, and the match starts the moment they arrive.";
+    } else {
+      el.textContent = live
+        ? "Connected \u2014 waiting for the host to start."
+        : "Connecting\u2026";
+    }
+  }
+
+  // The host's match begins when the other person arrives. Waiting for
+  // a second button press after that just leaves two people looking at
+  // a menu, which is exactly what happened.
+  function onOpponentArrived() {
+    if (netRole !== "host" || started) return;
+    syncNetHint();
+    started = true;
+    newGame();
+    document.getElementById("startOverlay").hidden = true;
+    toast("Opponent connected \u2014 go.");
+  }
+
   function startHosting() {
     teardownNet();
     netRole = "host";
@@ -1509,19 +1556,41 @@
         netMsg("Room open — send the code or the link, then Deploy.", "good");
         showBadge(false, "Waiting");
       },
-      onStatus: (m) => netMsg(m),
+      onStatus: (m) => { netMsg(m); syncNetHint(); },
       onConnect: () => {
         netMsg("Opponent connected.", "good");
         showBadge(true, "Live");
+        syncNetHint();
       },
-      onError: (m) => { netMsg(m, "bad"); teardownNet(); }
+      onError: (m) => { netMsg(m, "bad"); teardownNet(); syncNetHint(); }
     });
     if (!link) return;
     // The host's session wraps whatever game is current, and is handed a
     // fresh one whenever a new match starts.
     session = window.OutpostOnline.createHost({
       engine: E, game: game, transport: link.transport,
-      onGuest: (g, joined) => showBadge(!!joined, joined ? "Live" : "Waiting")
+      onGuest: (g, joined) => {
+        showBadge(!!joined, joined ? "Live" : "Waiting");
+        syncNetHint();
+        if (joined) onOpponentArrived();
+      }
+    });
+  }
+
+  // A guest whose host vanishes is sitting in a match that can no
+  // longer progress. Say so once and give them the way out, rather than
+  // leaving them tapping a frozen board.
+  function endOnlineSession(why) {
+    const lost = why === "host-left"
+      ? "The host left, so the match is over."
+      : "The connection dropped, so the match cannot continue.";
+    if (!started) { toast(lost); syncNetHint(); return; }
+    askConfirm({
+      title: why === "host-left" ? "Host left" : "Connection lost",
+      body: lost,
+      ok: "Back to menu",
+      notice: true,
+      onConfirm: goMenu
     });
   }
 
@@ -1560,7 +1629,7 @@
       onReject: (err) => toast(err),
       onStatus: (why) => {
         showBadge(false, why === "host-left" ? "Host left" : "Offline");
-        toast(why === "host-left" ? "The host left the game." : "Connection lost.");
+        endOnlineSession(why);
       }
     });
   }
@@ -1591,11 +1660,16 @@
     if (claimed) {
       session = window.OutpostOnline.createHost({
         engine: E, game: game, transport: link.transport,
-        onGuest: (g, joined) => showBadge(!!joined, joined ? "Live" : "Waiting")
+        onGuest: (g, joined) => {
+          showBadge(!!joined, joined ? "Live" : "Waiting");
+          syncNetHint();
+          if (joined) onOpponentArrived();
+        }
       });
       game.ai.timer = Infinity;
       netMsg("Hosting in this tab. Open the same page in a second tab and press Two tabs there.", "good");
       showBadge(false, "Waiting");
+      syncNetHint();
     } else {
       session = window.OutpostOnline.createGuest({
         engine: E, transport: link.transport, doctrine: doctrine,
@@ -1614,7 +1688,7 @@
         },
         onState: (snap) => { if (game) E.applySnapshot(game, snap); },
         onReject: (err) => toast(err),
-        onStatus: () => showBadge(false, "Offline")
+        onStatus: (why) => { showBadge(false, "Offline"); endOnlineSession(why); }
       });
       netMsg("Joining the other tab…");
     }

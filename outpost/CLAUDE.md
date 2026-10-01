@@ -135,6 +135,19 @@ reinforcing a position clamped it down to its cap, and the AI's
 defensive map. Both are fixed and tested. If a mission's fortification
 appears to melt, check those two first.
 
+### The online flow needs its own smoke test
+
+`scratchpad/net2tab.js` drives two tabs through the whole thing: host,
+join, auto-start, clock sync, mirrored seats, leaving. It exists
+because the stepped start flow silently removed the host's only way to
+begin an online match -- `showStep` hid the primary button on the
+online screen -- and nothing else noticed for two commits. Any change
+to `showStep`, the net handlers or the start flow should re-run it.
+
+Note the two-tab path (`btnLocal`) builds its own host session and does
+NOT go through `startHosting`, so a hook added to one needs adding to
+both. That is how the first attempt at this fix missed.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.
