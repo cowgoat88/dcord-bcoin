@@ -63,10 +63,14 @@
   // 0.11 times per match, because reaching the middle, not cracking it,
   // is what costs. Do not hang a doctrine on the weapon alone.
   const DOOM_GARRISON = 24;
-  // A Relay with an enemy-held neighbour is contested and stops charging,
-  // so charging is something you have to protect, not something that
-  // happens for free once you have grabbed a corner.
-  const DOOM_CONTESTED_BLOCKS = true;
+  // A Relay charges the weapon for as long as it is CONNECTED — in
+  // supply, traceable back to one of your Commands. It used to also have
+  // to be uncontested, meaning no enemy-held neighbour, and that was too
+  // strict to ever come up: Relays sit on the front, so holding one with
+  // a quiet neighbourhood mostly meant you had already won, and the
+  // charge arrived after it could decide anything. Supply is the
+  // condition that already means "you are holding this properly", so the
+  // weapon hangs off that instead.
 
   const MAX_LEVEL = 3;
   // Upgrades boost production hard but capacity only gently, and the split
@@ -148,9 +152,8 @@
     doom: 1,             // Doomstar strike damage
     chargeRate: 1,       // Doomstar charge gained per tick
     relayUnits: 1,       // unit production multiplier, Relays only
-    cutoff: 0.3,         // output multiplier while cut off; OUT_OF_SUPPLY_RATE
+    cutoff: 0.3          // output multiplier while cut off; OUT_OF_SUPPLY_RATE
                          // is defined from this so the two cannot drift
-    contestedCharge: 0   // charge a contested Relay still contributes
   };
 
   // Each doctrine's advantage has to land on something that happens in
@@ -184,7 +187,7 @@
     },
     relays: {
       label: "Forward Relays", icon: "\u2605",
-      up: "Relays out-build Factories, charge twice as fast, and keep charging while contested",
+      up: "Relays out-build Factories and charge the Doomstar twice as fast",
       down: "Everywhere else builds 10% slower",
       // The charge half of this used to be the whole doctrine, and it
       // was worth nothing: across 40 measured matches neither side ever
@@ -192,7 +195,7 @@
       // production bonus is what makes the pick pay off in the match
       // you are actually having; the charge is the upside when it does
       // come together.
-      mods: { relayUnits: 2.5, chargeRate: 2, contestedCharge: 1, units: 0.90 }
+      mods: { relayUnits: 2.5, chargeRate: 2, units: 0.90 }
     },
     prospectors: {
       label: "Prospectors", icon: "\u25c8",
@@ -414,11 +417,10 @@
     return docMod(game, node.owner, "cutoff");
   }
 
-  // A Relay is contested when any lane-adjacent node is enemy-held. A
-  // contested Relay still produces, it just stops charging — so pressure
-  // on the flanks is felt at the centre.
+  // A node is contested when any lane-adjacent node is enemy-held. It no
+  // longer blocks charging, but it is still what the board marks as a
+  // front line, so the view uses it.
   function isContested(game, node) {
-    if (!DOOM_CONTESTED_BLOCKS) return false;
     for (const id of neighbors(game, node.id)) {
       const n = game.nodes[id];
       if (n.owner !== NEUTRAL && n.owner !== node.owner) return true;
@@ -426,14 +428,11 @@
     return false;
   }
 
-  // How much charge one held Relay contributes per tick. Normally a
-  // contested Relay contributes nothing; Forward Relays keeps it feeding
-  // at half rate, which is what makes that doctrine worth its weaker
-  // strike.
+  // How much charge one held Relay contributes per tick: every Relay you
+  // hold and can still supply, whether or not the enemy is next door.
   function relayCharge(game, node) {
     if (node.type !== "relay" || node.inSupply === false) return 0;
-    if (!isContested(game, node)) return 1;
-    return docMod(game, node.owner, "contestedCharge");
+    return 1;
   }
 
   // Relays this owner holds that are actually charging right now.
@@ -492,7 +491,11 @@
     // A strike that empties a position leaves it abandoned, not captured —
     // you still have to walk in and take it.
     const wiped = target.garrison <= 0.001;
+    // Read the victim before a wipe hands the position back to nobody.
+    const victim = target.owner;
     if (wiped) { target.owner = NEUTRAL; target.level = 0; target.garrison = 0; target.assault = null; }
+    game.stats[owner].fired += 1;
+    if (victim !== NEUTRAL) game.stats[victim].taken += 1;
     emit(game, {
       kind: "doomstar", x: target.x, y: target.y, owner,
       nodeId: target.id, damage: Math.round(killed), wiped
@@ -758,8 +761,19 @@
       // and floating numbers. The engine stays render-free but still gets
       // to say "something worth showing happened here".
       events: [],
-      stats: { sent: 0, captured: 0, lost: 0, peakNodes: 1 }
+      // Kept per seat rather than for the player only, so an online
+      // guest reads its own scoreboard instead of the host's. `fired`
+      // and `taken` are Doomstar strikes dealt and received: a match
+      // decided by the weapon should say so at the end.
+      stats: {
+        [PLAYER]: blankStats(),
+        [ENEMY]: blankStats()
+      }
     };
+  }
+
+  function blankStats() {
+    return { sent: 0, captured: 0, lost: 0, peakNodes: 1, fired: 0, taken: 0 };
   }
 
   function emit(game, ev) { game.events.push(ev); }
@@ -846,7 +860,7 @@
       owner, from: fromId, to: toId, count, path, leg: 0,
       t: 0, duration: dist(from, game.nodes[path[1]]) / fleetSpeed(game, owner)
     });
-    if (owner === PLAYER) game.stats.sent += count;
+    game.stats[owner].sent += count;
     emit(game, { kind: "launch", x: from.x, y: from.y, owner, count });
     return undefined;
   }
@@ -913,8 +927,10 @@
     else if (!pAlive && eAlive) game.winner = ENEMY;
     else if (!pAlive && !eAlive) game.winner = NEUTRAL;
 
-    const owned = nodesOf(game, PLAYER).length;
-    if (owned > game.stats.peakNodes) game.stats.peakNodes = owned;
+    for (const seat of [PLAYER, ENEMY]) {
+      const owned = nodesOf(game, seat).length;
+      if (owned > game.stats[seat].peakNodes) game.stats[seat].peakNodes = owned;
+    }
   }
 
   function resolveArrival(game, f) {
@@ -974,8 +990,8 @@
       // CAPTOR's capacity rather than the defender's.
       to.level = 0;
       to.garrison = Math.min(nodeStats(to, game).cap, survivors);
-      if (f.owner === PLAYER) game.stats.captured += 1;
-      if (previousOwner === PLAYER) game.stats.lost += 1;
+      game.stats[f.owner].captured += 1;
+      if (previousOwner !== NEUTRAL) game.stats[previousOwner].lost += 1;
       emit(game, {
         kind: "capture", x: to.x, y: to.y, owner: f.owner, from: previousOwner,
         nodeId: to.id, count: Math.round(survivors), big: to.type === "command"

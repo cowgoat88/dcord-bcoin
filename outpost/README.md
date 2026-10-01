@@ -76,7 +76,7 @@ doctrine is the shape of the army you brought to it.
 | ◆ **Standard** | Balanced — nothing to exploit | — |
 | ➤ **Vanguard** | Fleets travel 25% faster | Positions build units 12% slower |
 | ● **Deep Logistics** | Cut-off positions keep 90% output instead of 30% | Credit income −30% |
-| ★ **Forward Relays** | Relays out-build Factories, charge twice as fast, and keep charging while contested | Everywhere else builds 10% slower |
+| ★ **Forward Relays** | Relays out-build Factories and charge the Doomstar twice as fast | Everywhere else builds 10% slower |
 | ◈ **Prospectors** | Income +70%, research 30% cheaper | Positions build units 10% slower |
 | ▲ **Shock Troops** | Assaults land 15% harder | Positions defend 6% worse and build 20% slower |
 
@@ -167,9 +167,15 @@ and nothing else.
 The centre of every map holds a **Doomstar**, and it is what the Relays
 are for:
 
-- Every **uncontested Relay you hold** adds charge every few seconds.
-- A Relay is **contested** — and stops charging — while any lane-adjacent
-  node is enemy-held, so charging is something you have to protect.
+- Every **supplied Relay you hold** adds charge every few seconds. What
+  stops it is losing supply — the chain of your own positions back to a
+  Command — not an enemy moving in next door.
+- That rule used to be stricter: a Relay also had to be *uncontested*,
+  with no enemy-held neighbour. It was too strict to ever come up.
+  Relays sit on the front, so holding one with a quiet neighbourhood
+  mostly meant the match was already decided, and the charge arrived
+  after it could change anything. Supply already means "you are holding
+  this properly", so the weapon hangs off that instead.
 - At full charge, **if you also hold the Doomstar itself**, you can fire.
   Press FIRE and the map goes into aim mode: tap the enemy position you
   want hit, or press FIRE a second time to take the default — their
@@ -181,10 +187,23 @@ are for:
   a chokepoint the moment before your fleets land, beats shaving units
   off a rear-area garrison that was never going anywhere.
 
+- Strikes dealt and taken appear on the end-of-match scoreboard, but
+  only when the weapon came into it, so the line means something when it
+  shows up.
+
 It exists to answer two problems at once. Relays used to be filler with
 no reason to fight over them, and two players could comfortably turtle in
 opposite corners. Now the small scattered nodes fuel the weapon and the
 middle of the map is worth holding.
+
+**How often it actually comes up.** Scripted benchmark matches reach a
+full charge in 6% of games and never take the centre at all, which made
+the weapon look like dead content — but a person plays the objective and
+a human match has already been decided by a strike. Treat the benchmark
+numbers here as a floor, not a verdict. The remaining limiter is supply:
+across measured matches a held Relay is out of supply 68% of the time,
+because Relays get grabbed forward and left hanging off the end of a
+line. Connecting what you take is what charges the weapon.
 
 ## Terrain
 

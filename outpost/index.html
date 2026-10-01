@@ -286,7 +286,7 @@
     <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
     <span class="stat" id="statDoc"><span class="k">Doctrine</span><span class="v" id="stDoc">—</span></span>
     <span class="stat doomstat"><span class="k">Doomstar</span>
-      <span class="chargebar" title="Charged by the Relays you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
+      <span class="chargebar" title="Charged by every supplied Relay you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
     </span>
     <span class="stat" id="statIncome"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
     <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
@@ -320,7 +320,7 @@
           <div><i>Reinforce</i> your own positions too</div>
           <div><i>⚔ Assault</i> +15%/lvl attacking</div>
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
-          <div><i>Relays</i> charge the Doomstar</div>
+          <div><i>Relays</i> charge it while supplied</div>
           <div><i>Hold the centre</i> to fire it</div>
           <div><i>FIRE then tap</i> to aim the strike</div>
           <div><i>Enemy space</i> blocks your routes</div>
@@ -387,6 +387,7 @@
           <div><span>Captured</span><b id="endCaptured">0</b></div>
           <div><span>Lost</span><b id="endLost">0</b></div>
           <div><span>Sent</span><b id="endSent">0</b></div>
+          <div id="endStrikeRow" hidden><span>Strikes</span><b id="endStrikes">0</b></div>
         </div>
         <div class="row">
           <button class="primary" id="btnAgain">New Match</button>
@@ -1660,11 +1661,12 @@
         ctx.fillText("CUT OFF", 0, r + 21);
       }
 
-      // A Relay you hold shows whether it is feeding the Doomstar.
+      // A Relay you hold shows whether it is feeding the Doomstar. What
+      // stops it is losing supply, not an enemy moving in next door.
       if (n.type === "relay" && n.owner !== NEUTRAL) {
-        const contested = E.isContested(game, n);
-        ctx.fillStyle = contested ? "#ff7a5c" : "#ffd166";
-        ctx.globalAlpha = contested ? 0.9 : 0.55 + 0.45 * Math.abs(Math.sin(now * 0.004));
+        const dark = E.relayCharge(game, n) <= 0;
+        ctx.fillStyle = dark ? "#ff7a5c" : "#ffd166";
+        ctx.globalAlpha = dark ? 0.9 : 0.55 + 0.45 * Math.abs(Math.sin(now * 0.004));
         ctx.beginPath(); ctx.arc(0, -r - 11, 3.2, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
       }
@@ -1956,9 +1958,9 @@
           E.TERRAIN[terrName].label + " \u00d7" + mult.toFixed(2) + " def</span>");
       }
       if (n.type === "relay") {
-        bits.push(E.isContested(game, n)
-          ? "<span style='color:var(--doom)'>CONTESTED</span>"
-          : "<span style='color:var(--gold)'>charging</span>");
+        bits.push(E.relayCharge(game, n) > 0
+          ? "<span style='color:var(--gold)'>charging</span>"
+          : "<span style='color:var(--doom)'>NOT CHARGING</span>");
       }
       bits.push("sending <b>" + Math.floor(n.garrison * sendFrac) + "</b>");
       info.innerHTML = bits.join(" \u00b7 ");
@@ -2008,7 +2010,7 @@
     bar.classList.toggle("ready", ch >= need);
     bar.title = relays
       ? relays + " Relay" + (relays === 1 ? "" : "s") + " charging (+" + relays + " every " + E.DOOM_CHARGE_INTERVAL + "s)"
-      : "No Relays charging \u2014 hold uncontested Relays to charge";
+      : "No Relays charging \u2014 take a Relay and keep it supplied";
 
     // Only mark a target once the weapon could actually be used.
     const armed = (game.charge[mySeat] || 0) >= E.DOOM_CHARGE_NEEDED;
@@ -2075,9 +2077,17 @@
     const t = Math.floor(game.time);
     document.getElementById("endTime").textContent =
       Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
-    document.getElementById("endCaptured").textContent = game.stats.captured;
-    document.getElementById("endLost").textContent = game.stats.lost;
-    document.getElementById("endSent").textContent = game.stats.sent;
+    const mine = game.stats[mySeat] || {};
+    document.getElementById("endCaptured").textContent = mine.captured || 0;
+    document.getElementById("endLost").textContent = mine.lost || 0;
+    document.getElementById("endSent").textContent = Math.round(mine.sent || 0);
+    // Only shown when the weapon actually came into it, so the line
+    // means something when it appears.
+    const fired = mine.fired || 0, taken = mine.taken || 0;
+    const strikeRow = document.getElementById("endStrikeRow");
+    strikeRow.hidden = !(fired || taken);
+    document.getElementById("endStrikes").textContent =
+      fired + " fired \u00b7 " + taken + " taken";
     document.getElementById("endOverlay").hidden = false;
   }
 

@@ -662,24 +662,32 @@ test("held Relays charge the Doomstar; nothing else does", () => {
   assert.equal(bench("factory"), 0, "a Factory must not charge the weapon");
 });
 
-test("a Relay with an enemy neighbour is contested and stops charging", () => {
-  // This is what stops charging being free once you have grabbed a corner.
+test("a Relay charges under fire, as long as it is still supplied", () => {
+  // The old rule also required no enemy-held neighbour, and that was too
+  // strict ever to come up: Relays sit on the front, so a quiet
+  // neighbourhood mostly meant the match was already decided. Supply is
+  // the condition now.
   const g = quiet();
-  const keepEnemy = E.nodesOf(g, ENEMY)[0];
-  for (const n of g.nodes) if (n !== keepEnemy) n.owner = NEUTRAL;
-  const relay = g.nodes.find((n) => n.type === "relay" &&
-    E.neighbors(g, n.id).every((id) => g.nodes[id] !== keepEnemy));
+  const home = g.nodes.find((n) => n.type === "command" && n.owner === PLAYER);
+  const relay = g.nodes.find((n) => n.type === "relay");
   relay.owner = PLAYER;
-  assert.equal(E.isContested(g, relay), false);
-  assert.equal(E.chargingRelays(g, PLAYER).length, 1);
+  // Hand it a chain back to a Command of ours so it is genuinely supplied.
+  for (const id of E.findPath(g, home.id, relay.id, PLAYER) || []) g.nodes[id].owner = PLAYER;
+  E.computeSupply(g);
+  assert.equal(relay.inSupply, true, "setup: the Relay must be supplied");
+  assert.equal(E.relayCharge(g, relay), 1);
 
-  g.nodes[E.neighbors(g, relay.id)[0]].owner = ENEMY;
-  assert.equal(E.isContested(g, relay), true, "an enemy-held neighbour must contest it");
-  assert.equal(E.chargingRelays(g, PLAYER).length, 0);
+  // Put the enemy right next door. It must keep charging.
+  const nb = E.neighbors(g, relay.id).map((id) => g.nodes[id])
+    .find((n) => n.type !== "command");
+  nb.owner = ENEMY;
+  E.computeSupply(g);
+  assert.equal(E.isContested(g, relay), true, "setup: it is now on the front line");
+  assert.equal(E.relayCharge(g, relay), 1, "pressure next door must not stop the charge");
 
   g.charge[PLAYER] = 0;
   run(g, E.DOOM_CHARGE_INTERVAL * 3 + 0.2);
-  assert.equal(g.charge[PLAYER], 0, "a contested Relay must not charge");
+  assert.ok(g.charge[PLAYER] > 0, "a contested but supplied Relay must still charge");
 });
 
 test("firing needs both a full charge and the centre", () => {
@@ -1100,18 +1108,6 @@ test("Deep Logistics keeps a severed position working", () => {
 });
 
 test("Forward Relays actually gets the weapon fired inside a match", () => {
-  function contested(doctrine) {
-    const g = E.createGame({ seed: 7, doctrine, foeDoctrine: "standard" });
-    for (const n of g.nodes) n.owner = PLAYER;
-    const r = g.nodes.find((n) => n.type === "relay");
-    g.nodes[E.neighbors(g, r.id)[0]].owner = ENEMY;
-    E.computeSupply(g);
-    assert.equal(E.isContested(g, r), true);
-    return E.relayCharge(g, r);
-  }
-  assert.equal(contested("standard"), 0, "normally a contested Relay stops charging");
-  assert.equal(contested("relays"), 1, "under this doctrine pressure does not stop the charge");
-
   // The point of the doctrine: reaching a full charge in the time a
   // match actually lasts. Measured before it existed, the weapon fired
   // 0.00 times per match.
@@ -1225,4 +1221,45 @@ test("every ascension rung says what it does", () => {
     assert.ok(rung.label && rung.note, "a rung with no description is not a rung");
     assert.ok(rung.tech && rung.tech.assault <= E.TECH_MAX && rung.tech.fortify <= E.TECH_MAX);
   }
+});
+
+test("a strike is recorded for both the side firing and the side hit", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const victim = g.nodes.find((n) => n.type === "factory");
+  victim.owner = ENEMY; victim.garrison = 60;
+
+  assert.equal(g.stats[PLAYER].fired, 0);
+  assert.equal(E.fireDoomstar(g, PLAYER, victim.id), undefined);
+  assert.equal(g.stats[PLAYER].fired, 1, "the firing side counts a strike dealt");
+  assert.equal(g.stats[ENEMY].taken, 1, "the side hit counts one received");
+  assert.equal(g.stats[PLAYER].taken, 0);
+  assert.equal(g.stats[ENEMY].fired, 0);
+
+  // A strike that wipes the position still credits the side that lost it,
+  // even though the node goes neutral in the same breath.
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const doomed = g.nodes.find((n) => n.type === "mine");
+  doomed.owner = ENEMY; doomed.garrison = 2;
+  E.fireDoomstar(g, PLAYER, doomed.id);
+  assert.equal(doomed.owner, NEUTRAL, "setup: it must have been wiped");
+  assert.equal(g.stats[ENEMY].taken, 2);
+});
+
+test("each seat keeps its own scoreboard", () => {
+  // An online guest holds seat 2 and reads the same stats object the
+  // host sends, so the numbers have to be per seat or it shows the
+  // host's match instead of its own.
+  const g = quiet();
+  for (const seat of [PLAYER, ENEMY]) {
+    assert.deepEqual(g.stats[seat],
+      { sent: 0, captured: 0, lost: 0, peakNodes: 1, fired: 0, taken: 0 });
+  }
+  const theirs = E.nodesOf(g, ENEMY)[0];
+  theirs.garrison = 30;
+  const target = g.nodes.find((n) => n.owner === NEUTRAL && E.findPath(g, theirs.id, n.id, ENEMY));
+  E.sendFleet(g, theirs.id, target.id, 0.5, ENEMY);
+  assert.ok(g.stats[ENEMY].sent > 0, "the enemy's launch counts against the enemy");
+  assert.equal(g.stats[PLAYER].sent, 0, "...and not against you");
 });

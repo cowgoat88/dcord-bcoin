@@ -42,11 +42,21 @@ could feel, because three of the things it was built on never happen:
 | research levels completed | 0.13 per match |
 | time spent at the garrison cap | 0.0% of node-seconds |
 | Doomstar strikes | 0.00 per match; the centre stayed neutral 40/40 |
+| ...but a human match has been decided by one | the bots do not play objectives; benchmark figures for the weapon are a floor, not a verdict |
 | positions cut off from supply | 25% of node-seconds |
 
 So before pricing a lever, measure how much of the match it is live
 for. `scratchpad/felt.js` does exactly this and is worth re-running
 after any balance change.
+
+### Two scratch harnesses disagree, and one of them is wrong
+
+`bal2.js` measures the ascension ladder against a fixed Standard
+opponent; the shipped game draws the AI's doctrine from the map seed.
+`lad.js` does that and is the one to trust for ladder numbers — the two
+gave 93/82/74/26/5/11 and 92/82/61/21/10/4 for the same rungs. At the
+top rungs both are in single digits, where 5/200 against 11/200 is
+noise rather than an ordering.
 
 ### What the benchmark cannot see
 
