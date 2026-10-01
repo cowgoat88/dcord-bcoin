@@ -115,6 +115,25 @@
   .mission .mtick { margin-left: auto; color: var(--player); font-size: 10px; }
   .mission.on .mdoc { color: inherit; }
 
+  /* One decision per screen: big targets, a line of explanation each. */
+  .modes { display: flex; flex-direction: column; gap: 7px; }
+  .modes button {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+    text-align: left; padding: 11px 13px;
+  }
+  .modes button b { font-size: 13px; font-weight: 600; color: var(--text); }
+  .modes button span { font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+  .modes button.on b, .modes button:hover b { color: var(--player); }
+  .step { margin-bottom: 4px; }
+  /* A text link, for the things that are not part of the flow. */
+  .linky {
+    background: none; border: 0; color: var(--muted); font-size: 10.5px;
+    padding: 8px 4px 0; width: 100%; text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .linky:hover { color: var(--player); background: none; }
+  #statsCampaign { text-align: left; margin-top: 12px; }
+
   /* ---- overlays ---- */
   .overlay {
     position: absolute; inset: 0; display: flex; justify-content: center;
@@ -140,6 +159,8 @@
              text-shadow: 0 0 26px rgba(34,211,238,.45); }
   .card h2 { margin: 0 0 10px; font-size: 22px; letter-spacing: 3px; }
   .card p { margin: 0 0 16px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+  #stepCrumb { margin-bottom: 14px; }
+  #stepCrumb.path { color: var(--player); font-size: 11px; letter-spacing: .4px; }
   .card .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 12px; }
   .card button.primary {
     background: var(--player-dim); border-color: var(--player); color: var(--player);
@@ -284,7 +305,9 @@
      every control stays. */
   @media (max-height: 700px) {
     .card { padding: 16px 18px; }
-    .card > p:first-of-type { display: none; }
+    /* The tagline used to be hidden here to save height. It is the
+       breadcrumb now -- it says where you are in the flow -- so it
+       stays and the quickstart carries the saving instead. */
     .quickstart { padding: 8px 10px; font-size: 10.5px; line-height: 1.5; margin-bottom: 10px; }
     .docgrid button { padding: 5px 3px; font-size: 9.5px; }
     .docgrid button i { font-size: 12px; }
@@ -323,7 +346,7 @@
     <div class="overlay" id="startOverlay">
       <div class="card">
         <h1>OUTPOST</h1>
-        <p>Hold positions, build forces, take the map.</p>
+        <p id="stepCrumb">Hold positions, build forces, take the map.</p>
         <div class="quickstart">
           <b>Tap</b> a position, <b>tap</b> a target, <b>tap again</b> to confirm.
           One position never beats an equal one — send several.
@@ -356,32 +379,54 @@
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 2.6,-2.8 9,-2.8 3.8,1.2 5.8,7.6 0,3.8 -5.8,7.6 -3.8,1.2 -9,-2.8 -2.6,-2.8" fill="none" stroke="#ff7a5c" stroke-width="1.6"/></svg> Doomstar · centre</span>
         </div>
         </details>
-        <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
-        <div class="row" id="diffRow">
-          <button data-diff="0" title="The AI builds at 70% of your rate, reacts slowly, and does not research">Cadet <small>−30%</small></button>
-          <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
-          <button data-diff="2" title="The AI builds at 130% of your rate and presses harder than an even fight">Captain <small>+30%</small></button>
-          <button data-diff="3" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
+
+        <!-- One decision per screen. The card used to stack every toggle
+             at once, which made it both hard to read and tall enough to
+             push Deploy off the bottom of a phone. -->
+        <div class="step" id="stepMode">
+          <div class="grouplabel" style="margin-bottom:6px">New game</div>
+          <div class="modes">
+            <button data-mode="skirmish">
+              <b>Skirmish</b><span>One map, one opponent, your pick of everything</span>
+            </button>
+            <button data-mode="campaign">
+              <b>Campaign</b><span id="modeCampaignSub">Five built maps, each one a doctrine to learn</span>
+            </button>
+            <button data-mode="online">
+              <b>Play a friend</b><span>Share a code and fight a person instead</span>
+            </button>
+          </div>
+          <button class="linky" id="btnRecord">Your record</button>
         </div>
-        <details class="netbox" id="campaignBox">
-          <summary id="campaignSummary">Campaign</summary>
+
+        <div class="step" id="stepLevel" hidden>
+          <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
+          <div class="row" id="diffRow">
+            <button data-diff="0" title="The AI builds at 70% of your rate, reacts slowly, and does not research">Cadet <small>−30%</small></button>
+            <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
+            <button data-diff="2" title="The AI builds at 130% of your rate and presses harder than an even fight">Captain <small>+30%</small></button>
+            <button data-diff="3" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
+          </div>
+          <details class="netbox" id="ascBox">
+            <summary id="ascSummary">Ascension</summary>
+            <div class="row" id="ascRow"></div>
+            <div class="doctrade" id="ascNote"></div>
+          </details>
+        </div>
+
+        <div class="step" id="stepMission" hidden>
           <div id="missionList"></div>
           <div class="doctrade" id="missionBrief"></div>
-        </details>
-        <div class="grouplabel" style="margin-bottom:6px">Doctrine</div>
-        <div class="docgrid" id="docRow"></div>
-        <div class="doctrade" id="docTrade"></div>
-        <details class="netbox" id="ascBox">
-          <summary id="ascSummary">Ascension</summary>
-          <div class="row" id="ascRow"></div>
-          <div class="doctrade" id="ascNote"></div>
-        </details>
-        <div class="row">
-          <button class="primary" id="btnStart">Deploy</button>
         </div>
-        <details id="profileBox" class="netbox" hidden></details>
-        <details class="netbox" id="netPanel">
-          <summary>Play a friend</summary>
+
+        <div class="step" id="stepDoctrine" hidden>
+          <div class="grouplabel" style="margin-bottom:6px">Doctrine</div>
+          <div class="docgrid" id="docRow"></div>
+          <div class="doctrade" id="docTrade"></div>
+        </div>
+
+        <div class="step" id="stepOnline" hidden>
+          <div class="grouplabel" style="margin-bottom:6px">Play a friend</div>
           <div class="row" id="netButtons">
             <button id="btnHost">Host game</button>
             <button id="btnJoinOpen">Join with code</button>
@@ -397,8 +442,26 @@
             <div class="code" id="roomCode">—</div>
             <button id="btnCopy">Copy invite link</button>
           </div>
-        </details>
-        <p style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
+        </div>
+
+        <div class="row" id="stepNav" hidden>
+          <button id="btnBack">Back</button>
+          <button class="primary" id="btnStart">Deploy</button>
+        </div>
+        <p id="seedLine" style="margin:0;font-size:10px">Seed <span id="seedLabel">—</span> · maps are point-symmetric, so both sides get the same problem.</p>
+      </div>
+    </div>
+
+    <!-- The record lives on its own screen now. It is something you look
+         up between matches, not a decision you make before one. -->
+    <div class="overlay" id="statsOverlay" hidden>
+      <div class="card">
+        <h2>Your record</h2>
+        <div id="profileBox"></div>
+        <div id="statsCampaign"></div>
+        <div class="row">
+          <button class="primary" id="btnStatsClose">Back</button>
+        </div>
       </div>
     </div>
 
@@ -850,11 +913,14 @@
 
   document.getElementById("btnNew").addEventListener("click", () => {
     document.getElementById("endOverlay").hidden = true;
-    renderProfile();
+    // Back to the first screen: "New" means a new choice, not a repeat
+    // of the last one.
+    resetFlow();
     document.getElementById("startOverlay").hidden = false;
     started = false;
   });
   document.getElementById("btnHelp").addEventListener("click", () => {
+    resetFlow();
     document.getElementById("rules").open = true;
     document.getElementById("startOverlay").hidden = false;
     started = false;
@@ -865,6 +931,105 @@
     difficulty = parseInt(b.dataset.diff, 10);
     prefs.write({ difficulty: difficulty });
     [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+
+  // ---- the new-game flow -------------------------------------------
+  // One decision per screen: mode, then the thing that mode needs, then
+  // doctrine where it applies. Every control is the same element it
+  // always was -- only which screen it sits on has changed -- so the
+  // handlers below are untouched.
+  const FLOW = {
+    skirmish: ["mode", "level", "doctrine"],
+    campaign: ["mode", "mission"],
+    online:   ["mode", "doctrine", "online"]
+  };
+  let flowMode = "skirmish";
+  let flowAt = 0;            // index into FLOW[flowMode]
+
+  function stepName() { return FLOW[flowMode][flowAt]; }
+  function isLastStep() { return flowAt === FLOW[flowMode].length - 1; }
+
+  function showStep() {
+    const name = stepName();
+    for (const id of ["Mode", "Level", "Mission", "Doctrine", "Online"]) {
+      document.getElementById("step" + id).hidden = name !== id.toLowerCase();
+    }
+    const nav = document.getElementById("stepNav");
+    nav.hidden = name === "mode";
+    const start = document.getElementById("btnStart");
+
+    // The quickstart primer belongs to the first screen only.
+    const qs = document.querySelector("#startOverlay .quickstart");
+    const rules = document.getElementById("rules");
+    if (qs) qs.hidden = name !== "mode" || profile.read().games > 0;
+    if (rules) rules.hidden = name !== "mode";
+
+    // The seed only means something once a board exists to seed.
+    const seedLine = document.getElementById("seedLine");
+    if (seedLine) seedLine.hidden = name === "mode" || name === "online";
+
+    const crumb = document.getElementById("stepCrumb");
+    crumb.classList.toggle("path", name !== "mode");
+    if (name === "mode") {
+      crumb.textContent = "Hold positions, build forces, take the map.";
+    } else {
+      const label = flowMode === "campaign" ? "Campaign"
+        : flowMode === "online" ? "Play a friend" : "Skirmish";
+      const bits = [label];
+      if (flowMode === "skirmish" && flowAt >= 2) bits.push(TIERS[difficulty]);
+      if (flowMode === "campaign" && mission) bits.push(mission.name);
+      crumb.textContent = bits.join(" \u203a ");
+    }
+
+    if (name === "online") {
+      // Hosting and joining are their own actions; there is nothing to
+      // deploy until a connection exists.
+      start.hidden = true;
+    } else {
+      start.hidden = false;
+      start.disabled = name === "mission" && !mission;
+      start.textContent = isLastStep()
+        ? (flowMode === "campaign" && mission ? "Deploy \u00b7 " + mission.name : "Deploy")
+        : "Next";
+    }
+    if (name === "mission") buildCampaign();
+    if (name === "doctrine") showDoctrine();
+    if (name === "level") buildAscension();
+  }
+
+  function goMode(mode) {
+    flowMode = mode;
+    flowAt = 1;
+    if (mode !== "campaign") mission = null;
+    showStep();
+  }
+  function flowBack() {
+    if (flowAt > 0) flowAt -= 1;
+    if (flowAt === 0) { flowMode = "skirmish"; mission = null; }
+    showStep();
+  }
+  function flowNext() {
+    if (isLastStep()) return false;
+    flowAt += 1;
+    showStep();
+    return true;
+  }
+  function resetFlow() {
+    flowAt = 0;
+    showStep();
+  }
+
+  document.getElementById("stepMode").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-mode]"); if (!b) return;
+    goMode(b.dataset.mode);
+  });
+  document.getElementById("btnBack").addEventListener("click", flowBack);
+  document.getElementById("btnRecord").addEventListener("click", () => {
+    renderProfile();
+    document.getElementById("statsOverlay").hidden = false;
+  });
+  document.getElementById("btnStatsClose").addEventListener("click", () => {
+    document.getElementById("statsOverlay").hidden = true;
   });
 
   // ---- campaign --------------------------------------------------
@@ -879,17 +1044,15 @@
     if (!CAMPAIGN) return;
     const done = campaignRecord();
     const cleared = CAMPAIGN.MISSIONS.filter((m) => done[m.id] && done[m.id].won).length;
-    document.getElementById("campaignSummary").textContent =
-      "Campaign \u00b7 " + CAMPAIGN.MISSIONS.length + " missions" +
-      (cleared ? " \u00b7 " + cleared + " cleared" : "");
+    const sub = document.getElementById("modeCampaignSub");
+    if (sub) {
+      sub.textContent = cleared
+        ? cleared + " of " + CAMPAIGN.MISSIONS.length + " cleared"
+        : CAMPAIGN.MISSIONS.length + " built maps, each one a doctrine to learn";
+    }
     // With a mission armed the panel stays open: coming back from a
     // match to a collapsed panel hides the thing you are in the middle
     // of doing.
-    // Not auto-opened: five mission rows push Deploy off the bottom of
-    // the card on every phone size. It is the summary that has to do the
-    // work instead -- see the accent styling, which is what makes it
-    // read as a control rather than a section heading.
-    if (mission) document.getElementById("campaignBox").open = true;
     const list = document.getElementById("missionList");
     list.innerHTML = "";
     for (const m of CAMPAIGN.MISSIONS) {
@@ -931,6 +1094,7 @@
       // only way back to a skirmish without hunting for another control.
       mission = (mission && mission.id === picked.id) ? null : picked;
       buildCampaign();
+      showStep();
     });
   }
 
@@ -1022,6 +1186,8 @@
   });
 
   document.getElementById("btnStart").addEventListener("click", () => {
+    // On any screen but the last, this is "Next".
+    if (flowNext()) return;
     document.getElementById("startOverlay").hidden = true;
     started = true;
     newGame();
@@ -1375,24 +1541,40 @@
     const p = profile.read();
     const el = document.getElementById("profileBox");
     if (!el) return;
-    // Once you have played a match you no longer need the three-line
-    // primer, and on a short phone it is exactly what pushes Deploy off
-    // the bottom of the card. "How to play" is still one tap away.
-    const qs = document.querySelector("#startOverlay .quickstart");
-    if (qs) qs.hidden = p.games > 0;
-    if (!p.games) { el.hidden = true; return; }
-    el.hidden = false;
-    const rows = p.byTier.map((t, i) => {
-      if (!t.w && !t.l) return "";
-      return "<div><span>" + TIERS[i] + "</span><span>" + t.w + "W " + t.l + "L" +
-        (t.fastest ? " \u00b7 best " + mmss(t.fastest) : "") + "</span></div>";
-    }).join("");
-    el.innerHTML =
-      "<summary>Your record \u00b7 " + p.wins + "W/" + (p.games - p.wins) + "L</summary>" +
-      "<div class='prof'><div><span>Played</span><span>" + p.games + "</span></div>" +
-      "<div><span>Won</span><span>" + p.wins + " (" + Math.round(100 * p.wins / p.games) + "%)</span></div>" +
-      "<div><span>Streak</span><span>" + p.streak + (p.best > p.streak ? " (best " + p.best + ")" : "") + "</span></div>" +
-      rows + "</div>";
+    if (!p.games) {
+      el.innerHTML = "<div class='prof'><div><span>No matches yet</span>" +
+        "<span>play one and it lands here</span></div></div>";
+    } else {
+      const rows = p.byTier.map((t, i) => {
+        if (!t.w && !t.l) return "";
+        const rung = (p.ascBy || [])[i];
+        return "<div><span>" + TIERS[i] + (rung >= 1 ? " \u00b7 " + roman(rung) : "") +
+          "</span><span>" + t.w + "W " + t.l + "L" +
+          (t.fastest ? " \u00b7 best " + mmss(t.fastest) : "") + "</span></div>";
+      }).join("");
+      el.innerHTML =
+        "<div class='prof'><div><span>Played</span><span>" + p.games + "</span></div>" +
+        "<div><span>Won</span><span>" + p.wins + " (" +
+          Math.round(100 * p.wins / p.games) + "%)</span></div>" +
+        "<div><span>Streak</span><span>" + p.streak +
+          (p.best > p.streak ? " (best " + p.best + ")" : "") + "</span></div>" +
+        "<div><span>Ascension</span><span>" + bestRung(p) + "</span></div>" +
+        rows + "</div>";
+    }
+
+    // Campaign progress belongs here too, not on the way into a match.
+    const camp = document.getElementById("statsCampaign");
+    if (camp && CAMPAIGN) {
+      const done = (p.campaign) || {};
+      const cleared = CAMPAIGN.MISSIONS.filter((m) => done[m.id] && done[m.id].won).length;
+      camp.innerHTML = "<div class='grouplabel' style='margin-bottom:6px'>Campaign \u00b7 " +
+        cleared + "/" + CAMPAIGN.MISSIONS.length + "</div><div class='prof'>" +
+        CAMPAIGN.MISSIONS.map((m) => {
+          const r = done[m.id];
+          return "<div><span>" + m.name + "</span><span>" +
+            (r && r.won ? "\u2713 " + mmss(r.best) : "\u2014") + "</span></div>";
+        }).join("") + "</div>";
+    }
   }
 
   let toastTimer = null;
@@ -2347,6 +2529,7 @@
   buildDoctrinePicker();
   buildAscension();
   renderProfile();
+  showStep();
   resize();
   newGame();
   started = false;
@@ -2356,9 +2539,11 @@
     const m = /[?&]join=([A-Za-z0-9]+)/.exec(location.search);
     if (!m) return;
     const code = m[1].toUpperCase();
-    // Arriving on an invite link, the online panel must be open — the
-    // status messages that follow all live inside it.
-    document.getElementById("netPanel").open = true;
+    // Arriving on an invite link, drop straight onto the online screen:
+    // the status messages that follow all live there.
+    goMode("online");
+    flowAt = FLOW.online.indexOf("online");
+    showStep();
     document.getElementById("joinRow").hidden = false;
     document.getElementById("joinCode").value = code;
     startJoining(code);

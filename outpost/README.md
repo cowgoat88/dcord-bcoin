@@ -398,6 +398,29 @@ only through orders (`sendFleet`, `upgradeNode`) and a drained event
 queue. The AI plays through the same `sendFleet` the player does; it has
 no private powers.
 
+## Starting a game
+
+One decision per screen, in the order you actually make them:
+
+```
+New game ─┬─ Skirmish  → Opponent (+ Ascension) → Doctrine → Deploy
+          ├─ Campaign  → Mission                           → Deploy
+          └─ Friend    → Doctrine → Host / Join
+```
+
+A breadcrumb under the title says where you are (`Skirmish › Captain`),
+Back steps out, and the primary button reads **Next** until the last
+screen, where it becomes **Deploy** — or `Deploy · The Redoubt Gate`
+when a mission is armed.
+
+This replaced a single card that stacked every toggle at once. That card
+was 568px of controls before anything was open; the tallest screen in
+the flow is now 536px and the typical one is under 350px, which is what
+keeps the whole thing a one-pager on a 360×640 phone. The record moved
+to a screen of its own, reached from "Your record" on the first screen —
+it is something to look up between matches, not a decision to make
+before one.
+
 ## Your record
 
 Wins, losses, streak and fastest time per tier are kept on your device

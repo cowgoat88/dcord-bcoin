@@ -95,8 +95,14 @@ the campaign, which was a collapsed `<details>` that read as a section
 heading rather than a control.
 
 Related: five mission rows open by default push Deploy below the fold on
-every phone size measured (390x844 and 360x640 both). Check
-`scratchpad/fold.js` after anything that adds height to the start card.
+every phone size measured (390x844 and 360x640 both).
+
+The start card is now a stepped flow (`showStep`) rather than one tall
+stack, which is what bought the headroom back: the tallest screen is
+536px against a 568px single card that showed less. `scratchpad/flow.js`
+walks every path at 360x640 and desktop and asserts the primary button
+is reachable without scrolling on each one -- run it after anything that
+adds a control to the start card.
 
 ## Branch
 
