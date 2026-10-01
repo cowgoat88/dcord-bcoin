@@ -336,7 +336,7 @@
     <button id="btnSound">♪</button>
     <button id="btnPause">Pause</button>
     <button id="btnHelp">?</button>
-    <button id="btnNew">New</button>
+    <button id="btnMenu" title="Leave this match and go back to the menu (Esc)">Menu</button>
   </div>
 
   <div id="boardWrap">
@@ -911,14 +911,26 @@
     syncPauseBtn();
   }
 
-  document.getElementById("btnNew").addEventListener("click", () => {
+  // One way out of anything, from anywhere: the match, the end screen,
+  // an online room. It was labelled "New", which read as "start another
+  // one" rather than "let me out", and it left an online session running
+  // behind the menu.
+  function toMenu() {
+    if (isOnline()) {
+      const live = session && session.isConnected && session.isConnected();
+      if (live && !confirm("Leave the game? Your opponent will be dropped.")) return;
+      teardownNet();
+      netMsg("");
+    }
     document.getElementById("endOverlay").hidden = true;
-    // Back to the first screen: "New" means a new choice, not a repeat
-    // of the last one.
+    document.getElementById("statsOverlay").hidden = true;
     resetFlow();
     document.getElementById("startOverlay").hidden = false;
     started = false;
-  });
+    paused = false;
+    document.getElementById("btnPause").textContent = "Pause";
+  }
+  document.getElementById("btnMenu").addEventListener("click", toMenu);
   document.getElementById("btnHelp").addEventListener("click", () => {
     resetFlow();
     document.getElementById("rules").open = true;
@@ -1223,7 +1235,14 @@
     else if (k === "f") doFire();
     else if (k === "q") doResearch("assault");
     else if (k === "w") doResearch("fortify");
-    else if (k === "escape") { cancelAim(); selection.clear(); pendingTarget = null; updateHud(); }
+    else if (k === "escape") {
+      // Escape backs out of whatever is innermost: an aim, then a
+      // selection, and only then the match itself.
+      if (aiming) { cancelAim(); }
+      else if (selection.size || pendingTarget !== null) {
+        selection.clear(); pendingTarget = null; updateHud();
+      } else { toMenu(); }
+    }
     else if (k >= "1" && k <= "4") {
       const b = document.getElementById("fracSeg").children[parseInt(k, 10) - 1];
       if (b) b.click();

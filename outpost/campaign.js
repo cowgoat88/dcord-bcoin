@@ -119,7 +119,7 @@
         "Their command sits upgraded behind a belt of asteroids, each one " +
         "worth a quarter again in defence. Throwing fleets at that wall is " +
         "arithmetic you lose. There is another way to hit something.",
-      hint: "Relays charge the Doomstar. Take the centre, charge it, and open the gate.",
+      hint: "Take the centre, then fire the Doomstar at the WALL, not at their Command \u2014 the wall is already over its cap, so every point of damage is permanent.",
       objective: { kind: "capture", nodeId: 9, seconds: 300 },
       goal: "Capture the enemy Command within 5 minutes.",
       // 0 home · 1,2,3 relays (dense, yours to hold) · 4 DOOMSTAR
@@ -134,9 +134,9 @@
           { x: 500, y: 320, type: "doomstar", owner: NEUTRAL, garrison: 18 },
           { x: 660, y: 140, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 70, level: 2 },
           { x: 660, y: 500, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 70, level: 2 },
-          { x: 700, y: 320, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 78, level: 2 },
+          { x: 700, y: 320, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 74, level: 2 },
           { x: 500, y: 560, type: "mine", owner: NEUTRAL, garrison: 8 },
-          { x: 900, y: 320, type: "command", terrain: "open", owner: ENEMY, garrison: 95, level: 3 }
+          { x: 900, y: 320, type: "command", terrain: "open", owner: ENEMY, garrison: 72, level: 1 }
         ],
         lanes: [
           [0, 1], [0, 2], [0, 3], [1, 3], [2, 3], [2, 8], [3, 4], [8, 4],

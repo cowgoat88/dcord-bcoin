@@ -1437,3 +1437,49 @@ test("the difficulty tiers climb without a cliff in the middle", () => {
       "tier " + i + " is a cliff: +" + step.toFixed(2) + " of a " + span.toFixed(2) + " range");
   }
 });
+
+test("every capture mission leaves at least one route that actually works", () => {
+  // The Redoubt Gate shipped with a level-3 enemy Command: cap 123,
+  // regenerating 2.54 units a second. The Doomstar does 26 damage and,
+  // holding every Relay on that map, recharges in about ten seconds --
+  // during which the target regrew 25. Net 0.6 units a strike, against
+  // a wall you could not mass through either. The mission was not hard,
+  // it was impossible, and its own hint pointed at the dead route.
+  //
+  // So: a capture objective must be beatable by massing units, or by
+  // the weapon, and a mission built around the weapon must be beatable
+  // by the weapon specifically.
+  const C = require("./campaign.js");
+  for (const m of C.MISSIONS) {
+    if (m.objective.kind !== "capture") continue;
+    const g = E.createGame(C.optionsFor(m));
+    const target = g.nodes[m.objective.nodeId];
+    const stats = E.nodeStats(target, g);
+
+    const relays = g.nodes.filter((n) => n.type === "relay").length;
+    const perTick = relays * E.DOOM_CHARGE_PER_RELAY * E.docMod(g, PLAYER, "chargeRate");
+    const cycle = perTick > 0
+      ? (E.DOOM_CHARGE_NEEDED / perTick) * E.DOOM_CHARGE_INTERVAL : Infinity;
+    const netPerStrike = E.strikeDamage(g, PLAYER) - stats.unitRate * cycle;
+    const strikeWorks = netPerStrike > E.strikeDamage(g, PLAYER) * 0.25;
+
+    // Massing: what you can build against what the target is worth once
+    // it has grown into its cap.
+    const buildable = E.income(g, PLAYER).units * m.objective.seconds;
+    const needed = stats.cap * E.DEFENDER_EDGE * E.fortifyMult(g, ENEMY) * E.terrainDefence(target);
+    const massWorks = buildable > needed * 1.5;   // headroom for losses
+
+    assert.ok(strikeWorks || massWorks,
+      m.id + ": neither route works. A strike nets " + netPerStrike.toFixed(1) +
+      " units (" + E.strikeDamage(g, PLAYER) + " damage against " +
+      (stats.unitRate * cycle).toFixed(1) + " regrowth per " + cycle.toFixed(0) + "s cycle), " +
+      "and you can build " + buildable.toFixed(0) + " units against a target worth " +
+      needed.toFixed(0));
+
+    if (m.doctrine === "relays") {
+      assert.ok(strikeWorks,
+        m.id + " is the weapon mission, so the weapon has to break the target: " +
+        "nets only " + netPerStrike.toFixed(1) + " a strike");
+    }
+  }
+});

@@ -212,9 +212,20 @@ What the measurements do say, over 40 runs per mission per doctrine:
 |---|---|---|
 | Two Fronts | 75% | 43–83% |
 | The Waist | 83% | 35–98% |
-| The Redoubt Gate | 28% | 8–15% |
+| The Redoubt Gate | 55% | 5–53% |
 | Deep Seam | 28% | 15–28% |
 | Hard Shell | 33% | 8–23% |
+
+The Redoubt Gate was **impossible as first shipped**, and the arithmetic
+is worth recording. Its enemy Command was level 3: cap 123, regenerating
+2.54 units a second. The Doomstar does 26 damage and, holding every
+Relay on that map, recharges in about ten seconds — during which the
+target regrew 25. Net 0.6 units a strike, so the mission's own hint
+pointed at a target the weapon could not dent, behind a wall you could
+not mass through either. The Command is now level 1, the wall sits just
+*over* its cap so strike damage against it is permanent, and the hint
+says plainly to shoot the wall rather than the Command. A test now
+fails if any capture mission leaves neither route open.
 
 The Redoubt Gate and Hard Shell look like real doctrine locks. The Waist
 and Two Fronts are flavoured but anyone can win them. Treat the low
@@ -420,6 +431,12 @@ keeps the whole thing a one-pager on a 360×640 phone. The record moved
 to a screen of its own, reached from "Your record" on the first screen —
 it is something to look up between matches, not a decision to make
 before one.
+
+**Getting out.** `Menu` in the top bar leaves any match and returns to
+the first screen, and so does Escape — which backs out of the innermost
+thing first: an aim, then a selection, and only then the match. Leaving
+an online game closes the session and says so, rather than quietly
+abandoning your opponent to a room that is still open.
 
 ## Your record
 
