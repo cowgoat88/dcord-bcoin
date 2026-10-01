@@ -605,9 +605,10 @@ rush that wrecked the tiers.
 ## Play a friend
 
 Press **Play a friend**, pick a doctrine, then **Host game**. You get a
-five-character room code and a copyable invite link; send either one.
-The room stays open while you switch windows to send it, and **the match
-starts by itself the moment they arrive** — there is nothing to press
+five-character room code and an invite link; send either one — on a
+phone, **Send invite** opens the share sheet, which is better than
+copying because it does not take you out of the game. **The match starts
+by itself the moment they arrive**; there is nothing to press
 afterwards. Your friend opens the link, or presses **Join with code**
 and types it.
 
@@ -626,6 +627,51 @@ seats are mirrored, and leaving tells the other person.
 If the host leaves, or the connection drops, the other side gets a
 notice saying so and a way back to the menu, rather than being left
 tapping a frozen board.
+
+### Why this did not work between two phones
+
+It was reported broken from two iPhones: the guest was told there was no
+game with that code, the host said it had lost the connection, and
+neither screen said what it was waiting for. Two independent causes, and
+fixing either one alone still leaves it broken.
+
+**Leaving the app killed the room.** iOS suspends a backgrounded Safari
+tab within seconds. The socket to the signalling server closes, the room
+code is released, and the friend who types it is told there is no such
+room. Sending the code is the one thing the host has to leave the game
+to do, so the flow guaranteed the failure. PeerJS does not recover on
+its own. Now every connection watches for the drop, reclaims the *same*
+code, and — the part that matters, because a suspended tab's timers do
+not run either — retries the instant the page comes back to the
+foreground. The host's phone is also asked to stay awake while a room is
+open and empty, since a locked screen is a backgrounded tab.
+
+**STUN alone cannot cross carrier-grade NAT.** Two phones on mobile data
+usually both sit behind an address the other cannot reach, so the
+introduction succeeds and the direct connection never forms. That needs
+a TURN relay, and there was none; there is now a list of them, and
+`OutpostNet.setIceServers()` replaces it with your own.
+
+The guest also used to believe the first answer it got. A host's phone
+being asleep when the code is typed is the normal case — the code
+travelled by text message — so a dial is retried six times before
+"no game found" is the verdict.
+
+The screen says what is happening throughout: *Room open, waiting for
+your friend* · *Reconnecting, your code goes live again in a moment* ·
+*Room did not answer, trying again (2/6)*. Underneath it is a plain
+readout — `room 4YBQZ · server ok · no peer yet · 2 retries` — because
+the only way anyone can say what went wrong on their own phone is to
+read it off the screen.
+
+None of this can be verified from the machine it was written on: the
+sandbox blocks the signalling server and every relay. `net.test.js`
+exercises the state machine against a fake Peer, and
+`scratchpad/netphone.js` drives the real page in two browser tabs
+against a stand-in signalling server, through host → phone sleeps →
+friend types the code → host wakes → both in the match. A real
+two-device handshake still has to be confirmed by a person with two
+phones.
 
 ## Tests
 
@@ -647,6 +693,13 @@ producing far less, cut-off Relays not charging), terrain (mirrored
 placement, Command and Doomstar always in open space, defence effects,
 and the worst possible position staying crackable), and the stalemate
 regression.
+
+`net.test.js` adds 11 cases for the matchmaking state machine against a
+fake Peer with controllable timers: a room reclaiming its own code after
+the phone slept, recovering unaided on a backoff, surviving a transient
+server error, a guest retrying rather than believing the first "no such
+room", an abandoned dial staying silent, and the relay list being
+present and credentialed.
 
 `online.test.js` adds 10 cases over an in-memory loopback, with no
 networking or browser involved: the welcome handshake and both peers

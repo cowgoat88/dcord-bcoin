@@ -468,8 +468,17 @@
           <p id="netMsg" style="margin:8px 0 0"></p>
           <div id="inviteRow" hidden>
             <div class="code" id="roomCode">—</div>
-            <button id="btnCopy">Copy invite link</button>
+            <div class="row">
+              <button id="btnShare" hidden>Send invite</button>
+              <button id="btnCopy">Copy invite link</button>
+            </div>
+            <p id="netKeep" class="doctrade" style="margin:8px 0 0">
+              Keep this screen open while you wait. If the phone locks or you
+              leave the game for a while the room closes, and your friend is
+              told the code does not exist.
+            </p>
           </div>
+          <p id="netDiag" class="doctrade" style="margin:8px 0 0" hidden></p>
         </div>
 
         <div class="row" id="stepNav" hidden>
@@ -1539,12 +1548,28 @@
     return location.origin + location.pathname + "?join=" + code;
   }
 
+  // While a room is open the only honest source of truth is the
+  // transport itself -- a phone that slept dropped the room without
+  // telling anybody, and the screen went on saying "Room open". This
+  // polls the link and repaints, so "Reconnecting" appears on its own.
+  let netPoll = null;
+  function startNetPoll() {
+    stopNetPoll();
+    syncNetHint();            // the first second is a second too long
+    netPoll = setInterval(() => { syncNetHint(); }, 1000);
+  }
+  function stopNetPoll() {
+    if (netPoll) { clearInterval(netPoll); netPoll = null; }
+  }
+
   function teardownNet() {
+    stopNetPoll();
     try { if (session) session.close(); } catch (e) { /* gone */ }
     try { if (link) link.close(); } catch (e) { /* gone */ }
     session = null; link = null; netRole = null;
     mySeat = PLAYER; foeSeat = ENEMY;
     document.getElementById("netBadge").hidden = true;
+    document.getElementById("netDiag").hidden = true;
   }
 
   // What the online screen should be telling you right now. Hosting
@@ -1552,21 +1577,46 @@
   // each has a different next step and none of them is a button press.
   function syncNetHint() {
     const el = document.getElementById("netHint");
+    const diag = document.getElementById("netDiag");
     if (!el) return;
     if (!isOnline()) {
       el.textContent = "Host a room and send the code, or join one you were sent.";
+      if (diag) diag.hidden = true;
       return;
     }
-    const live = session && session.isConnected && session.isConnected();
+    // The link, not the session, is what knows whether there is anyone
+    // on the other end: a guest session reads as connected the moment it
+    // is constructed, which had the screen saying "Connected" while the
+    // dial was still being refused.
+    const st = (link && link.state) ? link.state() : null;
+    const live = st ? st.guest : !!(session && session.isConnected && session.isConnected());
+    const server = !st || st.brokerOpen;
+
     if (netRole === "host") {
       el.textContent = live
         ? "Opponent connected \u2014 starting the match\u2026"
-        : "Waiting for someone to join. Send them the code or the link \u2014 "
-          + "the room stays open while you do, and the match starts the moment they arrive.";
+        : !server
+          ? "Reconnecting to the matchmaking server \u2014 your code goes live "
+            + "again in a moment. Stay on this screen."
+          : "Room open. Waiting for your friend to type the code or open the "
+            + "link; the match starts the moment they arrive.";
     } else {
       el.textContent = live
         ? "Connected \u2014 waiting for the host to start."
-        : "Connecting\u2026";
+        : !server
+          ? "Reaching the matchmaking server\u2026"
+          : "Looking for the room. If their phone was asleep this keeps trying.";
+    }
+    document.getElementById("netKeep").hidden = netRole !== "host" || !!live;
+
+    // Said plainly, because the only way anyone can tell me what went
+    // wrong on their own phone is to read it off the screen.
+    if (diag && st) {
+      diag.hidden = false;
+      diag.textContent = "room " + st.code
+        + " \u00b7 server " + (st.brokerOpen ? "ok" : "reconnecting")
+        + " \u00b7 " + (st.guest ? "peer connected" : "no peer yet")
+        + (st.retries ? " \u00b7 " + st.retries + " retries" : "");
     }
   }
 
@@ -1576,6 +1626,9 @@
   function onOpponentArrived() {
     if (netRole !== "host" || started) return;
     syncNetHint();
+    // One last repaint before the poll stops, or the readout freezes
+    // mid-handshake and reports a peer that has in fact arrived.
+    setTimeout(() => { syncNetHint(); stopNetPoll(); }, 1200);
     started = true;
     newGame();
     document.getElementById("startOverlay").hidden = true;
@@ -1591,7 +1644,9 @@
       onReady: (code) => {
         document.getElementById("roomCode").textContent = code;
         document.getElementById("inviteRow").hidden = false;
-        netMsg("Room open — send the code or the link, then Deploy.", "good");
+        // The hint line above already says the room is open and what
+        // happens next; netMsg is for events, not for state.
+        netMsg("");
         showBadge(false, "Waiting");
       },
       onStatus: (m) => { netMsg(m); syncNetHint(); },
@@ -1603,6 +1658,8 @@
       onError: (m) => { netMsg(m, "bad"); teardownNet(); syncNetHint(); }
     });
     if (!link) return;
+    const share = document.getElementById("btnShare");
+    share.hidden = typeof navigator.share !== "function";
     // The host's session wraps whatever game is current, and is handed a
     // fresh one whenever a new match starts.
     session = window.OutpostOnline.createHost({
@@ -1613,6 +1670,7 @@
         if (joined) onOpponentArrived();
       }
     });
+    startNetPoll();
   }
 
   // A guest whose host vanishes is sitting in a match that can no
@@ -1641,8 +1699,9 @@
     netMsg("Connecting to " + code + "…");
     link = window.OutpostNet.join({
       code: code,
-      onConnect: () => netMsg("Connected — waiting for the board…"),
-      onError: (m) => { netMsg(m, "bad"); teardownNet(); }
+      onStatus: (m) => { netMsg(m); syncNetHint(); },
+      onConnect: () => { netMsg("Connected — waiting for the board…", "good"); syncNetHint(); },
+      onError: (m) => { netMsg(m, "bad"); teardownNet(); syncNetHint(); }
     });
     if (!link) return;
     session = window.OutpostOnline.createGuest({
@@ -1670,6 +1729,7 @@
         endOnlineSession(why);
       }
     });
+    startNetPoll();
   }
 
   // Same-device two-tab play. Whoever presses it first is the host; the
@@ -1744,12 +1804,29 @@
   document.getElementById("joinCode").addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") document.getElementById("btnJoin").click();
   });
+  function inviteText(code) {
+    return "Play me at OUTPOST \u2014 room code " + code + ": " + inviteLink(code);
+  }
+
+  // The share sheet beats the clipboard on a phone, and not only for
+  // convenience: copying means switching to Messages by hand, and a
+  // backgrounded tab is a dropped room. The sheet keeps the game in
+  // front, and the link carries the code so nobody has to type it.
+  document.getElementById("btnShare").addEventListener("click", () => {
+    const code = document.getElementById("roomCode").textContent;
+    if (typeof navigator.share !== "function") return;
+    navigator.share({ title: "OUTPOST", text: inviteText(code), url: inviteLink(code) })
+      .then(() => { netMsg("Invite sent. Stay on this screen.", "good"); },
+            () => { /* dismissed, which is not an error */ });
+  });
+
   document.getElementById("btnCopy").addEventListener("click", () => {
     const code = document.getElementById("roomCode").textContent;
     const url = inviteLink(code);
     if (navigator.clipboard) {
       navigator.clipboard.writeText(url).then(
-        () => netMsg("Invite link copied.", "good"),
+        () => netMsg("Invite link copied. Come straight back \u2014 the room "
+          + "closes if this phone locks.", "good"),
         () => netMsg(url)
       );
     } else { netMsg(url); }

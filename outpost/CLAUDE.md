@@ -189,6 +189,50 @@ Note the two-tab path (`btnLocal`) builds its own host session and does
 NOT go through `startHosting`, so a hook added to one needs adding to
 both. That is how the first attempt at this fix missed.
 
+### Phone-to-phone matchmaking: two separate failures, one symptom
+
+Reported from two iPhones: "no game found with the code" on the guest,
+"loses connection" on the host, no idea what it was waiting for. There
+are two independent causes and fixing either alone leaves it broken.
+
+1. **Leaving the app kills the room.** iOS suspends a backgrounded
+   Safari tab within seconds. The WebSocket to the signalling server
+   closes, PeerJS releases the room id, and the friend who types the
+   code is told there is no such room. Sending the code is the one thing
+   the host *must* do, so the flow guarantees the failure. PeerJS does
+   not recover on its own: nothing in it calls `reconnect()`. net.js now
+   watches `disconnected`, reclaims the same id with a backoff, and --
+   this is the load-bearing part, because a suspended tab's timers do
+   not run either -- retries immediately on `visibilitychange`,
+   `pageshow`, `focus` and `online`.
+2. **STUN alone cannot cross carrier-grade NAT.** Two phones on mobile
+   data usually both have unreachable addresses, so signalling succeeds
+   and the data channel never opens. That needs TURN. The relay list is
+   in `net.js` and `setIceServers()` replaces it from the page.
+
+The guest side was also wrong to believe the first answer: it now
+retries a dial six times, because the host's phone being asleep when the
+code is typed is the normal case, not an edge case.
+
+### What cannot be verified from this container
+
+The egress proxy blocks the PeerJS broker and every TURN host, so a real
+two-device handshake has never run here. `scratchpad/netphone.js` is the
+closest thing: it serves the real page over HTTP, swaps the vendored
+PeerJS for `scratchpad/fakepeer.js` (a stand-in with a localStorage
+registry and BroadcastChannel data channels), and drives two tabs
+through host, suspend, join-while-asleep, wake and play. It models a
+suspended tab honestly -- `reconnect()` is a no-op while asleep -- which
+is what makes the foreground wake-up testable at all.
+
+Getting the stand-in wrong hid a bug once: its connections opened even
+when the target id did not exist, so a guest that should have been
+retrying looked connected. If a net change passes suspiciously easily,
+check the stand-in's fidelity before believing it.
+
+`net.test.js` covers the same state machine headlessly with a fake Peer
+and controllable timers.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.
