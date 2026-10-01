@@ -1483,3 +1483,83 @@ test("every capture mission leaves at least one route that actually works", () =
     }
   }
 });
+
+test("reinforcing a position never makes it smaller", () => {
+  // A node can legitimately sit above its cap -- a mission builds
+  // fortifications that way, and the Doomstar's damage against one is
+  // permanent precisely because it cannot regrow. Clamping on arrival
+  // turned a friendly top-up into demolition: a 220-unit wall dropped
+  // to its 68 cap the first time the AI reinforced it, and a siege that
+  // should have taken minutes ended in fifty seconds.
+  const g = quiet();
+  const n = g.nodes.find((x) => x.type === "factory");
+  n.owner = PLAYER;
+  const cap = E.nodeStats(n, g).cap;
+  n.garrison = cap + 80;
+
+  E.resolveArrival(g, { owner: PLAYER, to: n.id, count: 10 });
+  assert.equal(n.garrison, cap + 80, "an over-cap position keeps what it has");
+
+  // Below the cap it still fills, and still wastes the overflow.
+  n.garrison = cap - 5;
+  E.resolveArrival(g, { owner: PLAYER, to: n.id, count: 50 });
+  assert.equal(n.garrison, cap, "under the cap it fills to the cap and no further");
+});
+
+test("a defending opponent holds its ground and never marches on yours", () => {
+  // Reported from play: the siege wall, three fortifications of 70-odd
+  // units, was read by the AI as an attack force and sent into the
+  // player's home. A mission can ask for a defender instead.
+  const map = {
+    w: 600, h: 400,
+    nodes: [
+      { x: 60, y: 200, type: "command", owner: PLAYER, garrison: 20 },
+      { x: 300, y: 200, type: "factory", owner: NEUTRAL, garrison: 5 },
+      { x: 460, y: 120, type: "factory", owner: ENEMY, garrison: 90 },
+      { x: 540, y: 200, type: "command", owner: ENEMY, garrison: 90 }
+    ],
+    lanes: [[0, 1], [1, 2], [2, 3]]
+  };
+  const defend = E.createGame({ map, posture: "defend", difficulty: 3 });
+  assert.equal(E.isDefensive(defend), true);
+  assert.deepEqual(defend.foeHomeIds, [2, 3], "its own ground is where it started");
+  assert.equal(E.defends(defend, 0), false, "your Command is not its ground");
+  assert.equal(E.defends(defend, 2), true);
+
+  run(defend, 120);
+  assert.equal(defend.nodes[0].owner, PLAYER, "it must never take your Command");
+  assert.equal(defend.nodes[1].owner, NEUTRAL, "nor expand onto neutral ground");
+  assert.ok(defend.nodes[2].garrison >= 90, "and it holds what it was given");
+
+  // It does still retake its own ground.
+  defend.nodes[2].owner = PLAYER;
+  defend.nodes[2].garrison = 1;
+  run(defend, 90);
+  assert.equal(defend.nodes[2].owner, ENEMY, "a defender still fights for its own wall");
+
+  // Without the posture, the same opponent comes for you.
+  const normal = E.createGame({ map, difficulty: 3 });
+  assert.equal(E.isDefensive(normal), false);
+  run(normal, 120);
+  assert.notEqual(normal.nodes[0].owner, PLAYER, "an ordinary opponent does attack");
+});
+
+test("a defender does not drain its own fortifications to shuffle units", () => {
+  // The "shore up the front" branch sends half of a donor away. On a
+  // defensive map that had a 150-unit wall at 75 within fifteen
+  // seconds, which handed the player the fortress.
+  const map = {
+    w: 600, h: 400,
+    nodes: [
+      { x: 60, y: 200, type: "command", owner: PLAYER, garrison: 20 },
+      { x: 300, y: 200, type: "factory", owner: ENEMY, garrison: 150 },
+      { x: 540, y: 200, type: "command", owner: ENEMY, garrison: 120 }
+    ],
+    lanes: [[0, 1], [1, 2]]
+  };
+  const g = E.createGame({ map, posture: "defend", difficulty: 3 });
+  const wall = g.nodes[1].garrison, home = g.nodes[2].garrison;
+  run(g, 60);
+  assert.ok(g.nodes[1].garrison >= wall, "the wall must not shrink, got " + g.nodes[1].garrison);
+  assert.ok(g.nodes[2].garrison >= home, "nor the keep behind it");
+});

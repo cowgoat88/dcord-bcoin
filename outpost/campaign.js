@@ -116,12 +116,17 @@
       doctrine: "relays",
       difficulty: 0,
       brief:
-        "Their command sits upgraded behind a belt of asteroids, each one " +
-        "worth a quarter again in defence. Throwing fleets at that wall is " +
-        "arithmetic you lose. There is another way to hit something.",
+        "Their command sits behind a belt of asteroids garrisoned in the " +
+        "hundreds, each one worth a quarter again in defence. They will " +
+        "not come out and you cannot go through \u2014 not with fleets. " +
+        "There is another way to hit something.",
       hint: "Take the centre, then fire the Doomstar at the WALL, not at their Command \u2014 the wall is already over its cap, so every point of damage is permanent.",
-      objective: { kind: "capture", nodeId: 9, seconds: 300 },
-      goal: "Capture the enemy Command within 5 minutes.",
+      // A fortress defends. Without this the AI reads three 70-unit
+      // walls as an attack force and marches them into the player's
+      // home, which is the opposite of the mission.
+      posture: "defend",
+      objective: { kind: "capture", nodeId: 9, seconds: 360 },
+      goal: "Capture the enemy Command within 6 minutes.",
       // 0 home · 1,2,3 relays (dense, yours to hold) · 4 DOOMSTAR
       // 5,6,7,8 their asteroid wall · 9 their Command, upgraded
       map: {
@@ -132,11 +137,11 @@
           { x: 250, y: 500, type: "relay", owner: PLAYER, garrison: 12 },
           { x: 330, y: 320, type: "relay", owner: NEUTRAL, garrison: 10 },
           { x: 500, y: 320, type: "doomstar", owner: NEUTRAL, garrison: 18 },
-          { x: 660, y: 140, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 70, level: 2 },
-          { x: 660, y: 500, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 70, level: 2 },
-          { x: 700, y: 320, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 74, level: 2 },
+          { x: 660, y: 140, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 245, level: 2 },
+          { x: 660, y: 500, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 245, level: 2 },
+          { x: 700, y: 320, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 249, level: 2 },
           { x: 500, y: 560, type: "mine", owner: NEUTRAL, garrison: 8 },
-          { x: 900, y: 320, type: "command", terrain: "open", owner: ENEMY, garrison: 72, level: 1 }
+          { x: 900, y: 320, type: "command", terrain: "open", owner: ENEMY, garrison: 185, level: 1 }
         ],
         lanes: [
           [0, 1], [0, 2], [0, 3], [1, 3], [2, 3], [2, 8], [3, 4], [8, 4],
@@ -235,6 +240,7 @@
       difficulty: mission.difficulty === undefined ? 1 : mission.difficulty,
       missionId: mission.id,
       foeTech: mission.foeTech || null,
+      posture: mission.posture || "normal",
       ascension: 0
     };
   }

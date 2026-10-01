@@ -156,7 +156,8 @@
   // it only ever runs while both sides are still on the board.
   function stepObjective(game, dt) {
     const obj = game.objective;
-    if (!obj || obj.kind === "eliminate") return null;
+    if (!obj) return null;
+    if (obj.kind === "eliminate" && !obj.seconds) return null;
     const targets = objectiveNodes(game, obj);
     const holding = targets.length > 0 && targets.every((n) => n.owner === PLAYER);
 
@@ -167,6 +168,12 @@
     }
     if (obj.kind === "survive") {
       return obj.seconds && game.time >= obj.seconds ? PLAYER : null;
+    }
+    // A conquest objective can carry a deadline too: take the map, and
+    // take it before the clock. Elimination itself is handled by the
+    // ordinary win check, so all this adds is the losing end.
+    if (obj.kind === "eliminate") {
+      return obj.seconds && game.time >= obj.seconds ? ENEMY : null;
     }
     if (obj.kind === "hold") {
       // The clock resets the moment the position changes hands, so a
@@ -183,7 +190,8 @@
   // there is nothing meaningful to show.
   function objectiveProgress(game) {
     const obj = game.objective;
-    if (!obj || obj.kind === "eliminate") return null;
+    if (!obj) return null;
+    if (obj.kind === "eliminate" && !obj.seconds) return null;
     const left = obj.seconds ? Math.max(0, obj.seconds - game.time) : null;
     if (obj.kind === "hold") {
       const need = obj.holdFor || 0;
@@ -191,6 +199,7 @@
                onTarget: objectiveNodes(game, obj).every((n) => n.owner === PLAYER) };
     }
     if (obj.kind === "survive") return { kind: "survive", left };
+    if (obj.kind === "eliminate") return { kind: "eliminate", left };
     if (obj.kind === "capture") return { kind: "capture", left };
     return null;
   }
@@ -779,6 +788,30 @@
   }
 
   // ---- game construction ---------------------------------------------
+  // ---- opponent posture ------------------------------------------------
+  // A mission can ask the opponent to hold ground rather than conquer.
+  // In "defend" posture it will retake anything inside its own starting
+  // territory and will not attack a single node outside it.
+  //
+  // Three weaker versions of this were measured first, and each failed
+  // in its own direction. Letting the fortress attack freely meant the
+  // AI read three 70-unit walls as a stack to throw at the player's
+  // home. Forbidding those three nodes to attack at all left the
+  // Command sallying alone while the wall never weakened itself, and
+  // the player was wiped out in 78% of runs. Pinning everything made
+  // the mission "wait long enough" -- 100% winnable by every doctrine
+  // at every wall strength tried. Letting dug-in nodes hit only their
+  // neighbours leaked, because a node the fortress recaptured was not
+  // itself dug in and became a staging post.
+  //
+  // Bounding it by territory rather than by node is what holds: the
+  // wall fights hard for the wall and never takes a step beyond it.
+  function isDefensive(game) { return game.posture === "defend"; }
+  function defends(game, nodeId) {
+    return !isDefensive(game) ||
+      (game.foeHomeIds && game.foeHomeIds.indexOf(nodeId) !== -1);
+  }
+
   function validDoctrine(key) { return DOCTRINES[key] ? key : "standard"; }
 
   // Used by the host when a guest announces its pick. Validation lives
@@ -856,6 +889,11 @@
       time: 0,
       winner: null,
       objective: o.objective || { kind: "eliminate" },
+      posture: o.posture || "normal",
+      // Captured at creation: "its own ground" cannot mean "whatever it
+      // happens to hold", or a defender that takes one node has licence
+      // to take the next.
+      foeHomeIds: nodes.filter((n) => n.owner === ENEMY).map((n) => n.id),
       holdTimer: 0,
       missionId: o.missionId || null,
       difficulty: o.difficulty === undefined ? 1 : o.difficulty,
@@ -1047,7 +1085,15 @@
 
     if (to.owner === f.owner) {
       const before = to.garrison;
-      to.garrison = OVERFLOW_WASTE ? Math.min(s.cap, to.garrison + f.count) : to.garrison + f.count;
+      // Overflow above the cap is wasted -- but reinforcing a position
+      // must never make it SMALLER. A node already over its cap (a
+      // mission's fortification, say) was being clamped down to the cap
+      // the moment a friendly fleet arrived, so a 220-unit wall
+      // collapsed to 68 the first time the AI topped it up, and the
+      // whole siege fell over in fifty seconds.
+      to.garrison = OVERFLOW_WASTE
+        ? Math.max(before, Math.min(s.cap, before + f.count))
+        : before + f.count;
       emit(game, {
         kind: "reinforce", x: to.x, y: to.y, owner: f.owner,
         count: Math.round(to.garrison - before), wasted: Math.round(f.count - (to.garrison - before))
@@ -1178,7 +1224,7 @@
 
     if (cfg.upgrade) considerSpending(game, mine);
 
-    if (finishingBlow(game, mine)) return;
+    if (!isDefensive(game) && finishingBlow(game, mine)) return;
 
     // Pick the best target on the whole map, then throw *everything that
     // borders it* at once. Attacking with one node at a time can never
@@ -1187,6 +1233,7 @@
     let best = null;
     for (const tgt of game.nodes) {
       if (tgt.owner === ENEMY) continue;
+      if (!defends(game, tgt.id)) continue;   // holding ground, not taking it
       // Any owned node can contribute, not just bordering ones — the AI
       // masses from depth exactly the way the player can.
       const attackers = mine
@@ -1222,6 +1269,12 @@
 
     // Nothing worth attacking — shore up whichever owned node borders the
     // player and is weakest, pulling from the safest strong node.
+    //
+    // A defender does not do this. Shuffling garrisons is a conquest
+    // habit: it sends half of a donor away, which had a 150-unit siege
+    // wall draining itself to 75 within fifteen seconds and handed the
+    // player the fortress. A fortification holds what it was given.
+    if (isDefensive(game)) return;
     const front = mine
       .filter((n) => neighbors(game, n.id).some((id) => game.nodes[id].owner === PLAYER))
       .sort((a, b) => a.garrison - b.garrison)[0];
@@ -1404,7 +1457,7 @@
     terrainOf, terrainDefence,
     sendFleet, upgradeNode, researchTech, fireDoomstar, step,
     serializeState, applySnapshot, applyOrderAs,
-    isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
+    isDefensive, defends, isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult,
     DOCTRINES, DOCTRINE_KEYS, doctrineOf, docMod, setDoctrine, fleetSpeed,
     relayCharge, strikeDamage,

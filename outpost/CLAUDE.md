@@ -124,6 +124,17 @@ The page is opened from githack and run in iframes and previews where
 trap it as a failure. Destructive actions use the in-page dialog
 (`askConfirm`) instead.
 
+### A mission's opponent needs a posture, and two bugs hid behind it
+
+`posture: "defend"` bounds the AI by its *starting territory*: it
+retakes its own ground and attacks nothing else. Narrower versions all
+failed -- see the README for which and why. While getting there, two
+engine bugs surfaced that make over-cap fortifications impossible:
+reinforcing a position clamped it down to its cap, and the AI's
+"shore up the front" branch sent half of a donor away even on a
+defensive map. Both are fixed and tested. If a mission's fortification
+appears to melt, check those two first.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

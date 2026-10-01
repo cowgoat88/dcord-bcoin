@@ -2536,6 +2536,8 @@
         txt = "hold out";
       } else if (prog.kind === "capture") {
         txt = "take the target";
+      } else if (prog.kind === "eliminate") {
+        txt = "clear the map";
       }
       document.getElementById("stObj").textContent = txt + clock;
       document.getElementById("stObj").style.color =

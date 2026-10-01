@@ -182,7 +182,7 @@ to be the way through.
 |---|---|---|
 | **Two Fronts** | ➤ Vanguard | Hold two listening posts, three hops apart down separate arms, for 45 seconds |
 | **The Waist** | ● Deep Logistics | Take everything, while the enemy repeatedly cuts your territory in half |
-| **The Redoubt Gate** | ★ Forward Relays | Capture a command dug in behind an asteroid wall, in 5 minutes |
+| **The Redoubt Gate** | ★ Forward Relays | Capture a command dug in behind an asteroid wall, in 6 minutes |
 | **Deep Seam** | ◈ Prospectors | Hold every Mine on the map at once for 25 seconds |
 | **Hard Shell** | ▲ Shock Troops | Crack an opponent already researched to Fortify III, in 4 minutes |
 
@@ -212,9 +212,39 @@ What the measurements do say, over 40 runs per mission per doctrine:
 |---|---|---|
 | Two Fronts | 75% | 43–83% |
 | The Waist | 83% | 35–98% |
-| The Redoubt Gate | 55% | 5–53% |
+| The Redoubt Gate | 100% | 0–60% |
 | Deep Seam | 28% | 15–28% |
 | Hard Shell | 33% | 8–23% |
+
+**Opponent posture.** A mission can ask the opponent to *defend*: it
+retakes anything inside its own starting territory and attacks nothing
+outside it. Without that, the AI reads a siege wall as an attack force
+and marches it into your home, which is what it did. Getting there took
+four tries and each failure is instructive — forbidding just the wall to
+attack left the Command sallying alone while the wall stopped weakening
+itself (player wiped out in 78% of runs); pinning everything turned the
+mission into "wait long enough", 100% winnable by every doctrine at
+every wall strength; letting dug-in nodes hit only their neighbours
+leaked, because a node the fortress recaptured was not itself dug in and
+became a staging post. Bounding it by *territory* is what holds.
+
+That work also turned up two genuine engine bugs, both of which made a
+fortification impossible to build:
+
+- **Reinforcing a position could shrink it.** A node above its cap was
+  clamped down the moment a friendly fleet arrived, so a 220-unit wall
+  collapsed to its 68 cap the first time the AI topped it up. Overflow
+  is wasted now; the garrison never drops.
+- **A defender drained itself.** The AI's "shore up the front" branch
+  sends half of a donor node away. On a defensive map a 150-unit wall
+  was at 75 within fifteen seconds. Defenders no longer shuffle
+  garrisons.
+
+With both fixed, wall strength finally means something — win time rose
+from 67s to 152s as the wall went from 70 to 150 — and the mission has
+the sharpest doctrine lock in the set: **Forward Relays 100%, every
+other doctrine 0–60%**, nobody wiped out, and a typical win at 264s of
+the 360s clock.
 
 The Redoubt Gate was **impossible as first shipped**, and the arithmetic
 is worth recording. Its enemy Command was level 3: cap 123, regenerating
