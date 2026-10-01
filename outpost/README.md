@@ -434,9 +434,25 @@ before one.
 
 **Getting out.** `Menu` in the top bar leaves any match and returns to
 the first screen, and so does Escape — which backs out of the innermost
-thing first: an aim, then a selection, and only then the match. Leaving
-an online game closes the session and says so, rather than quietly
-abandoning your opponent to a room that is still open.
+thing first: an aim, then a selection, and only then the match.
+
+Leaving a match in progress **asks first**, because a misclick on a
+toolbar button should not cost you a game. The dialog pauses the
+simulation while it is up, puts focus on *Keep playing* so Enter can
+never destroy anything, takes Escape or a backdrop click as "no", traps
+Tab between its two buttons, and returns focus to whatever opened it. It
+only appears when there is something to lose: once a match has ended,
+Menu just leaves. Online, the wording changes to say the opponent will
+be dropped, and the room is actually closed rather than left open behind
+the menu.
+
+**Toolbar.** The top bar never wraps and never truncates a readout.
+As the window narrows it sheds whole stats in order of how easily they
+are found elsewhere — income, then the doctrine pairing (it is in its
+own tooltip), then enemy tech (it is on the end screen), then the
+labels, with Pause becoming a glyph on a phone. Verified at ten widths
+from 1440px down to 320px: one row, nothing clipped, every button
+reachable.
 
 ## Your record
 

@@ -43,8 +43,18 @@
     display: flex; align-items: center; gap: 14px;
     padding: 8px 14px; padding-top: max(8px, env(safe-area-inset-top));
     background: var(--bg-panel); border-bottom: 1px solid var(--line);
-    font-size: 12px; flex-wrap: wrap; z-index: 5;
+    /* A toolbar does not wrap. It used to, and adding one button sent
+       the controls onto a second row on a 1280px desktop. The readouts
+       shrink and the longest one truncates; the buttons never move. */
+    font-size: 12px; flex-wrap: nowrap; overflow: hidden; z-index: 5;
   }
+  /* Readouts do not shrink: half a number is worse than no number, so
+     the narrow layout drops whole stats instead of squeezing them. */
+  #hud .stat { flex: 0 0 auto; }
+  #hud button { flex: 0 0 auto; }
+  /* The doctrine pairing is the longest readout and the least urgent --
+     it is also in the stat's own tooltip -- so it yields first. */
+
   #hud .brand {
     font-weight: 700; letter-spacing: 3px; font-size: 13px;
     color: var(--player); text-shadow: 0 0 14px rgba(34,211,238,.5);
@@ -149,6 +159,34 @@
     padding: 16px;
   }
   .overlay[hidden] { display: none; }
+  /* A dialog sits above the screen it interrupts and is centred rather
+     than top-aligned: it is always short enough to fit. */
+  .overlay.dialog { align-items: center; z-index: 20; background: rgba(7, 11, 20, .72); }
+  .confirmcard { max-width: 340px; }
+  .confirmcard h2 { font-size: 17px; letter-spacing: 1px; }
+  .confirmcard p { margin-bottom: 18px; }
+  .confirmcard .row { gap: 8px; }
+  .confirmcard .row button { flex: 1 1 0; min-height: 40px; }
+  button.danger {
+    background: rgba(255,122,92,.14); border-color: rgba(255,122,92,.55); color: #ffb4a2;
+  }
+  @media (hover: hover) {
+    button.danger:hover:not(:disabled) {
+      background: rgba(255,122,92,.24); border-color: #ff7a5c; color: #ffd4c8;
+    }
+  }
+  /* Keyboard users need to see where they are. */
+  button:focus-visible, summary:focus-visible, input:focus-visible {
+    outline: 2px solid var(--player); outline-offset: 2px;
+  }
+  /* Primary actions are thumb targets on a phone, not 28px strips. */
+  @media (pointer: coarse) {
+    .card .row button { min-height: 44px; }
+    .modes button { min-height: 56px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
   .card {
     background: rgba(17, 24, 40, .96); border: 1px solid var(--line);
     border-radius: 14px; padding: 22px 26px; max-width: 440px; width: 100%;
@@ -272,6 +310,17 @@
   }
   #toast.show { opacity: 1; }
 
+  /* The toolbar sheds readouts as it narrows, least useful first, so it
+     never has to truncate one. Order of sacrifice: income (derivable),
+     the doctrine pairing (in its own tooltip and on the start screen),
+     enemy tech (on the end screen), then the labels themselves. */
+  @media (max-width: 1250px) { #statIncome { display: none; } }
+  @media (max-width: 1120px) { #statDoc { display: none; } }
+  @media (max-width: 900px)  { #statFoeTech { display: none; } }
+  /* Labels go before any readout does: the numbers are colour-coded and
+     the shapes are learned within a match. */
+  @media (max-width: 790px)  { #hud .stat .k { display: none; } }
+
   @media (max-width: 620px) {
     #hud { gap: 7px; padding: 5px 8px; font-size: 11px; flex-wrap: nowrap; overflow: hidden; }
     #hud .brand { font-size: 10px; letter-spacing: 1px; }
@@ -293,8 +342,10 @@
     #stFoeTech { font-size: 10px; }
     /* The HUD is one non-wrapping row on a phone: the doctrines keep
        their icons, which is enough to recognise them, and the names go. */
-    #stDoc .docname { display: none; }
-    #stDoc { font-size: 12px; }
+    /* Both are available elsewhere -- the pairing in the stat's tooltip
+       and on the start screen, enemy tech on the end screen -- and they
+       are what pushes the toolbar past the edge of a phone. */
+    #statDoc, #statFoeTech { display: none; }
     #selInfo { flex-basis: 100%; min-width: 0; order: -1; }
     .card { padding: 20px; }
     .card h1 { font-size: 20px; letter-spacing: 4px; }
@@ -313,6 +364,10 @@
     .docgrid button i { font-size: 12px; }
     .doctrade { min-height: 0; }
     .netbox, #profileBox { margin-top: 10px; padding-top: 9px; }
+    /* A mission brief is several sentences. On the shortest phones that
+       is exactly what pushes Deploy past the bottom, so the prose gets
+       its own scroll rather than the whole card growing. */
+    #missionBrief { max-height: 132px; overflow-y: auto; }
   }
 </style>
 </head>
@@ -324,7 +379,7 @@
     <span class="stat"><span class="k">You</span><span class="v you" id="stYou">0</span></span>
     <span class="stat"><span class="k">Enemy</span><span class="v foe" id="stFoe">0</span></span>
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
-    <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
+    <span class="stat" id="statFoeTech"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
     <span class="stat" id="statDoc"><span class="k">Doctrine</span><span class="v" id="stDoc">—</span></span>
     <span class="stat" id="statObj" hidden><span class="k">Objective</span><span class="v" id="stObj">—</span></span>
     <span class="stat doomstat"><span class="k">Doomstar</span>
@@ -333,15 +388,15 @@
     <span class="stat" id="statIncome"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
     <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
     <span class="spacer"></span>
-    <button id="btnSound">♪</button>
-    <button id="btnPause">Pause</button>
-    <button id="btnHelp">?</button>
+    <button id="btnSound" aria-label="Sound on or off" title="Sound (M)">♪</button>
+    <button id="btnPause" title="Pause or resume (Space)">Pause</button>
+    <button id="btnHelp" aria-label="How to play" title="How to play">?</button>
     <button id="btnMenu" title="Leave this match and go back to the menu (Esc)">Menu</button>
   </div>
 
   <div id="boardWrap">
     <canvas id="board"></canvas>
-    <div id="toast"></div>
+    <div id="toast" role="status" aria-live="polite"></div>
 
     <div class="overlay" id="startOverlay">
       <div class="card">
@@ -465,6 +520,22 @@
       </div>
     </div>
 
+    <!-- One confirm dialog, reused. Destructive actions ask first; it
+         traps focus, defaults to the safe answer, takes Enter and
+         Escape, and dismisses on a backdrop click like any other
+         non-committal surface. -->
+    <div class="overlay dialog" id="confirmOverlay" hidden
+         role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="card confirmcard">
+        <h2 id="confirmTitle">Leave this match?</h2>
+        <p id="confirmBody">Your progress in this match will be lost.</p>
+        <div class="row">
+          <button id="confirmCancel">Keep playing</button>
+          <button class="danger" id="confirmOk">Leave</button>
+        </div>
+      </div>
+    </div>
+
     <div class="overlay" id="endOverlay" hidden>
       <div class="card">
         <h2 id="endTitle">Victory</h2>
@@ -478,8 +549,9 @@
           <div id="endStrikeRow" hidden><span>Strikes</span><b id="endStrikes">0</b></div>
         </div>
         <div class="row">
-          <button class="primary" id="btnAgain">New Match</button>
-          <button id="btnSameSeed">Retry Seed</button>
+          <button class="primary" id="btnAgain">Play again</button>
+          <button id="btnSameSeed" title="Replay this exact map">Same map</button>
+          <button id="btnEndMenu">Menu</button>
         </div>
       </div>
     </div>
@@ -635,7 +707,7 @@
     particles = []; floaters = []; nodeFx.clear();
     shake = { mag: 0, t: 0 };
     paused = false;
-    document.getElementById("btnPause").textContent = "Pause";
+    syncPauseBtn();
     document.getElementById("endOverlay").hidden = true;
     document.getElementById("seedLabel").textContent = s;
     resize();
@@ -911,24 +983,78 @@
     syncPauseBtn();
   }
 
-  // One way out of anything, from anywhere: the match, the end screen,
-  // an online room. It was labelled "New", which read as "start another
-  // one" rather than "let me out", and it left an online session running
-  // behind the menu.
-  function toMenu() {
-    if (isOnline()) {
-      const live = session && session.isConnected && session.isConnected();
-      if (live && !confirm("Leave the game? Your opponent will be dropped.")) return;
-      teardownNet();
-      netMsg("");
+  // ---- confirm dialog ----------------------------------------------
+  // Destructive actions ask first. One dialog, reused: it remembers what
+  // to run on yes, puts focus on the safe button, and restores focus to
+  // whatever opened it. The simulation holds still while it is up, so a
+  // misclick cannot cost you the match you are deciding whether to quit.
+  let confirmAction = null, confirmReturnFocus = null, confirmWasPaused = false;
+
+  function askConfirm(opts) {
+    const ov = document.getElementById("confirmOverlay");
+    document.getElementById("confirmTitle").textContent = opts.title;
+    document.getElementById("confirmBody").textContent = opts.body;
+    document.getElementById("confirmOk").textContent = opts.ok || "Leave";
+    document.getElementById("confirmCancel").textContent = opts.cancel || "Keep playing";
+    confirmAction = opts.onConfirm;
+    confirmReturnFocus = document.activeElement;
+    confirmWasPaused = paused;
+    paused = true;
+    syncPauseBtn();
+    ov.hidden = false;
+    // Default to the safe answer: Enter should never destroy anything.
+    document.getElementById("confirmCancel").focus();
+  }
+  function closeConfirm(run) {
+    const ov = document.getElementById("confirmOverlay");
+    if (ov.hidden) return;
+    ov.hidden = true;
+    const act = confirmAction;
+    confirmAction = null;
+    if (!confirmWasPaused) { paused = false; syncPauseBtn(); }
+    if (run && act) act();
+    else if (confirmReturnFocus && confirmReturnFocus.focus) {
+      try { confirmReturnFocus.focus(); } catch (e) { /* gone from the DOM */ }
     }
+    confirmReturnFocus = null;
+  }
+  const confirmOpen = () => !document.getElementById("confirmOverlay").hidden;
+
+  document.getElementById("confirmOk").addEventListener("click", () => closeConfirm(true));
+  document.getElementById("confirmCancel").addEventListener("click", () => closeConfirm(false));
+  // Backdrop click cancels, as it does everywhere else. A click that
+  // started inside the card and ended outside it does not.
+  document.getElementById("confirmOverlay").addEventListener("mousedown", (ev) => {
+    if (ev.target.id === "confirmOverlay") closeConfirm(false);
+  });
+
+  // ---- leaving --------------------------------------------------------
+  // One way out of anything: the match, the end screen, an online room.
+  function goMenu() {
+    if (isOnline()) { teardownNet(); netMsg(""); }
     document.getElementById("endOverlay").hidden = true;
     document.getElementById("statsOverlay").hidden = true;
     resetFlow();
     document.getElementById("startOverlay").hidden = false;
     started = false;
     paused = false;
-    document.getElementById("btnPause").textContent = "Pause";
+    syncPauseBtn();
+  }
+  // Only ask when there is something to lose: a match that has begun and
+  // has not already ended.
+  function matchInProgress() { return started && game && !game.winner; }
+  function toMenu() {
+    if (!matchInProgress()) { goMenu(); return; }
+    const online = isOnline() && session && session.isConnected && session.isConnected();
+    askConfirm({
+      title: "Leave this match?",
+      body: online
+        ? "This match will end and your opponent will be dropped."
+        : "This match will be abandoned. Progress in it is not saved.",
+      ok: "Leave match",
+      cancel: "Keep playing",
+      onConfirm: goMenu
+    });
   }
   document.getElementById("btnMenu").addEventListener("click", toMenu);
   document.getElementById("btnHelp").addEventListener("click", () => {
@@ -1042,6 +1168,9 @@
   });
   document.getElementById("btnStatsClose").addEventListener("click", () => {
     document.getElementById("statsOverlay").hidden = true;
+  });
+  document.getElementById("statsOverlay").addEventListener("mousedown", (ev) => {
+    if (ev.target.id === "statsOverlay") ev.currentTarget.hidden = true;
   });
 
   // ---- campaign --------------------------------------------------
@@ -1205,6 +1334,9 @@
     newGame();
   });
   document.getElementById("btnAgain").addEventListener("click", () => { started = true; newGame(); });
+  // The match is already over here, so leaving costs nothing and must
+  // not ask.
+  document.getElementById("btnEndMenu").addEventListener("click", goMenu);
   document.getElementById("btnSameSeed").addEventListener("click", () => {
     const s = game ? game.seed : undefined; started = true; newGame(s);
   });
@@ -1222,17 +1354,47 @@
       toast("Paused while you were away \u2014 press Resume");
     }
   });
+  const narrow = () => window.matchMedia("(max-width: 620px)").matches;
   function syncPauseBtn() {
-    document.getElementById("btnPause").textContent = paused ? "Resume" : "Pause";
+    const b = document.getElementById("btnPause");
+    // On a phone the toolbar has no room for the word, and the glyph is
+    // the universal one. The accessible name stays a real word.
+    b.textContent = narrow() ? (paused ? "\u25b6" : "\u2759\u2759") : (paused ? "Resume" : "Pause");
+    b.setAttribute("aria-label", paused ? "Resume" : "Pause");
   }
+  window.addEventListener("resize", syncPauseBtn);
 
   window.addEventListener("keydown", (ev) => {
+    const key = ev.key.toLowerCase();
+
+    // A modal owns the keyboard: Enter commits, Escape cancels, and Tab
+    // cannot wander out of it onto the screen underneath.
+    if (confirmOpen()) {
+      if (key === "escape") { ev.preventDefault(); closeConfirm(false); }
+      else if (key === "enter") { ev.preventDefault(); closeConfirm(document.activeElement &&
+        document.activeElement.id === "confirmOk"); }
+      else if (key === "tab") {
+        ev.preventDefault();
+        const a = document.getElementById("confirmCancel");
+        const b = document.getElementById("confirmOk");
+        (document.activeElement === a ? b : a).focus();
+      }
+      return;
+    }
+    // The record is a read-only screen; Escape closes it like any panel.
+    const stats = document.getElementById("statsOverlay");
+    if (!stats.hidden) {
+      if (key === "escape") { ev.preventDefault(); stats.hidden = true; }
+      return;
+    }
+
     if (!started) return;
-    const k = ev.key.toLowerCase();
+    const k = key;
     if (k === " ") { ev.preventDefault(); togglePause(); }
     else if (k === "a") document.getElementById("btnAll").click();
     else if (k === "u") doUpgrade();
     else if (k === "f") doFire();
+    else if (k === "m") document.getElementById("btnSound").click();
     else if (k === "q") doResearch("assault");
     else if (k === "w") doResearch("fortify");
     else if (k === "escape") {

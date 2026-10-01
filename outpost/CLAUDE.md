@@ -104,6 +104,26 @@ walks every path at 360x640 and desktop and asserts the primary button
 is reachable without scrolling on each one -- run it after anything that
 adds a control to the start card.
 
+### Two layout checks to run before committing UI work
+
+- `scratchpad/flow.js` walks every start-screen path at 360x640, 390x844
+  and desktop and fails if a primary action needs scrolling. It catches
+  the one failure mode this card keeps having.
+- `scratchpad/hud.js` sweeps ten widths from 1440 to 320 and fails if
+  the toolbar wraps, overflows, or clips a button. Adding a single
+  button to the top bar silently wrapped it onto a second row at 1280px;
+  nothing else would have caught that.
+
+Both re-derive their own pass/fail, so read the last line rather than
+the table.
+
+### Native confirm() is not an option
+
+The page is opened from githack and run in iframes and previews where
+`window.confirm` is suppressed or ignored, and the Playwright checks
+trap it as a failure. Destructive actions use the in-page dialog
+(`askConfirm`) instead.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.
