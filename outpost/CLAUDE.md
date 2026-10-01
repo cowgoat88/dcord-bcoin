@@ -210,6 +210,12 @@ are two independent causes and fixing either alone leaves it broken.
    and the data channel never opens. That needs TURN. The relay list is
    in `net.js` and `setIceServers()` replaces it from the page.
 
+   The confirmed working test was run over cellular, so the relay is not
+   a precaution -- it is carrying the traffic, and the game depends on a
+   free third-party service staying up. If phone-to-phone play breaks
+   again with the room opening fine and the connection never forming,
+   suspect the relay first and check it before touching anything else.
+
 The guest side was also wrong to believe the first answer: it now
 retries a dial six times, because the host's phone being asleep when the
 code is typed is the normal case, not an edge case.

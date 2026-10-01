@@ -650,7 +650,10 @@ open and empty, since a locked screen is a backgrounded tab.
 usually both sit behind an address the other cannot reach, so the
 introduction succeeds and the direct connection never forms. That needs
 a TURN relay, and there was none; there is now a list of them, and
-`OutpostNet.setIceServers()` replaces it with your own.
+`OutpostNet.setIceServers()` replaces it with your own. The test that
+confirmed this working was run over cellular, so the relay is doing real
+work rather than sitting there as a precaution — which also means the
+game now leans on a free service somebody else runs.
 
 The guest also used to believe the first answer it got. A host's phone
 being asleep when the code is typed is the normal case — the code
