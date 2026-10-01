@@ -669,9 +669,9 @@ sandbox blocks the signalling server and every relay. `net.test.js`
 exercises the state machine against a fake Peer, and
 `scratchpad/netphone.js` drives the real page in two browser tabs
 against a stand-in signalling server, through host → phone sleeps →
-friend types the code → host wakes → both in the match. A real
-two-device handshake still has to be confirmed by a person with two
-phones.
+friend types the code → host wakes → both in the match. **Confirmed
+working between two iPhones**, which is the only test that counts and
+the only one a machine with no second phone cannot run.
 
 ## Tests
 

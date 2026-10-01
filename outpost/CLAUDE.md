@@ -217,8 +217,11 @@ code is typed is the normal case, not an edge case.
 ### What cannot be verified from this container
 
 The egress proxy blocks the PeerJS broker and every TURN host, so a real
-two-device handshake has never run here. `scratchpad/netphone.js` is the
-closest thing: it serves the real page over HTTP, swaps the vendored
+two-device handshake cannot run here. The fix for it was shipped on the
+strength of the stand-in below and then confirmed working between two
+iPhones -- so the method holds, but note what it rests on: a stand-in is
+evidence about the state machine, never about the network.
+`scratchpad/netphone.js` is the closest thing: it serves the real page over HTTP, swaps the vendored
 PeerJS for `scratchpad/fakepeer.js` (a stand-in with a localStorage
 registry and BroadcastChannel data channels), and drives two tabs
 through host, suspend, join-while-asleep, wake and play. It models a
