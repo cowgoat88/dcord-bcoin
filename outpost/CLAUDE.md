@@ -104,6 +104,38 @@ walks every path at 360x640 and desktop and asserts the primary button
 is reachable without scrolling on each one -- run it after anything that
 adds a control to the start card.
 
+### A balance change this big invalidates every other balance number
+
+Closing transit through neutral ground is one line in `canTransit`. It
+changed the length of a match from ~80s to ~148s, and that alone broke:
+
+- the difficulty ladder (100/18/2/0 until the production multipliers were
+  re-fitted),
+- the doctrine set (a 53-68% band at Officer spread to 35-95%; Forward
+  Relays 95/87, Shock Troops 35/15),
+- the ascension ladder (starting tech compounds over a longer match --
+  Fortify I alone took Commander from 33% to 13%),
+- a campaign mission (`The Waist` became a guaranteed loss, which is how
+  Cadet's production ceiling was found),
+- and six engine tests that encoded the old routing rule.
+
+So after any change to routing, supply or match length, re-run all of it:
+`scratchpad/rush.js`, `doc.js`, `lad.js`, `mission.js`, and a 120-seed
+ladder sweep with `harness2.js`. Fixing only the thing you aimed at
+leaves five silent regressions.
+
+### The AI could not be fixed into solving the opening all-in
+
+Eight AI-side candidates were built and measured against the rush (hold
+everything, wait for the AI's first push to leave, send 75% of every
+position at its Command). All eight failed, several made normal play
+worse, and the most careful one -- a time-aware home defence that only
+commits when the arriving force actually clears the attack and lands
+before the wave -- correctly declines to commit, because on the opening
+tick there is nothing to commit with. The table is in the README. When a
+behaviour fix keeps failing in every form, check whether the geometry
+makes the position defensible at all.
+
 ### Two layout checks to run before committing UI work
 
 - `scratchpad/flow.js` walks every start-screen path at 360x640, 390x844

@@ -132,6 +132,10 @@ test("orders may target any node on the map, routing along the lanes", () => {
   // impossible on a sparse graph — front lines are only one or two nodes
   // wide — and the map just freezes. Measured before multi-hop: every
   // single test match ended in stalemate.
+  //
+  // The route has to run over ground you hold, so this hands the player
+  // a corridor first; reaching across unclaimed space is exactly what
+  // `canTransit` now refuses.
   const g = quiet();
   const hq = E.nodesOf(g, PLAYER)[0];
   hq.garrison = 60;
@@ -139,6 +143,9 @@ test("orders may target any node on the map, routing along the lanes", () => {
     .filter((n) => n.id !== hq.id && !E.areLinked(g, hq.id, n.id))
     .sort((a, b) => E.dist(b, hq) - E.dist(a, hq))[0];
   assert.ok(far, "setup: the map must have a non-adjacent node");
+  const corridor = E.findPath(g, hq.id, far.id, undefined);
+  assert.ok(corridor && corridor.length > 2, "setup: a multi-hop corridor must exist");
+  for (const id of corridor.slice(1, -1)) g.nodes[id].owner = PLAYER;
   assert.equal(E.sendFleet(g, hq.id, far.id, 0.5, PLAYER), undefined);
   const f = g.fleets[0];
   assert.ok(f.path.length > 2, "a distant order must route through intermediate nodes");
@@ -153,6 +160,9 @@ test("a multi-hop fleet actually traverses every leg and arrives", () => {
   const far = g.nodes
     .filter((n) => n.id !== hq.id && !E.areLinked(g, hq.id, n.id))
     .sort((a, b) => E.dist(b, hq) - E.dist(a, hq))[0];
+  for (const id of E.findPath(g, hq.id, far.id, undefined).slice(1, -1)) {
+    g.nodes[id].owner = PLAYER;
+  }
   E.sendFleet(g, hq.id, far.id, 1, PLAYER);
   const legs = g.fleets[0].path.length - 1;
   run(g, 90);
@@ -588,10 +598,15 @@ test("difficulty tiers are ordered: a harder tier out-produces an easier one", (
   // The only lever that orders reliably. Decision-quality knobs inverted
   // the tiers twice: a thin attack margin grabs undefended neutrals fast
   // but throws armies at dug-in positions, and early expansion dominates.
-  const rates = [0, 1, 2].map((d) => E.aiProduction(E.createGame({ seed: 1, difficulty: d })));
-  assert.ok(rates[0] < rates[1] && rates[1] < rates[2],
-    "AI production must increase monotonically with difficulty: " + rates.join(" < "));
-  assert.equal(rates[1], 1, "the middle tier must be an even fight");
+  const rates = [0, 1, 2, 3].map((d) => E.aiProduction(E.createGame({ seed: 1, difficulty: d })));
+  for (let i = 1; i < rates.length; i++) {
+    assert.ok(rates[i - 1] < rates[i],
+      "AI production must increase monotonically with difficulty: " + rates.join(" < "));
+  }
+  // The band is narrow and it is meant to be: once transit through
+  // neutral ground closed, the measured swing from 0.80 to 1.00 at
+  // Officer was 3% to 63%.
+  assert.ok(rates[1] > 0.85 && rates[1] < 1.05, "the middle tier must be close to an even fight");
 });
 
 test("the AI's production multiplier only touches the AI", () => {
@@ -610,11 +625,15 @@ test("the AI's production multiplier only touches the AI", () => {
   g.adjacency.set(mine.id, [myHq.id]); g.adjacency.set(myHq.id, [mine.id]);
   g.adjacency.set(theirs.id, [theirHq.id]); g.adjacency.set(theirHq.id, [theirs.id]);
   run(g, 10);
-  assert.ok(theirs.garrison > mine.garrison,
-    "at the hardest tier the AI must out-produce the player from the same node type");
   const base = E.nodeStats(mine).unitRate * 10;
   assert.ok(Math.abs(mine.garrison - base) < 0.5,
     "the player's own rate must be untouched by the difficulty setting");
+  // Their own rate, not the player's: the opponent's doctrine is drawn
+  // from the map seed and may scale output on its own.
+  const theirBase = E.nodeStats(theirs, g).unitRate * 10;
+  assert.ok(Math.abs(theirs.garrison - theirBase * E.aiProduction(g)) < 0.5,
+    "the AI's output must be its own rate times the tier multiplier");
+  assert.notEqual(E.aiProduction(g), 1, "setup: this tier must differ from the player's rate");
 });
 
 // ---------------------------------------------------------------------
@@ -809,7 +828,10 @@ test("fleets cannot transit an enemy-held position", () => {
   for (const n of g.nodes) if (![a, b, c].includes(n)) g.adjacency.set(n.id, []);
   a.owner = PLAYER; b.owner = NEUTRAL; c.owner = NEUTRAL;
 
-  assert.ok(E.findPath(g, a.id, c.id, PLAYER), "neutral ground in between is passable");
+  assert.equal(E.findPath(g, a.id, c.id, PLAYER), null,
+    "unclaimed ground in between does NOT carry traffic");
+  assert.ok(E.findPath(g, a.id, b.id, PLAYER),
+    "but it is attackable — it is the destination, not a waypoint");
   b.owner = ENEMY;
   assert.equal(E.findPath(g, a.id, c.id, PLAYER), null,
     "an enemy position in the way must block the route entirely");
@@ -817,6 +839,24 @@ test("fleets cannot transit an enemy-held position", () => {
     "but the blocker itself must still be attackable — it is the destination");
   b.owner = PLAYER;
   assert.ok(E.findPath(g, a.id, c.id, PLAYER), "your own ground carries traffic");
+});
+
+test("neither side can reach the other's Command on the opening tick", () => {
+  // The exploit this rule exists for: hold everything, wait for the AI's
+  // first push to leave, then send 75% of every position straight at its
+  // Command. It won 100/98/87/43% of matches across the four tiers and
+  // was over inside thirty seconds, because no-man's-land carried the
+  // whole trip. With transit closed the route simply does not exist
+  // until ground between has been taken.
+  for (let seed = 1; seed <= 30; seed++) {
+    const g = E.createGame({ seed });
+    const mine = E.nodesOf(g, PLAYER)[0], theirs = E.nodesOf(g, ENEMY)[0];
+    assert.ok(!E.areLinked(g, mine.id, theirs.id), "setup: the homes are not adjacent");
+    assert.equal(E.findPath(g, mine.id, theirs.id, PLAYER), null,
+      "seed " + seed + ": their Command must not be reachable from the start");
+    assert.equal(E.findPath(g, theirs.id, mine.id, ENEMY), null,
+      "seed " + seed + ": and the rule has to cut both ways");
+  }
 });
 
 test("an order with no route is refused and costs nothing", () => {
@@ -1135,12 +1175,13 @@ test("Forward Relays actually gets the weapon fired inside a match", () => {
   const plain = E.createGame({ seed: 7, doctrine: "standard", foeDoctrine: "standard" });
   const relay = g.nodes.find((n) => n.type === "relay"); relay.owner = PLAYER;
   const plainRelay = plain.nodes.find((n) => n.type === "relay"); plainRelay.owner = PLAYER;
-  assert.ok(E.nodeStats(relay, g).unitRate > E.nodeStats(plainRelay, plain).unitRate * 2,
+  assert.ok(E.nodeStats(relay, g).unitRate > E.nodeStats(plainRelay, plain).unitRate * 1.8,
     "a Relay must become a real producer");
-  assert.ok(E.nodeStats(relay, g).unitRate > E.NODE_TYPES.factory.units,
-    "...and out-build a Factory, which is what the doctrine claims and what "
-    + "makes taking Relays worth doing in the match you are actually having");
   const fac = g.nodes.find((n) => n.type === "factory"); fac.owner = PLAYER;
+  assert.ok(E.nodeStats(relay, g).unitRate > E.nodeStats(fac, g).unitRate,
+    "...and out-build this side's own Factories, which is what the doctrine "
+    + "claims and what makes taking Relays worth doing in the match you are "
+    + "actually having");
   const plainFac = plain.nodes.find((n) => n.type === "factory"); plainFac.owner = PLAYER;
   assert.ok(E.nodeStats(fac, g).unitRate < E.nodeStats(plainFac, plain).unitRate,
     "and everywhere else is the price");
@@ -1540,7 +1581,8 @@ test("a defending opponent holds its ground and never marches on yours", () => {
   // Without the posture, the same opponent comes for you.
   const normal = E.createGame({ map, difficulty: 3 });
   assert.equal(E.isDefensive(normal), false);
-  run(normal, 120);
+  run(normal, 200);
+  assert.equal(normal.nodes[1].owner, ENEMY, "an ordinary opponent does expand");
   assert.notEqual(normal.nodes[0].owner, PLAYER, "an ordinary opponent does attack");
 });
 

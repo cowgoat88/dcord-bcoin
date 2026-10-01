@@ -153,12 +153,23 @@ quietly means "cleared III on Cadet".
 
 | Rung | The enemy | Measured player win rate |
 |---|---|---|
-| — | Commander as it comes | 46% |
-| I | starts with Fortify I | 41% |
-| II | also starts with Assault I | 31% |
-| III | its Assault starts at II | 11% |
-| IV | starts fully researched | 5% |
-| V | ...and out-produces you by a further 25% | 2% |
+| — | Commander as it comes | 32% |
+| I | out-produces you by 5% | 21% |
+| II | make that 12% | 23% |
+| III | ...and starts with Fortify I | 13% |
+| IV | ...and Assault I on top of that | 0% |
+| V | starts fully researched, out-producing you by 15% | 0% |
+
+The ladder was rebuilt once. It used to be made entirely of starting
+tech, and that stopped working when transit through neutral ground
+closed: in a 150-second contiguous grind a single tech level compounds,
+and Fortify I alone took Commander from 32% to 13% while Assault I took
+it to 3%. That is not a rung, it is a wall. The first rungs are small
+production handicaps now and the tech only starts at III. Rungs I and II
+measure within noise of each other, and the last two are in single
+digits where the harness cannot order them at all — the ladder this
+replaced had the same property (44/39/31/11/7/2). Treat the top of it as
+a flex rather than a difficulty curve.
 
 Three other rungs were built and thrown away because they did not
 measure: a harsher supply penalty on your side (a commander who keeps a
@@ -346,10 +357,10 @@ without touching connectivity.
 
 The lane map is a supply network, not just a set of shortcuts:
 
-- **You cannot move through enemy-held ground.** Routes run over your own
-  positions and no-man's-land; an enemy position is a roadblock, not
-  something to fly over. The target itself is always attackable — it is
-  the road *to* it that has to be open.
+- **Routes cross only ground you hold.** Enemy positions and unclaimed
+  ones alike are roadblocks, not something to fly over. The target itself
+  is always attackable — it is the road *to* it that has to be open, so
+  an attack has to be walked forward over ground you have paid for.
 - **A position is in supply** only if it can trace a chain of your own
   positions back to one of your Commands. Cut that chain and everything
   beyond it drops to **30% output**, stops paying credits, and — if it is
@@ -375,10 +386,11 @@ one.** Winning ground means concentrating several positions on one target
 at the same time. Everything else in the design follows from making that
 the central skill:
 
-- **Orders route anywhere.** You can send from any position to any node,
-  and the fleet convoys along the lane network. Restricting orders to a
-  single hop makes concentration geometrically impossible, because front
-  lines are only one or two nodes wide — and the map simply freezes.
+- **Orders route anywhere your ground reaches.** You can send from any
+  position to any node your territory connects to, and the fleet convoys
+  along the lane network. Restricting orders to a single hop makes
+  concentration geometrically impossible, because front lines are only
+  one or two nodes wide — and the map simply freezes.
 - **Converging forces combine.** Fleets that reach the same target within
   a one-second window fight as one force. Without this, well-timed
   attacks are still defeated one at a time and coordination is pointless.
@@ -388,6 +400,58 @@ the central skill:
 - **The attack preview** shows your committed force against the target's
   defence before you commit, so the ×1.25 rule is something you learn
   rather than something that silently eats your army.
+
+### The opening all-in, and what closing it cost
+
+The game shipped with one line of play that beat it outright: hold
+everything, wait for the AI's first push to leave its Command, then send
+75% of every position straight at that Command. Measured over 60 seeds a
+tier, that won **100% / 98% / 87% / 43%** of matches and was usually over
+inside 30 seconds.
+
+The instinct is to blame the AI, and the traces look like it — at seed 3
+the rush lands while the enemy Command holds 10 units, because the AI
+spent its whole opening garrison on move one, and at t=6s it holds
+`command:13 mine:10` against a minimum-garrison floor of 11, so exactly
+one of its two positions is even allowed to attack. That is the reported
+"paralysis", literally.
+
+It is not the cause. Eight AI-side fixes were built and measured, and
+every one of them failed:
+
+| candidate | rush win% Cad/Off/Cap/Cmd |
+|---|---|
+| as shipped | 100 / 98 / 87 / 43 |
+| reinforce any threatened position | 80 / 80 / 97 / 85 |
+| keep a reserve at the Command | 98 / 77 / 82 / 58 |
+| Command defends at ×1.4 / ×1.7 / ×2.0 | 98 / 95 / 78 / 52 … 100 / 100 / 93 / 23 |
+| drop the minimum-garrison floor | 100 / 100 / 100 / 53 |
+| time-aware home defence, only where help arrives in time and wins | 100 / 98 / 90 / 48 |
+| neutral ground costs 2× / 3× / 4× to cross | still 100 / 98 at the low tiers |
+
+Several of those made normal play markedly worse; the Command-defence
+ones collapsed the player's win rate at Officer to 8–20%. The last one in
+the table is instructive: a defence that only commits when it can
+actually win declines to commit at all here, correctly, because there is
+nothing to commit with. An undefended Command one uninterrupted flight
+away is not a defensible position, and no amount of AI makes it one.
+
+The fix is topological, and it was the owner's own suggestion: **no-man's
+land stops carrying traffic**. One line in `canTransit`. The rush dies at
+every tier (0 / 0 / 0 / 0) because the route does not exist until ground
+between has been taken, and a regression test now asserts that neither
+Command is reachable from the other on the opening tick, across 30 seeds.
+
+What it cost: a match now runs about **148 seconds instead of 80**, and
+every balance number in the game had to be re-fitted, because a long
+contiguous grind is a different game from a short one. Carried over
+unchanged, the difficulty ladder read 100/18/2/0 and the doctrine set
+spread from a 53–68% band at Officer to 35–95%, with Forward Relays at
+95/87% and Shock Troops at 35/15%. Production penalties were what moved
+most — a 20% unit penalty is survivable in an 80-second match and
+crippling in a 150-second one. After re-fitting: the tiers measure
+99/86/45/31 over 120 seeds with no stalemates, and the doctrines sit
+inside 78–85% at Officer and 41–61% at Captain.
 
 ## Design notes
 
@@ -408,10 +472,10 @@ something that did not work:
   cause is that the attack margin helps and hurts in opposite phases — a
   thin margin grabs undefended neutrals quickly but fails against dug-in
   positions — and early expansion dominates the result. Difficulty is now
-  led by an openly-applied production multiplier (0.70 / 1.00 / 1.30),
-  which is monotonic by construction and is what most RTS games use.
-  Measured over 16 seeds the tiers finally order correctly: the reference
-  player wins 100% / 94% / 25%.
+  led by an openly-applied production multiplier, which is monotonic by
+  construction and is what most RTS games use. Measured over 120 seeds
+  the tiers order correctly: the reference player wins 99% / 86% / 45% /
+  31%.
 - **The map adapts to your screen.** A fixed-aspect map letterboxed into a
   portrait phone left the playfield in a thin band with nodes too small to
   tap. The map is now generated to the viewport's aspect ratio with its
@@ -502,12 +566,21 @@ ladder, which needs a Commander win to appear at all.
 ## Difficulty is stated, not hidden
 
 The tiers differ mainly by an openly-applied production multiplier —
-Cadet −30%, Officer even, Captain +30%, Commander +75% — and the buttons
-say so. Captain exists because Officer to Commander was a jump of 1.00
-to 1.75 in one press, most of the game's whole difficulty range in a
-single step, with nothing in between for someone who has outgrown an
-even fight but is not ready to be out-produced by three quarters. A
-test now fails if any one tier step is more than half the total range.
+Cadet −20%, Officer −14%, Captain −7%, Commander even — and the buttons
+say so. Captain exists because Officer to Commander used to be a jump of
+1.00 to 1.75 in one press, most of the game's whole difficulty range in
+a single step, with nothing in between for someone who has outgrown an
+even fight. A test fails if any one tier step is more than half the
+total range.
+
+The whole table was re-fitted when transit through neutral ground
+closed. A contiguous match runs about 148 seconds rather than 80, and
+production compounds over that time, so the old multipliers left the
+ladder at 100/18/2/0. The band is far narrower than it looks: holding
+everything else fixed, Officer wins 3% of matches at 0.80 and 63% at
+1.00. Cadet is pinned from the other side as well — at 0.90 the AI wins
+the campaign mission *The Waist* outright on every seed, which turns a
+mission the player is supposed to learn from into a loss.
 Decision-quality knobs were tried first and inverted the tiers twice
 (see the design notes below); a multiplier is the only lever that orders
 reliably, and a handicap a player can see reads as a difficulty setting
@@ -567,7 +640,8 @@ arrival coalescing, capture and reinforcement, production and capacity,
 the credit economy, upgrade costs and limits, win detection, AI expansion
 and concentration, the research tracks (escalating costs, army-wide
 effect, the Assault/Fortify asymmetry, parity under equal tech, and that
-a fully fortified position stays crackable), difficulty ordering, the supply network (enemy ground blocking transit,
+a fully fortified position stays crackable), difficulty ordering, the supply network (only your own ground carrying
+transit, neither Command reachable from the other on the opening tick,
 orders refused with no route, severed positions falling out of supply and
 producing far less, cut-off Relays not charging), terrain (mirrored
 placement, Command and Doomstar always in open space, defence effects,

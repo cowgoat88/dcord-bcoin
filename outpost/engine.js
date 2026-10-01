@@ -244,6 +244,16 @@
   // built on them did nothing a player could feel. Production, fleet
   // speed, attack, defence and the supply penalty are the levers that
   // are live every second, and the set below is built from those.
+  // Re-fitted when transit through neutral ground closed. A contiguous
+  // grind is a different game: economy picks compounded and tempo picks
+  // stopped paying, and the set that had sat inside a 53-68% band at
+  // Officer spread to 35-95%. Forward Relays won 95/87% of matches and
+  // Shock Troops won 35/15%. Measured again after, 70 seeds a tier
+  // against Standard's 85/50:
+  //   Vanguard 84/54 · Deep Logistics 79/44 · Forward Relays 83/59
+  //   Prospectors 81/43 · Shock Troops 84/41
+  // The production penalties are what moved most -- a 20% unit penalty
+  // is survivable in a 80s match and crippling in a 150s one.
   const DOCTRINES = {
     standard: {
       label: "Standard", icon: "\u25c6",
@@ -253,9 +263,9 @@
     },
     vanguard: {
       label: "Vanguard", icon: "\u27a4",
-      up: "Fleets travel 25% faster",
-      down: "Positions build units 12% slower",
-      mods: { speed: 1.25, units: 0.88 }
+      up: "Fleets travel 40% faster",
+      down: "Positions build units 3% slower",
+      mods: { speed: 1.40, units: 0.97 }
     },
     logistics: {
       label: "Deep Logistics", icon: "\u25cf",
@@ -265,27 +275,27 @@
     },
     relays: {
       label: "Forward Relays", icon: "\u2605",
-      up: "Relays out-build Factories and charge the Doomstar twice as fast",
-      down: "Everywhere else builds 10% slower",
+      up: "Relays out-build your Factories and charge the Doomstar twice as fast",
+      down: "Everywhere else builds 15% slower",
       // The charge half of this used to be the whole doctrine, and it
       // was worth nothing: across 40 measured matches neither side ever
       // held the centre, so the weapon never fired at all. The Relay
       // production bonus is what makes the pick pay off in the match
       // you are actually having; the charge is the upside when it does
       // come together.
-      mods: { relayUnits: 2.5, chargeRate: 2, units: 0.90 }
+      mods: { relayUnits: 2.2, chargeRate: 2, units: 0.85 }
     },
     prospectors: {
       label: "Prospectors", icon: "\u25c8",
-      up: "Income +70% and research costs 30% less",
+      up: "Income +45% and research costs 25% less",
       down: "Positions build units 10% slower",
-      mods: { credits: 1.70, research: 0.70, units: 0.90 }
+      mods: { credits: 1.45, research: 0.75, units: 0.90 }
     },
     shock: {
       label: "Shock Troops", icon: "\u25b2",
       up: "Assaults land 15% harder",
-      down: "Positions defend 6% worse and build 20% slower",
-      mods: { attack: 1.15, defence: 0.94, units: 0.80 }
+      down: "Positions defend 6% worse and build 8% slower",
+      mods: { attack: 1.15, defence: 0.94, units: 0.92 }
     }
   };
   const DOCTRINE_KEYS = Object.keys(DOCTRINES);
@@ -302,27 +312,32 @@
   // made the game measurably EASIER. Starting tech is the one lever that
   // orders cleanly, so the ladder is built from it.
   //
-  // Measured player win rate over 200 seeds at Commander:
-  //   none 44% | I 39% | II 31% | III 11% | IV 7% | V 2%
-  // (measured with the person-like commander in scratchpad/harness2.js.
-  // Assault II is a cliff -- 31% to 11% -- so the first rungs are built
-  // from Fortify and Assault I to make the climb a climb. An earlier V
-  // that only added production inverted against IV: at that depth the
-  // tech gap already decides it.)
+  // Measured player win rate at Commander, 90 seeds a rung, with the
+  // person-like commander in scratchpad/harness2.js:
+  //   none 33% | I 22% | II 23% | III 14% | IV 2% | V 0%
+  //
+  // Starting tech was the whole ladder until transit through neutral
+  // ground closed. In a 150s contiguous grind a single tech level
+  // compounds: Fortify I alone took Commander from 33% to 13% and
+  // Assault I to 3%, which is not a rung, it is a wall. So the first two
+  // rungs are small production handicaps instead, and the tech only
+  // starts at III. Rungs I and II measure within noise of each other and
+  // the last two are in single digits where the harness cannot order
+  // them -- the same was true of the ladder this replaces (44/39/31/11/
+  // 7/2). Treat the top of the ladder as a flex, not a difficulty curve.
   const ASCENSION = [
-    { label: "Ascension I",   note: "The enemy starts with Fortify I",
-      tech: { assault: 0, fortify: 1 } },
-    { label: "Ascension II",  note: "The enemy also starts with Assault I",
-      tech: { assault: 1, fortify: 1 } },
-    { label: "Ascension III", note: "Its Assault starts at II",
-      tech: { assault: 2, fortify: 1 } },
-    { label: "Ascension IV",  note: "The enemy starts fully researched",
-      tech: { assault: 3, fortify: 3 } },
-    { label: "Ascension V",   note: "...and out-produces you by a further 25%",
-      tech: { assault: 3, fortify: 3 }, produce: true }
+    { label: "Ascension I",   note: "The enemy out-produces you by 5%",
+      tech: { assault: 0, fortify: 0 }, produce: 1.05 },
+    { label: "Ascension II",  note: "Make that 12%",
+      tech: { assault: 0, fortify: 0 }, produce: 1.12 },
+    { label: "Ascension III", note: "...and it starts with Fortify I",
+      tech: { assault: 0, fortify: 1 }, produce: 1.12 },
+    { label: "Ascension IV",  note: "...and Assault I on top of that",
+      tech: { assault: 1, fortify: 1 }, produce: 1.12 },
+    { label: "Ascension V",   note: "The enemy starts fully researched, out-producing you by 15%",
+      tech: { assault: 3, fortify: 3 }, produce: 1.15 }
   ];
   const ASCENSION_MAX = ASCENSION.length;
-  const ASC_PRODUCE_BONUS = 1.25;
 
   // Starting tech granted by an ascension level (0 = none).
   function ascensionTech(level) {
@@ -332,7 +347,7 @@
   }
   function ascensionProduce(level) {
     const rung = ASCENSION[(level | 0) - 1];
-    return rung && rung.produce ? ASC_PRODUCE_BONUS : 1;
+    return rung && rung.produce ? rung.produce : 1;
   }
 
 
@@ -932,15 +947,28 @@
   // freezes. It is also far better to play: you point at what you want
   // taken, rather than hand-walking units hop by hop.
   // Can a fleet of `owner` pass THROUGH this node on its way somewhere
-  // else? Your own ground and no-man's-land are open; an enemy-held node
-  // is a roadblock. This is what turns the lane graph into a real supply
-  // network: before it, every route was always available, so there was no
-  // such thing as a chokepoint, a flank, or a line worth cutting.
+  // else? Only ground you hold. Everything else -- enemy positions and
+  // unclaimed ones alike -- is a roadblock, so a route exists only across
+  // territory you have actually taken. This is what turns the lane graph
+  // into a real supply network: before it, every route was always
+  // available, so there was no such thing as a chokepoint or a flank.
+  //
+  // No-man's-land used to be open, and that was the single biggest hole
+  // in the game. It meant the whole map was in range on the first tick:
+  // hold everything, wait for the AI's opening push to leave, then send
+  // 75% of every position straight at its Command. Measured, that one
+  // line of play won 100/98/87/43% of matches across the four tiers and
+  // was over in under thirty seconds. Nothing in the AI could answer it,
+  // because the answer is not a smarter AI -- an undefended Command one
+  // uninterrupted flight away is simply not defensible. Closing transit
+  // through neutral ground means an attack has to be walked forward over
+  // ground you have paid for, which kills the rush outright (measured
+  // 0% at every tier) and makes position mean something.
+  //
   // `undefined` owner means "ignore ownership" (used for map validation).
   function canTransit(game, owner, nodeId) {
     if (owner === undefined || owner === null) return true;
-    const n = game.nodes[nodeId];
-    return n.owner === owner || n.owner === NEUTRAL;
+    return game.nodes[nodeId].owner === owner;
   }
 
   function findPath(game, fromId, toId, owner) {
@@ -990,7 +1018,7 @@
     if (from.owner !== owner) return "You don't hold that position.";
     if (fromId === toId) return "Pick a different target.";
     const path = findPath(game, fromId, toId, owner);
-    if (!path) return "No route \u2014 the enemy holds the way.";
+    if (!path) return "No route \u2014 you can only move through ground you hold.";
 
     const frac = clamp(fraction === undefined ? 0.5 : fraction, 0.05, 1);
     const count = Math.floor(from.garrison * frac);
@@ -1201,11 +1229,24 @@
   // step, which is most of the game's whole difficulty range in a single
   // button. Captain fills it, so there is somewhere to go after an even
   // fight stops being a fight.
+  // Retuned when transit through neutral ground closed. Contiguous
+  // expansion changes the shape of the whole match -- matches run ~148s
+  // rather than ~80s -- and the old multipliers, carried over unchanged,
+  // left the ladder at 100/18/2/0. Re-fitted against the person-like
+  // commander in `scratchpad/harness2.js`, 80 seeds a tier:
+  // 99 / 85 / 50 / 35% with no stalemates.
+  //
+  // The band is far narrower than it looks. Holding everything else
+  // fixed, Officer wins 3% of matches at 0.80 and 63% at 1.00, so a
+  // "small" nudge of 0.05 here is not small. Cadet is also pinned from
+  // the other side: at 0.90 the AI wins The Waist outright on every
+  // seed, which turns a campaign mission the player is supposed to
+  // learn from into a loss. Measure both, never nudge by intuition.
   const DIFFICULTY = [
-    { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.70 },
-    { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 1.00 },
-    { interval: 1.5, margin: 1.45, minGarrison: 11, maxAttackers: 5, send: 0.75, upgrade: true,  produce: 1.30 },
-    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.75 }
+    { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.80 },
+    { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 0.86 },
+    { interval: 1.5, margin: 1.45, minGarrison: 11, maxAttackers: 5, send: 0.75, upgrade: true,  produce: 0.93 },
+    { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.00 }
   ];
   const TOP_TIER = DIFFICULTY.length - 1;
   function aiProduction(game) {
@@ -1461,6 +1502,6 @@
     techLevel, techCost, assaultMult, fortifyMult,
     DOCTRINES, DOCTRINE_KEYS, doctrineOf, docMod, setDoctrine, fleetSpeed,
     relayCharge, strikeDamage,
-    ASCENSION, ASCENSION_MAX, ASC_PRODUCE_BONUS, ascensionTech, ascensionProduce
+    ASCENSION, ASCENSION_MAX, ascensionTech, ascensionProduce
   };
 });
