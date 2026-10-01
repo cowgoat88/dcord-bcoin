@@ -143,6 +143,12 @@ than another production multiplier, they are cumulative, and only one
 rung past your best is ever offered — it is a ladder, not a menu. Your
 progress lives in the same local record as everything else.
 
+The panel is on the start screen from the first launch, shut and marked
+**locked**, with the five rungs greyed out so you can see the shape of
+what is there to earn. It shipped hidden outright until the first
+Commander win, which meant nobody knew it existed — a reward you cannot
+see is not a reward.
+
 | Rung | The enemy | Measured player win rate |
 |---|---|---|
 | — | Commander as it comes | 46% |

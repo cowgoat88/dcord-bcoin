@@ -346,11 +346,11 @@
         <div class="grouplabel" style="margin-bottom:6px">Doctrine</div>
         <div class="docgrid" id="docRow"></div>
         <div class="doctrade" id="docTrade"></div>
-        <div id="ascBox" hidden>
-          <div class="grouplabel" style="margin:12px 0 6px">Ascension</div>
+        <details class="netbox" id="ascBox">
+          <summary id="ascSummary">Ascension</summary>
           <div class="row" id="ascRow"></div>
           <div class="doctrade" id="ascNote"></div>
-        </div>
+        </details>
         <div class="row">
           <button class="primary" id="btnStart">Deploy</button>
         </div>
@@ -868,15 +868,42 @@
 
   // The ladder only exists once you have beaten Commander, and only ever
   // offers one rung past your best — it is a ladder, not a menu.
+  // The ladder is always on the card, locked or not. Hiding it outright
+  // until the first Commander win meant nobody knew there was anything
+  // to earn -- a reward you cannot see is not a reward.
   function buildAscension() {
-    const box = document.getElementById("ascBox");
     const best = profile.read().ascBest;
-    if (typeof best !== "number" || best < 0) { box.hidden = true; ascension = 0; return; }
-    box.hidden = false;
+    const locked = typeof best !== "number" || best < 0;
+    const row = document.getElementById("ascRow");
+    const box = document.getElementById("ascBox");
+    row.innerHTML = "";
+    // Open when there is a rung to choose, shut when there is only a
+    // promise. Either way the summary line is on the card, so the ladder
+    // is never invisible -- which is how it shipped, and nobody knew it
+    // was there.
+    box.open = !locked;
+    document.getElementById("ascSummary").textContent =
+      locked ? "Ascension \u00b7 locked"
+             : "Ascension \u00b7 " + (best >= E.ASCENSION_MAX
+                 ? "ladder cleared"
+                 : "cleared " + (best === 0 ? "none" : roman(best)));
+    if (locked) {
+      ascension = 0;
+      // Show the rungs greyed out, so the shape of what is coming is
+      // visible even while none of it can be picked.
+      for (let lvl = 1; lvl <= E.ASCENSION_MAX; lvl++) {
+        const b = document.createElement("button");
+        b.textContent = roman(lvl);
+        b.disabled = true;
+        row.appendChild(b);
+      }
+      document.getElementById("ascNote").innerHTML =
+        "<b>Locked.</b> Beat <b>Commander</b> to open the first rung \u2014 " +
+        E.ASCENSION_MAX + " of them, each one a tougher opponent.";
+      return;
+    }
     const top = Math.min(E.ASCENSION_MAX, best + 1);
     if (ascension > top) ascension = top;
-    const row = document.getElementById("ascRow");
-    row.innerHTML = "";
     for (let lvl = 0; lvl <= top; lvl++) {
       const b = document.createElement("button");
       b.dataset.asc = String(lvl);
@@ -884,13 +911,27 @@
       b.classList.toggle("on", lvl === ascension);
       row.appendChild(b);
     }
+    // Rungs still to earn, shown greyed so the climb has a visible top.
+    for (let lvl = top + 1; lvl <= E.ASCENSION_MAX; lvl++) {
+      const b = document.createElement("button");
+      b.textContent = roman(lvl);
+      b.disabled = true;
+      row.appendChild(b);
+    }
     showAscension();
   }
   function showAscension() {
     const rung = E.ASCENSION[ascension - 1];
+    const best = profile.read().ascBest;
+    // ascBest is the highest rung CLEARED, and the one above it is the
+    // highest you may pick -- which is ASCENSION[best], since the array
+    // is zero-indexed and the rungs are numbered from one.
+    const next = typeof best === "number" && best >= 0 ? E.ASCENSION[best] : null;
     document.getElementById("ascNote").innerHTML = rung
       ? "<s>" + rung.note + ".</s> Every rung below applies too."
-      : "<b>Commander, as it comes.</b> Win to unlock the first rung.";
+      : next
+        ? "<b>Commander, as it comes.</b> " + next.label + " is open \u2014 win on it to earn the next."
+        : "<b>Commander, as it comes.</b> You have cleared every rung.";
     [...document.getElementById("ascRow").children].forEach(
       (c) => c.classList.toggle("on", parseInt(c.dataset.asc, 10) === ascension));
   }
