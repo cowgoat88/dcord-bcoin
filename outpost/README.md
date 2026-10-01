@@ -168,6 +168,58 @@ rungs are built from Fortify and Assault I to make the climb a climb.
 Ascension is a solo ladder; an online match is two people's doctrines
 and nothing else.
 
+## Campaign
+
+Five hand-built missions on the start card, one per doctrine. A skirmish
+map is generated and point-symmetric so that a loss is never the map's
+fault; a mission is the exact opposite on purpose — the ground is
+lopsided, the brief is specific, and the doctrine it hands you is meant
+to be the way through.
+
+| Mission | Hands you | Asks for |
+|---|---|---|
+| **Two Fronts** | ➤ Vanguard | Hold two listening posts, three hops apart down separate arms, for 45 seconds |
+| **The Waist** | ● Deep Logistics | Take everything, while the enemy repeatedly cuts your territory in half |
+| **The Redoubt Gate** | ★ Forward Relays | Capture a command dug in behind an asteroid wall, in 5 minutes |
+| **Deep Seam** | ◈ Prospectors | Hold every Mine on the map at once for 25 seconds |
+| **Hard Shell** | ▲ Shock Troops | Crack an opponent already researched to Fortify III, in 4 minutes |
+
+Objectives beyond annihilation are an engine feature, not a script:
+`hold` (keep a position, a list of them, or every node of a type, for N
+seconds — the clock restarts the moment it changes hands), `capture`
+(take a named position before a deadline), `survive` (still be there
+when the clock runs out) and `eliminate` (the skirmish default). Losing
+every position always loses, whatever the brief says.
+
+Missions are recorded separately from your skirmish record, so a
+scripted board never pollutes the difficulty tiers' win rate.
+
+### How well tuned are they, honestly
+
+Not very, yet. Every mission is reachable end to end, every objective
+has been verified against the engine, and each one is winnable — but
+the claim "this doctrine is the only way through" is **not** verified,
+because the tool to verify it does not exist here. The scripted
+commander used for balance work plays objectives badly, never takes the
+centre, and swings about ±25 points between runs, so a doctrine lock
+cannot be told apart from noise.
+
+What the measurements do say, over 40 runs per mission per doctrine:
+
+| Mission | Intended doctrine | Every other doctrine |
+|---|---|---|
+| Two Fronts | 75% | 43–83% |
+| The Waist | 83% | 35–98% |
+| The Redoubt Gate | 28% | 8–15% |
+| Deep Seam | 28% | 15–28% |
+| Hard Shell | 33% | 8–23% |
+
+The Redoubt Gate and Hard Shell look like real doctrine locks. The Waist
+and Two Fronts are flavoured but anyone can win them. Treat the low
+absolute numbers with suspicion in the other direction too: a bot that
+cannot shuttle a garrison or play to a clock failing 70% of the time is
+not evidence that a person will. These need play, not more simulation.
+
 ## The Doomstar
 
 The centre of every map holds a **Doomstar**, and it is what the Relays

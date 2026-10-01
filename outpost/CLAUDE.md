@@ -73,6 +73,18 @@ composing two separately-measured levers does not give their sum.
 Measure each candidate whole, never price a doctrine's cost on attack or
 defence alone, and treat anything inside +/-10 points as noise.
 
+### Campaign missions cannot be balanced from here
+
+`scratchpad/mission.js` and `mtune.js` run the scripted commander
+through each mission with every doctrine. They are good enough to catch
+a mission that is unwinnable, trivially winnable, or won in 20 seconds
+when it is supposed to be a siege — and that is all. At 10-40 runs per
+cell the noise is about +/-25 points, and the bot plays objectives
+badly: it does not shuttle a garrison between two posts, it does not
+play to a clock, and it never takes the centre. So "only this doctrine
+can win this map" is a claim this toolchain cannot support. Use it to
+rule out broken missions, then hand the rest to a person.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

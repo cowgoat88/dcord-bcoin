@@ -126,6 +126,75 @@
   // spend a decision rather than a formality. Mines stay the economy
   // node at nearly four times a Factory's rate.
 
+  // ---- objectives ------------------------------------------------------
+  // A skirmish is won by wiping the other side out. A campaign mission
+  // usually is not: it asks you to hold the middle, or to take one
+  // position before a clock runs out, or simply to still be standing.
+  // Objectives sit on top of the elimination rule rather than replacing
+  // it -- losing every position always loses, whatever the brief says.
+  //
+  //   eliminate  take every enemy position (the default, and skirmish)
+  //   hold       hold `nodeId`, every id in `nodeIds`, or every node of
+  //              `nodeType`, for `holdFor` seconds without interruption
+  //   survive    still hold ground when `seconds` have passed
+  //   capture    hold `nodeId` at any point before `seconds` expire
+  //
+  // `seconds` on hold/capture is a deadline; running it out is a loss.
+  const OBJECTIVES = ["eliminate", "hold", "survive", "capture"];
+
+  function objectiveNodes(game, obj) {
+    if (obj.nodeIds) return obj.nodeIds.map((id) => game.nodes[id]).filter(Boolean);
+    if (obj.nodeId !== undefined && obj.nodeId !== null) {
+      const n = game.nodes[obj.nodeId];
+      return n ? [n] : [];
+    }
+    if (obj.nodeType) return game.nodes.filter((n) => n.type === obj.nodeType);
+    return [];
+  }
+
+  // Returns PLAYER, ENEMY or null. Called after the elimination check, so
+  // it only ever runs while both sides are still on the board.
+  function stepObjective(game, dt) {
+    const obj = game.objective;
+    if (!obj || obj.kind === "eliminate") return null;
+    const targets = objectiveNodes(game, obj);
+    const holding = targets.length > 0 && targets.every((n) => n.owner === PLAYER);
+
+    if (obj.kind === "capture") {
+      if (holding) return PLAYER;
+      if (obj.seconds && game.time >= obj.seconds) return ENEMY;
+      return null;
+    }
+    if (obj.kind === "survive") {
+      return obj.seconds && game.time >= obj.seconds ? PLAYER : null;
+    }
+    if (obj.kind === "hold") {
+      // The clock resets the moment the position changes hands, so a
+      // hold objective is a defence of something, not a visit to it.
+      game.holdTimer = holding ? (game.holdTimer || 0) + dt : 0;
+      if (game.holdTimer >= (obj.holdFor || 0)) return PLAYER;
+      if (obj.seconds && game.time >= obj.seconds) return ENEMY;
+      return null;
+    }
+    return null;
+  }
+
+  // How far along the objective is, for the readout. Returns null when
+  // there is nothing meaningful to show.
+  function objectiveProgress(game) {
+    const obj = game.objective;
+    if (!obj || obj.kind === "eliminate") return null;
+    const left = obj.seconds ? Math.max(0, obj.seconds - game.time) : null;
+    if (obj.kind === "hold") {
+      const need = obj.holdFor || 0;
+      return { kind: "hold", held: Math.min(need, game.holdTimer || 0), need, left,
+               onTarget: objectiveNodes(game, obj).every((n) => n.owner === PLAYER) };
+    }
+    if (obj.kind === "survive") return { kind: "survive", left };
+    if (obj.kind === "capture") return { kind: "capture", left };
+    return null;
+  }
+
   // ---- doctrines -------------------------------------------------------
   // One standing choice made before the match starts. Every doctrine is a
   // SIDEGRADE: each one buys its advantage with a matching weakness, so
@@ -720,10 +789,34 @@
     game.doctrine[seat] = validDoctrine(key);
   }
 
+  // A hand-authored board, for campaign missions. Skirmish maps are
+  // generated and point-symmetric so a loss is never the map's fault; a
+  // mission is the opposite on purpose -- the shape of the ground is the
+  // puzzle. Lanes are index pairs, and anything a node omits falls back
+  // to a sensible default so a mission file stays readable.
+  function buildMap(spec) {
+    const W = spec.w || MAP_W, H = spec.h || MAP_H;
+    const nodes = spec.nodes.map((n, i) => ({
+      id: i,
+      x: n.x, y: n.y,
+      type: n.type || "factory",
+      terrain: FLAT_TYPES.indexOf(n.type) !== -1 ? "open" : (n.terrain || "open"),
+      owner: n.owner === undefined ? NEUTRAL : n.owner,
+      garrison: n.garrison === undefined ? 0 : n.garrison,
+      level: n.level || 0
+    }));
+    const lanes = spec.lanes.map((l) => ({
+      a: Math.min(l[0], l[1]), b: Math.max(l[0], l[1])
+    }));
+    return { nodes, lanes, mapW: W, mapH: H };
+  }
+
   function createGame(opts) {
     const o = opts || {};
     const seed = (o.seed === undefined ? 12345 : o.seed) >>> 0;
-    const { nodes, lanes, mapW, mapH } = generateMap(seed, o.nodeCount || 14, o.mapW, o.mapH);
+    const { nodes, lanes, mapW, mapH } = o.map
+      ? buildMap(o.map)
+      : generateMap(seed, o.nodeCount || 14, o.mapW, o.mapH);
 
     const adjacency = new Map(nodes.map((n) => [n.id, []]));
     for (const l of lanes) { adjacency.get(l.a).push(l.b); adjacency.get(l.b).push(l.a); }
@@ -750,11 +843,21 @@
       credits: { [PLAYER]: 40, [ENEMY]: 40 },
       doctrine: { [PLAYER]: mine, [ENEMY]: theirs },
       ascension,
-      tech: { [PLAYER]: { assault: 0, fortify: 0 }, [ENEMY]: ascensionTech(ascension) },
+      // A mission can hand the opponent research it would not have had
+      // time to earn -- a dug-in defender is dug in from the first tick.
+      tech: {
+        [PLAYER]: { assault: 0, fortify: 0 },
+        [ENEMY]: o.foeTech
+          ? { assault: o.foeTech.assault | 0, fortify: o.foeTech.fortify | 0 }
+          : ascensionTech(ascension)
+      },
       charge: { [PLAYER]: 0, [ENEMY]: 0 },
       chargeTimer: DOOM_CHARGE_INTERVAL,
       time: 0,
       winner: null,
+      objective: o.objective || { kind: "eliminate" },
+      holdTimer: 0,
+      missionId: o.missionId || null,
       difficulty: o.difficulty === undefined ? 1 : o.difficulty,
       ai: { timer: 0.8 },
       // Drained by the view each frame and turned into particles, shake
@@ -926,6 +1029,11 @@
     if (!eAlive && pAlive) game.winner = PLAYER;
     else if (!pAlive && eAlive) game.winner = ENEMY;
     else if (!pAlive && !eAlive) game.winner = NEUTRAL;
+    else {
+      // Both sides still standing: the brief decides, if there is one.
+      const byObjective = stepObjective(game, dt);
+      if (byObjective) game.winner = byObjective;
+    }
 
     for (const seat of [PLAYER, ENEMY]) {
       const owned = nodesOf(game, seat).length;
@@ -1283,7 +1391,8 @@
     DOOM_GARRISON,
     TECH, TECH_MAX, TERRAIN, FLAT_TYPES,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
-    generateMap, buildLanes, createGame,
+    generateMap, buildLanes, buildMap, createGame,
+    OBJECTIVES, stepObjective, objectiveProgress, objectiveNodes,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
     terrainOf, terrainDefence,

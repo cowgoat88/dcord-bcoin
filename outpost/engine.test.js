@@ -1263,3 +1263,159 @@ test("each seat keeps its own scoreboard", () => {
   assert.ok(g.stats[ENEMY].sent > 0, "the enemy's launch counts against the enemy");
   assert.equal(g.stats[PLAYER].sent, 0, "...and not against you");
 });
+
+// ---------------------------------------------------------------------
+// Objectives and hand-authored maps
+// ---------------------------------------------------------------------
+
+const TINY = {
+  w: 400, h: 300,
+  nodes: [
+    { x: 50, y: 150, type: "command", owner: PLAYER, garrison: 20 },
+    { x: 200, y: 150, type: "factory", owner: NEUTRAL, garrison: 5 },
+    { x: 350, y: 150, type: "command", owner: ENEMY, garrison: 20 }
+  ],
+  lanes: [[0, 1], [1, 2]]
+};
+
+test("a hand-authored map is built exactly as written", () => {
+  const g = E.createGame({ map: TINY });
+  assert.equal(g.nodes.length, 3);
+  assert.equal(g.mapW, 400);
+  assert.equal(g.mapH, 300);
+  assert.deepEqual(g.nodes.map((n) => n.owner), [PLAYER, NEUTRAL, ENEMY]);
+  assert.deepEqual(E.neighbors(g, 1).slice().sort(), [0, 2]);
+  assert.equal(E.areLinked(g, 0, 2), false, "a lane that was not written must not exist");
+  // Unlike a generated board, nothing here is seeded or symmetric.
+  assert.equal(g.nodes[0].garrison, 20);
+});
+
+test("a Command is never placed on terrain that favours it", () => {
+  const g = E.createGame({ map: {
+    w: 400, h: 300,
+    nodes: [
+      { x: 50, y: 150, type: "command", terrain: "asteroid", owner: PLAYER, garrison: 10 },
+      { x: 350, y: 150, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 10 }
+    ],
+    lanes: [[0, 1]]
+  } });
+  assert.equal(E.terrainOf(g.nodes[0]), "open", "a Command sits in open space, mission or not");
+  assert.equal(E.terrainOf(g.nodes[1]), "asteroid");
+});
+
+test("a capture objective is won by taking the position and lost on the clock", () => {
+  const g = E.createGame({ map: TINY, objective: { kind: "capture", nodeId: 2, seconds: 30 } });
+  g.ai.timer = Infinity;
+  run(g, 5);
+  assert.equal(g.winner, null, "holding nothing new decides nothing");
+
+  g.nodes[2].owner = PLAYER;
+  E.step(g, 1 / 60);
+  assert.equal(g.winner, PLAYER, "taking the target ends it");
+
+  const slow = E.createGame({ map: TINY, objective: { kind: "capture", nodeId: 2, seconds: 10 } });
+  slow.ai.timer = Infinity;
+  run(slow, 11);
+  assert.equal(slow.winner, ENEMY, "running the clock out is a loss");
+});
+
+test("a hold objective wants it held, not merely visited", () => {
+  const g = E.createGame({ map: TINY,
+    objective: { kind: "hold", nodeId: 1, holdFor: 5, seconds: 60 } });
+  g.ai.timer = Infinity;
+  g.nodes[1].owner = PLAYER;
+  run(g, 3);
+  assert.equal(g.winner, null);
+  assert.ok(g.holdTimer >= 2.5 && g.holdTimer <= 3.5, "the clock runs while you hold it");
+
+  // Lose it and the clock goes back to zero.
+  g.nodes[1].owner = ENEMY;
+  E.step(g, 1 / 60);
+  assert.equal(g.holdTimer, 0, "losing the position restarts the hold");
+  assert.equal(g.winner, null);
+
+  g.nodes[1].owner = PLAYER;
+  run(g, 6);
+  assert.equal(g.winner, PLAYER);
+});
+
+test("a hold objective over a node TYPE wants every one of them at once", () => {
+  const g = E.createGame({ map: {
+    w: 400, h: 300,
+    nodes: [
+      { x: 50, y: 150, type: "command", owner: PLAYER, garrison: 20 },
+      { x: 160, y: 80, type: "mine", owner: PLAYER, garrison: 5 },
+      { x: 160, y: 220, type: "mine", owner: NEUTRAL, garrison: 5 },
+      { x: 350, y: 150, type: "command", owner: ENEMY, garrison: 20 }
+    ],
+    lanes: [[0, 1], [0, 2], [1, 3], [2, 3]]
+  }, objective: { kind: "hold", nodeType: "mine", holdFor: 3, seconds: 60 } });
+  g.ai.timer = Infinity;
+  run(g, 4);
+  assert.equal(g.winner, null, "one of the two is not all of them");
+  g.nodes[2].owner = PLAYER;
+  run(g, 4);
+  assert.equal(g.winner, PLAYER);
+});
+
+test("survive is won by still being there when the clock runs out", () => {
+  const g = E.createGame({ map: TINY, objective: { kind: "survive", seconds: 8 } });
+  g.ai.timer = Infinity;
+  run(g, 5);
+  assert.equal(g.winner, null);
+  run(g, 4);
+  assert.equal(g.winner, PLAYER);
+});
+
+test("losing every position loses, whatever the brief says", () => {
+  const g = E.createGame({ map: TINY, objective: { kind: "survive", seconds: 600 } });
+  g.ai.timer = Infinity;
+  for (const n of g.nodes) n.owner = ENEMY;
+  E.step(g, 1 / 60);
+  assert.equal(g.winner, ENEMY, "elimination outranks the objective");
+});
+
+test("a skirmish is unaffected: no objective means take everything", () => {
+  const g = quiet();
+  assert.equal(g.objective.kind, "eliminate");
+  assert.equal(E.objectiveProgress(g), null, "nothing to show on a skirmish HUD");
+});
+
+test("every shipped mission is coherent", () => {
+  const C = require("./campaign.js");
+  assert.ok(C.MISSIONS.length > 0);
+  const seen = new Set();
+  for (const m of C.MISSIONS) {
+    assert.ok(!seen.has(m.id), "mission ids must be unique: " + m.id);
+    seen.add(m.id);
+    assert.ok(m.name && m.brief && m.goal && m.hint, m.id + " needs its text");
+    assert.ok(E.DOCTRINES[m.doctrine], m.id + " names a doctrine that exists");
+    assert.ok(E.OBJECTIVES.indexOf(m.objective.kind) !== -1, m.id + " objective kind");
+
+    const g = E.createGame(C.optionsFor(m));
+    assert.equal(E.doctrineOf(g, PLAYER), m.doctrine, m.id + " must hand you its doctrine");
+    assert.ok(E.nodesOf(g, PLAYER).length > 0, m.id + " needs you to start somewhere");
+    assert.ok(E.nodesOf(g, ENEMY).length > 0, m.id + " needs an opponent");
+
+    // Every position must be reachable from your start, or part of the
+    // board is scenery and the brief may be impossible.
+    const reach = new Set(E.nodesOf(g, PLAYER).map((n) => n.id));
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const n of g.nodes) {
+        if (reach.has(n.id)) continue;
+        for (const nb of E.neighbors(g, n.id)) {
+          if (reach.has(nb)) { reach.add(n.id); grew = true; break; }
+        }
+      }
+    }
+    assert.equal(reach.size, g.nodes.length, m.id + " has unreachable ground");
+
+    // And the thing the brief asks for has to exist on the board.
+    if (m.objective.kind !== "eliminate" && m.objective.kind !== "survive") {
+      assert.ok(E.objectiveNodes(g, m.objective).length > 0,
+        m.id + " names an objective position that is not on its map");
+    }
+  }
+});

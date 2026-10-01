@@ -106,6 +106,15 @@
   .doctrade s { color: #ffa08c; text-decoration: none; }
   #ascRow button { flex: 1 1 auto; min-width: 0; padding: 6px 4px; }
 
+  /* A mission row says the three things that decide whether you pick
+     it: what it is called, which doctrine it hands you, and whether you
+     have already cleared it. */
+  .mission { display: flex; width: 100%; align-items: center; gap: 8px;
+             text-align: left; padding: 7px 9px; font-size: 11px; margin-bottom: 4px; }
+  .mission .mdoc { color: var(--muted); font-size: 10px; }
+  .mission .mtick { margin-left: auto; color: var(--player); font-size: 10px; }
+  .mission.on .mdoc { color: inherit; }
+
   /* ---- overlays ---- */
   .overlay {
     position: absolute; inset: 0; display: flex; justify-content: center;
@@ -285,6 +294,7 @@
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
     <span class="stat"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
     <span class="stat" id="statDoc"><span class="k">Doctrine</span><span class="v" id="stDoc">—</span></span>
+    <span class="stat" id="statObj" hidden><span class="k">Objective</span><span class="v" id="stObj">—</span></span>
     <span class="stat doomstat"><span class="k">Doomstar</span>
       <span class="chargebar" title="Charged by every supplied Relay you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
     </span>
@@ -343,6 +353,11 @@
           <button data-diff="1" class="on" title="An even fight: the AI builds at exactly your rate">Officer <small>even</small></button>
           <button data-diff="2" title="The AI builds at 175% of your rate, reacts fastest, and coordinates six positions">Commander <small>+75%</small></button>
         </div>
+        <details class="netbox" id="campaignBox">
+          <summary id="campaignSummary">Campaign</summary>
+          <div id="missionList"></div>
+          <div class="doctrade" id="missionBrief"></div>
+        </details>
         <div class="grouplabel" style="margin-bottom:6px">Doctrine</div>
         <div class="docgrid" id="docRow"></div>
         <div class="doctrade" id="docTrade"></div>
@@ -419,6 +434,7 @@
 
 <script src="vendor/peerjs.min.js"></script>
 <script src="engine.js"></script>
+<script src="campaign.js"></script>
 <script src="online.js"></script>
 <script src="net.js"></script>
 <script>
@@ -441,6 +457,8 @@
   let difficulty = 1;
   let doctrine = "standard";   // your standing pre-match choice
   let ascension = 0;           // extra handicap, unlocked by beating Commander
+  const CAMPAIGN = window.OutpostCampaign;
+  let mission = null;          // the campaign mission Deploy will launch, or null
   let sendFrac = 0.5;
 
   // Preferences survive a reload. Wrapped because storage throws in
@@ -527,13 +545,17 @@
   function newGame(seed) {
     const s = seed === undefined ? (Math.floor(Math.random() * 100000) + 1) : seed;
     const shape = boardShape();
-    game = E.createGame({
-      seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
-      doctrine: doctrine,
-      // Ascension is a solo ladder; an online match is two people's
-      // doctrines and nothing else.
-      ascension: isOnline() ? 0 : ascension
-    });
+    // A campaign mission brings its own board, brief and doctrine; a
+    // skirmish generates one. Online is always a skirmish.
+    game = mission && !isOnline()
+      ? E.createGame(CAMPAIGN.optionsFor(mission))
+      : E.createGame({
+          seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
+          doctrine: doctrine,
+          // Ascension is a solo ladder; an online match is two people's
+          // doctrines and nothing else.
+          ascension: isOnline() ? 0 : ascension
+        });
     // Seat 2 is a person online, so the bot must not also be playing it.
     if (isOnline()) { game.ai.timer = Infinity; }
     selection.clear(); pendingTarget = null;
@@ -835,6 +857,68 @@
     [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
   });
 
+  // ---- campaign --------------------------------------------------
+  // Five hand-built boards, each one handing you a doctrine and asking
+  // for something other than annihilation. Selecting one arms Deploy;
+  // "Skirmish" puts it back.
+  function campaignRecord() {
+    const p = profile.read();
+    return (p && p.campaign) || {};
+  }
+  function buildCampaign() {
+    if (!CAMPAIGN) return;
+    const done = campaignRecord();
+    const cleared = CAMPAIGN.MISSIONS.filter((m) => done[m.id] && done[m.id].won).length;
+    document.getElementById("campaignSummary").textContent =
+      "Campaign \u00b7 " + cleared + "/" + CAMPAIGN.MISSIONS.length;
+    // With a mission armed the panel stays open: coming back from a
+    // match to a collapsed panel hides the thing you are in the middle
+    // of doing.
+    if (mission) document.getElementById("campaignBox").open = true;
+    const list = document.getElementById("missionList");
+    list.innerHTML = "";
+    for (const m of CAMPAIGN.MISSIONS) {
+      const rec = done[m.id];
+      const b = document.createElement("button");
+      b.className = "mission" + (mission && mission.id === m.id ? " on" : "");
+      b.dataset.mission = m.id;
+      const d = E.DOCTRINES[m.doctrine];
+      b.innerHTML = "<span>" + m.name + "</span>" +
+        "<span class='mdoc'>" + d.icon + " " + d.label + "</span>" +
+        "<span class='mtick'>" + (rec && rec.won
+          ? "\u2713 " + mmss(rec.best) : "") + "</span>";
+      list.appendChild(b);
+    }
+    showMission();
+  }
+  function showMission() {
+    const el = document.getElementById("missionBrief");
+    const deploy = document.getElementById("btnStart");
+    if (!mission) {
+      el.innerHTML = "<b>Pick a mission</b> \u2014 each one hands you a doctrine and " +
+        "a board built so that doctrine is the way through.";
+      deploy.textContent = "Deploy";
+      return;
+    }
+    const d = E.DOCTRINES[mission.doctrine];
+    el.innerHTML = "<div style='margin-bottom:6px'>" + mission.brief + "</div>" +
+      "<b>" + mission.goal + "</b><br>" +
+      "<s>" + d.icon + " " + d.label + " \u2014 " + mission.hint + "</s>";
+    deploy.textContent = "Deploy \u00b7 " + mission.name;
+    [...document.getElementById("missionList").children].forEach(
+      (c) => c.classList.toggle("on", c.dataset.mission === mission.id));
+  }
+  if (CAMPAIGN) {
+    document.getElementById("missionList").addEventListener("click", (ev) => {
+      const b = ev.target.closest("button"); if (!b) return;
+      const picked = CAMPAIGN.byId(b.dataset.mission);
+      // Tapping the selected mission again deselects it, which is the
+      // only way back to a skirmish without hunting for another control.
+      mission = (mission && mission.id === picked.id) ? null : picked;
+      buildCampaign();
+    });
+  }
+
   // The picker is built from the engine's own table, so a doctrine can
   // never be listed here with numbers the simulation does not run.
   function buildDoctrinePicker() {
@@ -855,7 +939,9 @@
     // Standard has no cost, so it gets no red half — a strikethrough
     // clause reading "and no weakness" looked like a drawback.
     document.getElementById("docTrade").innerHTML =
-      "<b>" + d.up + ".</b>" + (d.down ? " <s>" + d.down + ".</s>" : "");
+      "<b>" + d.up + ".</b>" + (d.down ? " <s>" + d.down + ".</s>" : "") +
+      (mission ? "<br><s>" + mission.name + " hands you " +
+        E.DOCTRINES[mission.doctrine].label + " instead.</s>" : "");
     [...document.getElementById("docRow").children].forEach(
       (c) => c.classList.toggle("on", c.dataset.doc === doctrine));
   }
@@ -1239,6 +1325,20 @@
     },
     write(p) {
       try { localStorage.setItem("outpost.profile", JSON.stringify(p)); } catch (e) { /* not fatal */ }
+    },
+    // A mission is its own kind of result: cleared or not, and how fast.
+    recordMission(id, won, seconds) {
+      const p = this.read();
+      p.campaign = p.campaign || {};
+      const prev = p.campaign[id];
+      const secs = Math.max(1, Math.floor(seconds));
+      if (won) {
+        p.campaign[id] = { won: true, best: prev && prev.won ? Math.min(prev.best, secs) : secs };
+      } else if (!prev) {
+        p.campaign[id] = { won: false, best: 0 };
+      }
+      this.write(p);
+      return p;
     },
     record(won, tier, seconds, asc) {
       const p = this.read();
@@ -2053,6 +2153,27 @@
       ? relays + " Relay" + (relays === 1 ? "" : "s") + " charging (+" + relays + " every " + E.DOOM_CHARGE_INTERVAL + "s)"
       : "No Relays charging \u2014 take a Relay and keep it supplied";
 
+    // Objective readout: only a campaign mission has one.
+    const objStat = document.getElementById("statObj");
+    const prog = E.objectiveProgress(game);
+    objStat.hidden = !prog;
+    if (prog) {
+      const clock = prog.left === null || prog.left === undefined
+        ? "" : " \u00b7 " + mmss(Math.ceil(prog.left)) + " left";
+      let txt = "";
+      if (prog.kind === "hold") {
+        txt = Math.floor(prog.held) + "/" + prog.need + "s" +
+          (prog.onTarget ? "" : " \u2014 not held");
+      } else if (prog.kind === "survive") {
+        txt = "hold out";
+      } else if (prog.kind === "capture") {
+        txt = "take the target";
+      }
+      document.getElementById("stObj").textContent = txt + clock;
+      document.getElementById("stObj").style.color =
+        prog.kind === "hold" && !prog.onTarget ? "var(--enemy)" : "";
+    }
+
     // Only mark a target once the weapon could actually be used.
     const armed = (game.charge[mySeat] || 0) >= E.DOOM_CHARGE_NEEDED;
     const dt2 = armed ? E.doomstarTarget(game, mySeat) : null;
@@ -2094,7 +2215,18 @@
   function showEnd() {
     const won = game.winner === mySeat;
     if (won) sfx.win(); else sfx.lose();
-    if (!isOnline()) {
+    if (game.missionId) {
+      // A mission result is not a skirmish result; keeping them apart
+      // stops the tiers' win rate being polluted by scripted boards.
+      profile.recordMission(game.missionId, won, game.time);
+      const m = CAMPAIGN && CAMPAIGN.byId(game.missionId);
+      const line = document.getElementById("endRecord");
+      if (line && m) {
+        line.textContent = m.name + " \u00b7 " + E.DOCTRINES[m.doctrine].label +
+          (won ? " \u00b7 cleared" : " \u00b7 " + m.goal);
+      }
+      buildCampaign();
+    } else if (!isOnline()) {
       const before = profile.read().ascBest;
       const p = profile.record(won, difficulty, Math.floor(game.time), ascension);
       const line = document.getElementById("endRecord");
@@ -2112,9 +2244,14 @@
     }
     document.getElementById("endTitle").textContent = won ? "Victory" : "Defeat";
     document.getElementById("endTitle").style.color = won ? "var(--player)" : "var(--enemy)";
+    const stillStanding = game.nodes.some((n) => n.owner === mySeat);
     document.getElementById("endText").textContent = won
-      ? "The map is yours. Every enemy position has fallen."
-      : "Your last position was overrun.";
+      ? (game.missionId && game.objective.kind !== "eliminate"
+          ? "Objective complete."
+          : "The map is yours. Every enemy position has fallen.")
+      : stillStanding
+        ? "The clock beat you. The objective was never met."
+        : "Your last position was overrun.";
     const t = Math.floor(game.time);
     document.getElementById("endTime").textContent =
       Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
@@ -2200,6 +2337,7 @@
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
   })();
 
+  buildCampaign();
   buildDoctrinePicker();
   buildAscension();
   renderProfile();
