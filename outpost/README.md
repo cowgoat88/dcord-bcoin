@@ -628,6 +628,15 @@ If the host leaves, or the connection drops, the other side gets a
 notice saying so and a way back to the menu, rather than being left
 tapping a frozen board.
 
+The guest's Doomstar was broken for a while, and the shape of it is
+worth keeping: seat 2 is the AI in a solo match and the second person
+online, and the step loop fired that seat's weapon automatically. The
+host simulates both sides, so online it spent the guest's charge the
+tick it filled, at a target they never picked — the bar filled, emptied
+itself, and their FIRE button never lit. An online game is now marked
+as having a person in seat 2, and nothing in the simulation acts for a
+seat somebody is sitting in.
+
 ### Why this did not work between two phones
 
 It was reported broken from two iPhones: the guest was told there was no

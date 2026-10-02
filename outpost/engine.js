@@ -912,6 +912,14 @@
       holdTimer: 0,
       missionId: o.missionId || null,
       difficulty: o.difficulty === undefined ? 1 : o.difficulty,
+      // Seat 2 is the AI in a solo match and the second person online.
+      // Nothing in the simulation may act for that seat when somebody is
+      // sitting in it -- not the opponent routine, and not the automatic
+      // Doomstar. Online this went unnoticed for a while because the
+      // host simulates both sides: the guest's weapon charged, the host
+      // spent it on the tick it filled, and the guest saw the bar fill
+      // and empty with the FIRE button never lighting.
+      humanFoe: !!o.humanFoe,
       ai: { timer: 0.8 },
       // Drained by the view each frame and turned into particles, shake
       // and floating numbers. The engine stays render-free but still gets
@@ -1085,8 +1093,8 @@
     stepAssaults(game, dt);
     stepCharge(game, dt);
 
-    if (canFire(game, ENEMY)) fireDoomstar(game, ENEMY);
-    stepAI(game, dt);
+    if (!game.humanFoe && canFire(game, ENEMY)) fireDoomstar(game, ENEMY);
+    if (!game.humanFoe) stepAI(game, dt);
 
     // Win check. A side is eliminated when it holds no nodes and has
     // nothing still in transit that could retake one.

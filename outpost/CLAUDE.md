@@ -242,6 +242,27 @@ check the stand-in's fidelity before believing it.
 `net.test.js` covers the same state machine headlessly with a fake Peer
 and controllable timers.
 
+### Seat 2 means two different things, and the engine has to be told which
+
+Seat `ENEMY` is the AI in a solo match and the second person online.
+Anything in the simulation that acts for seat 2 unprompted is correct in
+the first case and a bug in the second, and the host runs the
+simulation for both sides, so the bug lands on the guest.
+
+It shipped that way: `step()` auto-fired the Doomstar for seat 2 every
+tick. Online that spent the guest's charge the instant it filled, at a
+target they never chose. From the guest's seat the bar filled, emptied
+itself, and the FIRE button never lit -- which reads as "the weapon is
+broken", not as "the host fired it for me".
+
+The online path had been disabling the AI with `game.ai.timer =
+Infinity`, which says nothing about the rest of the loop and only
+covered `stepAI`. There is now an explicit `game.humanFoe`, set at all
+four places an online game is built, and both `stepAI` and the
+automatic Doomstar are gated on it. Anything added later that acts for
+seat 2 on its own goes behind the same flag -- grep for it before
+writing a new one.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

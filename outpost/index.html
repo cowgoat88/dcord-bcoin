@@ -722,8 +722,11 @@
           // doctrines and nothing else.
           ascension: isOnline() ? 0 : ascension
         });
-    // Seat 2 is a person online, so the bot must not also be playing it.
-    if (isOnline()) { game.ai.timer = Infinity; }
+    // Seat 2 is a person online, so nothing in the simulation may act
+    // for it -- not the opponent routine, and not the automatic
+    // Doomstar, which used to spend the guest's charge the tick it
+    // filled and leave them watching the bar empty itself.
+    if (isOnline()) { game.humanFoe = true; game.ai.timer = Infinity; }
     selection.clear(); pendingTarget = null;
     particles = []; floaters = []; nodeFx.clear();
     shake = { mag: 0, t: 0 };
@@ -1710,7 +1713,7 @@
         // Rebuild the identical board from the seed the host sent, then
         // take its state. No geometry crosses the wire.
         game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
-        game.ai.timer = Infinity;
+        game.humanFoe = true; game.ai.timer = Infinity;
         applyWelcomeDoctrines(msg);
         E.applySnapshot(game, msg.snapshot);
         selection.clear(); pendingTarget = null;
@@ -1764,7 +1767,7 @@
           if (joined) onOpponentArrived();
         }
       });
-      game.ai.timer = Infinity;
+      game.humanFoe = true; game.ai.timer = Infinity;
       netMsg("Hosting in this tab. Open the same page in a second tab and press Two tabs there.", "good");
       showBadge(false, "Waiting");
       syncNetHint();
@@ -1773,7 +1776,7 @@
         engine: E, transport: link.transport, doctrine: doctrine,
         onWelcome: (msg) => {
           game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
-          game.ai.timer = Infinity;
+          game.humanFoe = true; game.ai.timer = Infinity;
           applyWelcomeDoctrines(msg);
           E.applySnapshot(game, msg.snapshot);
           selection.clear(); pendingTarget = null;

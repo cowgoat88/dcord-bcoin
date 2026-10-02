@@ -1264,6 +1264,48 @@ test("every ascension rung says what it does", () => {
   }
 });
 
+test("seat 2 held by a person keeps its own Doomstar to fire", () => {
+  // Reported from a real match: online, the guest's weapon charges and
+  // then discharges on its own, the FIRE button never lights, nothing
+  // visible happens. The step loop auto-fired for seat ENEMY on every
+  // tick, which is right when that seat is the AI and wrong when it is
+  // the second person -- the host's simulation spent the guest's charge
+  // the instant it filled, at a target the guest never chose.
+  const human = quiet({ humanFoe: true });
+  E.doomstarNode(human).owner = ENEMY;
+  human.charge[ENEMY] = E.DOOM_CHARGE_NEEDED;
+  const victim = human.nodes.find((n) => n.type !== "doomstar");
+  victim.owner = PLAYER; victim.garrison = 50;
+  run(human, 3);
+  assert.equal(human.charge[ENEMY], E.DOOM_CHARGE_NEEDED,
+    "nobody may spend a person's charge for them");
+  assert.equal(E.canFire(human, ENEMY), true, "so their FIRE button lights");
+  assert.equal(E.applyOrderAs(human, { kind: "fire" }, ENEMY), undefined,
+    "and the order the guest sends is accepted");
+  assert.ok(human.charge[ENEMY] < E.DOOM_CHARGE_NEEDED, "which spends it");
+
+  // The AI still fires its own, or a solo match loses the weapon.
+  const solo = quiet();
+  E.doomstarNode(solo).owner = ENEMY;
+  solo.charge[ENEMY] = E.DOOM_CHARGE_NEEDED;
+  const target = solo.nodes.find((n) => n.type !== "doomstar");
+  target.owner = PLAYER; target.garrison = 50;
+  run(solo, 3);
+  assert.ok(solo.charge[ENEMY] < E.DOOM_CHARGE_NEEDED,
+    "an AI opponent must still fire unprompted");
+});
+
+test("a human-held seat 2 is not played by the AI either", () => {
+  const g = quiet({ humanFoe: true });
+  g.ai.timer = 0;                       // invite it to act
+  const before = E.nodesOf(g, ENEMY).map((n) => n.garrison);
+  run(g, 6);
+  assert.equal(g.fleets.filter((f) => f.owner === ENEMY).length, 0,
+    "no orders may be issued for a seat somebody is sitting in");
+  assert.ok(E.nodesOf(g, ENEMY).every((n, i) => n.garrison >= before[i]),
+    "and its garrisons must only grow");
+});
+
 test("a strike is recorded for both the side firing and the side hit", () => {
   const g = quiet();
   E.doomstarNode(g).owner = PLAYER;

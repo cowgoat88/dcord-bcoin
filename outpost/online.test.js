@@ -11,7 +11,7 @@ const O = require("./online.js");
 function pair(opts) {
   const o = opts || {};
   const link = O.loopback();
-  const hostGame = E.createGame({ seed: o.seed || 7, mapW: 1000, mapH: 640 });
+  const hostGame = E.createGame({ seed: o.seed || 7, mapW: 1000, mapH: 640, humanFoe: true });
   hostGame.ai.timer = Infinity;              // no AI in an online match
   const received = [];
   const rejects = [];
@@ -182,4 +182,32 @@ test("a rematch keeps the guest's doctrine", () => {
   s.host.restart(fresh);
   assert.equal(E.doctrineOf(fresh, O.GUEST_SEAT), "vanguard");
   assert.equal(s.welcome.doctrine[O.GUEST_SEAT], "vanguard");
+});
+
+test("the guest's Doomstar is theirs to fire, not the host's to spend", () => {
+  // Reported from a real match: online, the guest's weapon charges and
+  // then discharges by itself, the FIRE button never lights, nothing
+  // happens. The host simulates both sides, and its step loop fired
+  // seat 2's weapon automatically the way it does against the AI -- so
+  // the charge was always spent before the guest could see it full.
+  const s = pair();
+  const centre = s.hostGame.nodes.find((n) => n.type === "doomstar");
+  centre.owner = 2;                                  // the guest holds it
+  s.hostGame.charge[2] = E.DOOM_CHARGE_NEEDED;
+  const victim = s.hostGame.nodes.find((n) => n.owner === 1 && n.type !== "doomstar");
+  victim.garrison = 60;
+  const before = victim.garrison;
+
+  for (let i = 0; i < 180; i++) E.step(s.hostGame, 1 / 60);
+  assert.equal(s.hostGame.charge[2], E.DOOM_CHARGE_NEEDED,
+    "three seconds of simulation must not have spent it");
+
+  s.host.tick(1 / 60);                               // push a snapshot
+  assert.equal(E.canFire(s.guestGame, 2), true,
+    "and the guest's own copy must agree the weapon is ready");
+
+  s.guest.sendOrder({ kind: "fire", target: victim.id });
+  assert.ok(s.hostGame.charge[2] < E.DOOM_CHARGE_NEEDED, "firing spends the charge");
+  assert.ok(victim.garrison < before, "and the strike lands on what they aimed at");
+  assert.equal(s.hostGame.stats[2].fired, 1, "it counts as theirs");
 });
