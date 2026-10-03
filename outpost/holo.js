@@ -823,6 +823,12 @@
       // Plane layer first: nothing flat can hide anything upright.
       for (const n of game.nodes) drawGround(n);
 
+      // The caller's board-plane marks (selection rings, order routes)
+      // sit with the ground, so stations and fleets stand over them
+      // instead of being struck through. Wrapped in save/restore so a
+      // caller cannot leave dash or alpha state behind for the scene.
+      if (frame.underlay) { ctx.save(); frame.underlay(ctx, api.screenOf); ctx.restore(); }
+
       // Upright layer, painter-sorted far to near by depth of the foot.
       items.length = 0;
       for (const n of game.nodes) {
@@ -850,9 +856,21 @@
       labels.sort((a, b) => b.depth - a.depth);
       ctx.globalAlpha = 1;
       for (const l of labels) text(l.str, l.x, l.y, l.px, l.fill, !l.fleet);
+
+      // Then the caller's text and effects, over the numbers: a preview
+      // pill or a floating "+5" that a station could hide is worse than
+      // useless, so nothing the scene draws may cover it.
+      if (frame.overlay) {
+        ctx.save();
+        ctx.globalAlpha = 1;
+        frame.overlay(ctx, api.screenOf);
+        ctx.restore();
+      }
     }
 
     // ---- interface ------------------------------------------------------
+    // `const api` is referenced by render() through the closure; it is
+    // only ever called after create() has returned, so the order is safe.
     const api = {
       name: "holo",
       resize,

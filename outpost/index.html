@@ -314,7 +314,9 @@
      never has to truncate one. Order of sacrifice: income (derivable),
      the doctrine pairing (in its own tooltip and on the start screen),
      enemy tech (on the end screen), then the labels themselves. */
-  @media (max-width: 1250px) { #statIncome { display: none; } }
+  /* The 2D/3D button took the last of the slack at 1280px, so income now
+     goes below 1330px rather than 1250px. */
+  @media (max-width: 1330px) { #statIncome { display: none; } }
   @media (max-width: 1120px) { #statDoc { display: none; } }
   @media (max-width: 900px)  { #statFoeTech { display: none; } }
   /* Labels go before any readout does: the numbers are colour-coded and
@@ -349,6 +351,12 @@
     #selInfo { flex-basis: 100%; min-width: 0; order: -1; }
     .card { padding: 20px; }
     .card h1 { font-size: 20px; letter-spacing: 4px; }
+  }
+  /* At 320px even the single row overflowed by 25px once the view button
+     joined it, so the chrome tightens a little more. */
+  @media (max-width: 340px) {
+    #hud { gap: 5px; padding: 5px 6px; }
+    #hud button { padding: 5px 6px; }
   }
   /* A 640px-tall phone cannot fit the full start card, and Deploy
      dropping below the fold is the difference between a game and a
@@ -388,6 +396,7 @@
     <span class="stat" id="statIncome"><span class="k">Income</span><span class="v" id="stIncome">0/s</span></span>
     <span class="stat"><span class="k">Time</span><span class="v" id="stTime">0:00</span></span>
     <span class="spacer"></span>
+    <button id="btnView" aria-label="Switch to 3D view" title="Switch to the 3D holotable (V)">3D</button>
     <button id="btnSound" aria-label="Sound on or off" title="Sound (M)">♪</button>
     <button id="btnPause" title="Pause or resume (Space)">Pause</button>
     <button id="btnHelp" aria-label="How to play" title="How to play">?</button>
@@ -603,6 +612,7 @@
 <script src="campaign.js"></script>
 <script src="online.js"></script>
 <script src="net.js"></script>
+<script src="holo.js"></script>
 <script>
 (function () {
   "use strict";
@@ -652,10 +662,12 @@
   // renderer; input, selection and the HUD stay out here and only ask it
   // two things: what is under this point, and where does this world point
   // land. `flat` is the original top-down view and is always available.
-  // `viewPref` is the stored choice ("flat" | "holo"); nothing acts on it
-  // until the holotable renderer is loaded and the control exists.
+  // `viewPref` is the stored choice ("flat" | "holo"). The holotable is
+  // built on first use, not at load, so a player who never switches pays
+  // nothing for it. Both draw on the one canvas.
   let renderer = null;           // assigned once `flat` is defined, below
   let viewPref = "flat";
+  let holo = null;               // the 3D renderer, once it has been needed
 
   // Presentation-only state, kept separate from the simulation.
   let selection = new Set();
@@ -718,6 +730,50 @@
   }
   window.addEventListener("resize", resize);
 
+  // Which way the table faces is part of a game, not of the camera: each
+  // player's own Command should be the nearest thing on screen, host and
+  // guest alike, so it is set whenever a game begins and on every switch
+  // to 3D. A player's own orbiting only lasts until the next game.
+  function faceHome() {
+    if (renderer && renderer.name === "holo" && game) {
+      renderer.setYaw(window.OutpostHolo.yawFacing(game, mySeat));
+    }
+  }
+
+  function setRenderer(r) {
+    renderer = r;
+    hoverId = null;
+    faceHome();
+    resize();
+    syncViewBtn();
+  }
+
+  // The button names what pressing it does, so it reads "3D" while the
+  // flat view is showing.
+  function syncViewBtn() {
+    const b = document.getElementById("btnView");
+    const toHolo = renderer.name !== "holo";
+    b.textContent = toHolo ? "3D" : "2D";
+    b.setAttribute("aria-label", toHolo ? "Switch to 3D view" : "Switch to 2D view");
+    b.title = toHolo ? "Switch to the 3D holotable (V)" : "Switch back to the flat map (V)";
+  }
+
+  // Switching only swaps who draws: selection, a pending target, the
+  // clock and the simulation are all untouched, so it is safe mid-match.
+  function setView(name) {
+    if (name === "holo") {
+      if (!window.OutpostHolo) { toast("3D view is unavailable"); return; }
+      if (!holo) holo = window.OutpostHolo.create(canvas);
+      setRenderer(holo);
+    } else {
+      setRenderer(flat);
+    }
+    viewPref = renderer.name === "holo" ? "holo" : "flat";
+    prefs.write({ view: viewPref });
+  }
+  document.getElementById("btnView").addEventListener("click", () =>
+    setView(renderer.name === "holo" ? "flat" : "holo"));
+
   const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
   // The flat board is a plane, so height has nowhere to go: wz is accepted
   // to match the interface and ignored.
@@ -753,6 +809,7 @@
     syncPauseBtn();
     document.getElementById("endOverlay").hidden = true;
     document.getElementById("seedLabel").textContent = s;
+    faceHome();
     resize();
     updateHud();
     if (isOnline() && netRole === "host") session.restart(game);
@@ -787,7 +844,61 @@
     return { x: ev.clientX - r.left, y: ev.clientY - r.top };
   }
 
+  // Camera gestures (3D only). They are kept apart from order gestures by
+  // what they use: one finger or the left button only ever orders, while
+  // a second finger or the right button only ever moves the camera. The
+  // moment a second finger lands, whatever the first one had started (a
+  // drag, a long-press) is dropped, and nothing fires until every finger
+  // has lifted, so the end of a camera move can never read as a tap.
+  const ORBIT_PER_PX = 0.008;       // radians of yaw per CSS px of travel
+  const touches = new Map();        // pointerId -> { x, y }
+  let camMove = null;               // { mouse, id } | { mid, dist }
+
+  const holoOn = () => renderer.name === "holo";
+  function twoFingers() {
+    const [a, b] = [...touches.values()];
+    return { mx: (a.x + b.x) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
+  }
+
+  function beginCamera(ev) {
+    clearTimeout(pressTimer);
+    drag = null;
+    if (ev.pointerType === "mouse") camMove = { mouse: true, id: ev.pointerId, x: localPt(ev).x };
+    else { const t = twoFingers(); camMove = { mouse: false, mx: t.mx, dist: t.dist }; }
+  }
+
+  function moveCamera(ev) {
+    if (camMove.mouse) {
+      if (ev.pointerId !== camMove.id) return;
+      const x = localPt(ev).x;
+      renderer.orbit((x - camMove.x) * ORBIT_PER_PX);
+      camMove.x = x;
+    } else if (touches.size >= 2) {
+      const t = twoFingers();
+      renderer.orbit((t.mx - camMove.mx) * ORBIT_PER_PX);
+      renderer.zoomBy(t.dist / camMove.dist);
+      camMove.mx = t.mx; camMove.dist = t.dist;
+    }
+  }
+
+  canvas.addEventListener("contextmenu", (ev) => { if (holoOn()) ev.preventDefault(); });
+  canvas.addEventListener("wheel", (ev) => {
+    if (!holoOn()) return;
+    ev.preventDefault();
+    renderer.zoomBy(Math.exp(-ev.deltaY * 0.0015));
+  }, { passive: false });
+
   canvas.addEventListener("pointerdown", (ev) => {
+    if (ev.pointerType !== "mouse") touches.set(ev.pointerId, localPt(ev));
+    if (holoOn() && started && game && !game.winner) {
+      const rightMouse = ev.pointerType === "mouse" && ev.button === 2;
+      if (rightMouse || (ev.pointerType !== "mouse" && touches.size >= 2)) {
+        try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* not fatal */ }
+        if (!camMove) beginCamera(ev);
+        return;
+      }
+      if (camMove) return;            // a third finger, or a click mid-orbit
+    }
     if (!started || !game || game.winner) return;
     // Pointer capture is a nicety (it keeps a drag alive if the finger
     // leaves the canvas) but it throws in enough real situations — a
@@ -823,6 +934,8 @@
 
   canvas.addEventListener("pointermove", (ev) => {
     const p = localPt(ev);
+    if (touches.has(ev.pointerId)) touches.set(ev.pointerId, p);
+    if (camMove) { if (holoOn()) moveCamera(ev); return; }
     const touch = ev.pointerType !== "mouse";
     const n = renderer.pick(p.x, p.y, touch && !!drag);
     hoverId = n ? n.id : null;
@@ -835,7 +948,18 @@
     }
   });
 
+  // Ends a camera move once the last finger (or the right button) is up.
+  // Returns true when the event belonged to the camera and must not go on
+  // to be read as a tap.
+  function endCameraPointer(ev) {
+    touches.delete(ev.pointerId);
+    if (!camMove) return false;
+    if (camMove.mouse ? ev.pointerId === camMove.id : !touches.size) camMove = null;
+    return true;
+  }
+
   canvas.addEventListener("pointerup", (ev) => {
+    if (endCameraPointer(ev)) return;
     clearTimeout(pressTimer);
     if (!started || !game || game.winner || !drag) { drag = null; return; }
     const d = drag; drag = null;
@@ -896,7 +1020,10 @@
     pendingTarget = null;
   });
 
-  canvas.addEventListener("pointercancel", () => { clearTimeout(pressTimer); drag = null; });
+  canvas.addEventListener("pointercancel", (ev) => {
+    endCameraPointer(ev);
+    clearTimeout(pressTimer); drag = null;
+  });
 
   // One funnel for every action, so online and local play cannot drift
   // apart in behaviour. A guest asks; everyone else acts.
@@ -1476,6 +1603,11 @@
     else if (k === "u") doUpgrade();
     else if (k === "f") doFire();
     else if (k === "m") document.getElementById("btnSound").click();
+    else if (k === "v") document.getElementById("btnView").click();
+    // Q and E are taken by research, so the camera uses the bracket keys
+    // (and the arrows) for a slow orbit; held keys repeat.
+    else if (holoOn() && (k === "[" || k === "arrowleft")) renderer.orbit(-0.09);
+    else if (holoOn() && (k === "]" || k === "arrowright")) renderer.orbit(0.09);
     else if (k === "q") doResearch("assault");
     else if (k === "w") doResearch("fortify");
     else if (k === "escape") {
@@ -1736,6 +1868,7 @@
         applyWelcomeDoctrines(msg);
         E.applySnapshot(game, msg.snapshot);
         selection.clear(); pendingTarget = null;
+        faceHome();
         resize();
         started = true; paused = false;
         document.getElementById("startOverlay").hidden = true;
@@ -1799,6 +1932,7 @@
           applyWelcomeDoctrines(msg);
           E.applySnapshot(game, msg.snapshot);
           selection.clear(); pendingTarget = null;
+          faceHome();
           resize();
           started = true; paused = false;
           document.getElementById("startOverlay").hidden = true;
@@ -2486,12 +2620,27 @@
     return { force, defence: Math.max(0, defence), friendly, wins: friendly || force > defence };
   }
 
+  // What an order would show, decided once so both renderers say the same
+  // thing: null when no source can reach the target at all (a different
+  // answer from "not enough force"), otherwise the colour, the verdict
+  // and the words.
+  function orderPreviewInfo(sourceIds, tgt) {
+    const routed = sourceIds.filter((id) => E.findPath(game, id, tgt.id, mySeat));
+    if (!routed.length) return null;
+    const p = previewOrder(routed, tgt);
+    return {
+      wins: p.wins,
+      col: p.friendly ? "#22d3ee" : p.wins ? "#4ade80" : "#f87171",
+      label: p.friendly
+        ? "+" + p.force + " reinforce"
+        : p.force + " vs " + Math.ceil(p.defence) + (p.wins ? "  TAKES IT" : "  TOO WEAK")
+    };
+  }
+
   function drawOrderPreview(sourceIds, tgt) {
     const r = E.nodeStats(tgt).radius;
-    // No route at all is a different answer from "not enough force", and
-    // the player needs to see which one it is.
-    const routed = sourceIds.filter((id) => E.findPath(game, id, tgt.id, mySeat));
-    if (!routed.length) {
+    const info = orderPreviewInfo(sourceIds, tgt);
+    if (!info) {
       ctx.fillStyle = "rgba(248,113,113,.13)";
       ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.fill();
       ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2;
@@ -2502,18 +2651,14 @@
       ctx.fillText("NO ROUTE", tgt.x, tgt.y - r - 26);
       return;
     }
-    const p = previewOrder(routed, tgt);
-    const col = p.friendly ? "#22d3ee" : p.wins ? "#4ade80" : "#f87171";
+    const col = info.col, label = info.label;
 
-    ctx.fillStyle = p.wins ? "rgba(74,222,128,.13)" : "rgba(248,113,113,.13)";
+    ctx.fillStyle = info.wins ? "rgba(74,222,128,.13)" : "rgba(248,113,113,.13)";
     ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = .9;
     ctx.beginPath(); ctx.arc(tgt.x, tgt.y, r + 15, 0, Math.PI * 2); ctx.stroke();
     ctx.globalAlpha = 1;
 
-    const label = p.friendly
-      ? "+" + p.force + " reinforce"
-      : p.force + " vs " + Math.ceil(p.defence) + (p.wins ? "  TAKES IT" : "  TOO WEAK");
     ctx.font = "700 13px ui-monospace, monospace";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     const w = ctx.measureText(label).width + 16;
@@ -2552,13 +2697,19 @@
     }
   }
 
+  // A drag from a grouped position sends the whole group; from any other
+  // one of yours it sends just that position.
+  function dragSources() {
+    return selection.has(drag.fromId) ? [...selection] : [drag.fromId];
+  }
+
   function drawDragArrow() {
     if (!drag || drag.fromId === null || !drag.moved) return;
     const a = game.nodes[drag.fromId];
     const w = toWorld(drag.x, drag.y);
     const tgt = renderer.pick(drag.x, drag.y);
     const valid = tgt && tgt.id !== drag.fromId;
-    const sources = selection.has(drag.fromId) ? [...selection] : [drag.fromId];
+    const sources = dragSources();
 
     // Draw a lane-following preview from every contributing position, so a
     // grouped order visibly shows all the forces that will converge.
@@ -2648,6 +2799,286 @@
       ctx.fillText(f.text, f.x, f.y - 34 - (1 - k) * 22);
     }
     ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------
+  // Holotable overlays
+  // ---------------------------------------------------------------
+  // The 2D overlays above are drawn in world units under one transform.
+  // In 3D there is no such transform, so the same things are drawn in
+  // screen space after asking the renderer where a world point landed
+  // (`so`). What to show is still decided up here from the same state --
+  // selection, pending target, aim mode, E.findPath routes, the preview
+  // numbers from orderPreviewInfo -- and holo.js only supplies the
+  // canvas and the projection. It calls holoUnderlay with the board's
+  // ground layer (so stations stand over rings and routes) and
+  // holoOverlay after the garrison numbers (so nothing hides text).
+  const HOLO_TEXT_FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+  let holoPreviews = [];            // [{ tgt, sources, info, pending }] for this frame
+
+  // Which targets to annotate, mirroring the flat view's three cases: the
+  // drag in progress, the touch tap awaiting confirmation, and the hover
+  // of a mouse while a group is selected.
+  function collectPreviews() {
+    const out = [];
+    if (drag && drag.fromId !== null && drag.moved) {
+      const tgt = renderer.pick(drag.x, drag.y);
+      if (tgt && tgt.id !== drag.fromId) {
+        const sources = dragSources();
+        out.push({ tgt, sources, info: orderPreviewInfo(sources, tgt), pending: false });
+      }
+    }
+    if (pendingTarget !== null && game.nodes[pendingTarget] && selection.size) {
+      const tgt = game.nodes[pendingTarget], sources = [...selection];
+      out.push({ tgt, sources, info: orderPreviewInfo(sources, tgt), pending: true });
+    }
+    if (!drag && selection.size && hoverId !== null && hoverId !== pendingTarget) {
+      const tgt = game.nodes[hoverId];
+      if (tgt && !selection.has(tgt.id)) {
+        const sources = [...selection];
+        out.push({ tgt, sources, info: orderPreviewInfo(sources, tgt), pending: false });
+      }
+    }
+    return out;
+  }
+
+  // A circle lying on the board around a position, as a screen path.
+  function holoRing(c, so, x, y, r) {
+    c.beginPath();
+    for (let i = 0; i <= 40; i++) {
+      const a = i * Math.PI / 20;
+      const q = so(x + Math.cos(a) * r, y + Math.sin(a) * r, 0);
+      if (!q) continue;
+      i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y);
+    }
+  }
+  function holoArc(c, so, x, y, r, a0, span) {
+    c.beginPath();
+    for (let i = 0; i <= 10; i++) {
+      const q = so(x + Math.cos(a0 + span * i / 10) * r, y + Math.sin(a0 + span * i / 10) * r, 0);
+      if (!q) continue;
+      i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y);
+    }
+  }
+  // A polyline of world points along the board, for order routes.
+  function holoRoute(c, so, pts) {
+    c.beginPath();
+    pts.forEach((pt, i) => {
+      const q = so(pt.x, pt.y, 2);
+      if (!q) return;
+      i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y);
+    });
+    c.stroke();
+  }
+
+  function holoUnderlay(c, so) {
+    const now = performance.now();
+    const R = (n) => E.nodeStats(n).radius;
+    holoPreviews = collectPreviews();
+    c.lineJoin = "round";
+
+    // Hover, then selection, as rings on the board around the position.
+    if (hoverId !== null && game.nodes[hoverId] && !selection.has(hoverId)) {
+      const n = game.nodes[hoverId];
+      c.globalAlpha = 0.5; c.strokeStyle = "#e2f7ff"; c.lineWidth = 1.5;
+      holoRing(c, so, n.x, n.y, R(n) + 8); c.stroke();
+    }
+    c.setLineDash([6, 5]); c.lineDashOffset = -now * 0.012;
+    c.globalAlpha = 1; c.strokeStyle = "#e2f7ff"; c.lineWidth = 2.5;
+    for (const id of selection) {
+      const n = game.nodes[id];
+      if (n) { holoRing(c, so, n.x, n.y, R(n) + 11); c.stroke(); }
+    }
+    c.setLineDash([]);
+
+    // Danger first: forces closing on your positions, and fights in progress.
+    for (const n of game.nodes) {
+      if (n.owner === mySeat && E.incoming(game, n.id, foeSeat) > 0) {
+        const beats = 0.5 + 0.5 * Math.abs(Math.sin(now * 0.006));
+        c.globalAlpha = 0.4 + beats * 0.5; c.strokeStyle = "#fb7185"; c.lineWidth = 2.5;
+        holoRing(c, so, n.x, n.y, R(n) + 13 + beats * 3); c.stroke();
+      }
+      if (n.assault) {
+        c.globalAlpha = 0.85; c.strokeStyle = colorOf(n.assault.owner); c.lineWidth = 2.5;
+        c.setLineDash([3, 4]);
+        holoRing(c, so, n.x, n.y, R(n) + 17); c.stroke();
+        c.setLineDash([]);
+      }
+    }
+
+    // The Doomstar's chosen victim, as four turning brackets.
+    if (doomTargetId !== null && !aiming && game.nodes[doomTargetId]) {
+      const n = game.nodes[doomTargetId], t = now * 0.004;
+      c.globalAlpha = 0.9; c.strokeStyle = "#ff7a5c"; c.lineWidth = 2.5;
+      for (let k = 0; k < 4; k++) {
+        holoArc(c, so, n.x, n.y, R(n) + 24 + Math.sin(t) * 3, t * 0.5 + k * Math.PI / 2, 0.5);
+        c.stroke();
+      }
+    }
+
+    // Aim mode: every legal target, the default one drawn solid.
+    if (aiming) {
+      const auto = E.doomstarTarget(game, mySeat);
+      for (const n of game.nodes) {
+        if (n.owner !== foeSeat) continue;
+        const isAuto = auto && auto.id === n.id;
+        c.strokeStyle = "#ff7a5c";
+        c.globalAlpha = isAuto ? 0.95 : 0.65;
+        c.lineWidth = isAuto ? 3.5 : 2.2;
+        c.setLineDash(isAuto ? [] : [5, 5]);
+        holoRing(c, so, n.x, n.y, (R(n) + 16) * (1 + Math.sin(now * 0.007 + n.id) * 0.05));
+        c.stroke();
+      }
+      c.setLineDash([]);
+    }
+
+    // Routes: the lanes a fleet would really take, from every source.
+    c.setLineDash([8, 6]); c.lineDashOffset = -now * 0.02; c.lineWidth = 3;
+    if (drag && drag.fromId !== null && drag.moved) {
+      const tgt = renderer.pick(drag.x, drag.y);
+      const valid = tgt && tgt.id !== drag.fromId;
+      c.strokeStyle = valid ? "rgba(125,211,252,.9)" : "rgba(160,180,210,.55)";
+      c.globalAlpha = 1;
+      for (const id of dragSources()) {
+        const a = game.nodes[id];
+        const route = valid ? E.findPath(game, id, tgt.id, mySeat) : null;
+        if (route) { holoRoute(c, so, route.map((i) => game.nodes[i])); continue; }
+        const from = so(a.x, a.y, 2);
+        const to = valid ? so(tgt.x, tgt.y, 2) : { x: drag.x, y: drag.y };
+        if (!from || !to) continue;
+        c.beginPath(); c.moveTo(from.x, from.y); c.lineTo(to.x, to.y); c.stroke();
+      }
+    }
+    for (const pv of holoPreviews) {
+      if (!pv.pending) continue;
+      c.strokeStyle = "rgba(125,211,252,.9)"; c.globalAlpha = 1;
+      for (const id of pv.sources) {
+        const route = E.findPath(game, id, pv.tgt.id, mySeat);
+        holoRoute(c, so, route ? route.map((i) => game.nodes[i]) : [game.nodes[id], pv.tgt]);
+      }
+    }
+    c.setLineDash([]);
+
+    // Target halos: green takes it, red does not, cyan reinforces. The
+    // pending one gets a second, brighter ring so it cannot be missed.
+    for (const pv of holoPreviews) {
+      const n = pv.tgt, info = pv.info;
+      const col = info ? info.col : "#f87171";
+      c.globalAlpha = 1;
+      c.fillStyle = (info ? info.wins : false) ? "rgba(74,222,128,.14)" : "rgba(248,113,113,.14)";
+      holoRing(c, so, n.x, n.y, R(n) + 15); c.fill();
+      c.strokeStyle = col; c.lineWidth = 2.5; c.globalAlpha = 0.95;
+      holoRing(c, so, n.x, n.y, R(n) + 15); c.stroke();
+      if (pv.pending) {
+        c.globalAlpha = 1; c.strokeStyle = "#e2f7ff"; c.lineWidth = 3.5;
+        holoRing(c, so, n.x, n.y, (R(n) + 22) * (1 + Math.sin(now * 0.008) * 0.05)); c.stroke();
+      }
+    }
+    c.globalAlpha = 1;
+  }
+
+  // Text with a dark outline: the table underneath is busy and these
+  // labels sit over stations, lanes and other labels.
+  function holoText(c, str, x, y, px, fill) {
+    c.font = "700 " + px + "px " + HOLO_TEXT_FONT;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.lineWidth = Math.max(3, px * 0.26); c.strokeStyle = "rgba(4,8,16,.92)";
+    c.strokeText(str, x, y);
+    c.fillStyle = fill; c.fillText(str, x, y);
+  }
+
+  function holoOverlay(c, so) {
+    const now = performance.now();
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    const cam = renderer.camera();
+    const R = (n) => E.nodeStats(n).radius;
+    const roomBelow = new Map();     // node id -> how many lines already under it
+
+    // Just above a position's garrison number, so a label never covers
+    // the number it is talking about. `half` is the label's half-height.
+    function above(n, half) {
+      const sp = window.OutpostHolo.numberSpot(cam, n);
+      return { x: sp.x, y: sp.y - sp.px / 2 - 3 - half - 2 };
+    }
+    // Lines stacked below a position's foot, one per call.
+    function below(n) {
+      const foot = so(n.x, n.y, 0);
+      if (!foot) return null;
+      const k = roomBelow.get(n.id) || 0;
+      roomBelow.set(n.id, k + 1);
+      return { x: foot.x, y: foot.y + (R(n) + 18) * foot.scale * 0.85 + 9 + k * 15 };
+    }
+    const clampX = (x, w) => Math.max(w / 2 + 4, Math.min(W - w / 2 - 4, x));
+
+    // Order previews: a pill over the target, or NO ROUTE.
+    for (const pv of holoPreviews) {
+      const n = pv.tgt, info = pv.info;
+      const label = info ? info.label : "NO ROUTE";
+      const col = info ? info.col : "#f87171";
+      c.font = "700 13px " + HOLO_TEXT_FONT;
+      const w = c.measureText(label).width + 18;
+      let at = above(n, 12);
+      // Close to the top edge there is no room above: drop it below.
+      if (at.y < 16) at = below(n) || at;
+      const x = clampX(at.x, w);
+      c.fillStyle = "rgba(10,14,24,.94)";
+      c.beginPath();
+      if (c.roundRect) c.roundRect(x - w / 2, at.y - 12, w, 24, 7); else c.rect(x - w / 2, at.y - 12, w, 24);
+      c.fill();
+      c.strokeStyle = col; c.lineWidth = 1.5; c.stroke();
+      c.fillStyle = col; c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillText(label, x, at.y + 1);
+      if (pv.pending) {
+        const b = below(n);
+        if (b) holoText(c, "TAP AGAIN TO CONFIRM", clampX(b.x, 170), b.y, 12, "#e2f7ff");
+      }
+    }
+
+    // Aim mode: what each strike would cost the target.
+    if (aiming) {
+      const auto = E.doomstarTarget(game, mySeat);
+      for (const n of game.nodes) {
+        if (n.owner !== foeSeat) continue;
+        const isAuto = auto && auto.id === n.id;
+        const at = above(n, 8);
+        const str = isAuto ? "DEFAULT −" + E.DOOM_DAMAGE : "−" + E.DOOM_DAMAGE;
+        holoText(c, str, clampX(at.x, 100), Math.max(10, at.y), 12, "#ff9c82");
+      }
+    }
+
+    // Inbound and in-progress fights, as counts under the foot.
+    for (const n of game.nodes) {
+      if (n.owner === mySeat) {
+        const inbound = E.incoming(game, n.id, foeSeat);
+        const b = inbound > 0 && below(n);
+        if (b) holoText(c, "⚠ " + Math.round(inbound), b.x, b.y, 12, "#fb7185");
+      }
+      if (n.assault) {
+        const b = below(n);
+        if (b) holoText(c, "⚔ " + Math.round(n.assault.count), b.x, b.y, 12, colorOf(n.assault.owner));
+      }
+    }
+
+    // Effects. Bursts rise from the plate's height rather than the foot,
+    // where the pylon would hide them.
+    for (const p of particles) {
+      const a = Math.max(0, p.life / p.max);
+      const q = so(p.x, p.y, 16);
+      if (!q) continue;
+      c.globalAlpha = a; c.fillStyle = p.color;
+      c.beginPath(); c.arc(q.x, q.y, Math.max(1.3, p.r * a * q.scale * 1.7), 0, Math.PI * 2); c.fill();
+    }
+    c.globalAlpha = 1;
+    for (const f of floaters) {
+      const k = f.life / f.max;
+      // Start just over the position's number, not on it, and drift up.
+      const id = nodeIdAt(f.x, f.y);
+      const q = id >= 0 ? above(game.nodes[id], 9) : so(f.x, f.y, 118);
+      if (!q) continue;
+      c.globalAlpha = Math.min(1, k * 1.5);
+      holoText(c, f.text, clampX(q.x, 80), Math.max(12, q.y - (1 - k) * 24), 14, f.color);
+    }
+    c.globalAlpha = 1;
   }
 
   // ---------------------------------------------------------------
@@ -2901,7 +3332,11 @@
     });
     floaters = floaters.filter((f) => { f.life -= dt; return f.life > 0; });
 
-    if (game) renderer.render({ game: game, now: now, dt: dt });
+    if (game) renderer.render({
+      game: game, now: now, dt: dt, mySeat: mySeat, colorOf: colorOf,
+      underlay: renderer.name === "holo" ? holoUnderlay : null,
+      overlay: renderer.name === "holo" ? holoOverlay : null
+    });
 
     hudAcc += dt;
     if (hudAcc > 0.12) { hudAcc = 0; updateHud(); }
@@ -2934,6 +3369,10 @@
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
     if (p.view === "flat" || p.view === "holo") viewPref = p.view;
   })();
+
+  // A stored 3D choice is honoured before the first paint. Without the
+  // script (a stripped copy of the page) it quietly stays flat.
+  if (viewPref === "holo" && window.OutpostHolo) setView("holo");
 
   buildCampaign();
   buildDoctrinePicker();
