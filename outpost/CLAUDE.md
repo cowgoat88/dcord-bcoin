@@ -263,6 +263,32 @@ automatic Doomstar are gated on it. Anything added later that acts for
 seat 2 on its own goes behind the same flag -- grep for it before
 writing a new one.
 
+### Both views share one board orientation
+
+Your base is drawn on the near side: bottom of a portrait screen, left
+of a landscape one. The generator puts seat 1 at the top of a portrait
+map, so the 2D view is turned half a turn for whoever starts on the far
+side (`flipView`, decided once per game in `orientBoard`), and the 3D
+camera starts at yaw 0 or pi to match. Switching views only tilts the
+board. The flat turn is done by drawing from a mirrored stand-in game,
+not by rotating the canvas, which would turn every number upside down;
+`pickFlat` and `screenOfFlat` map through the same mirror.
+`scratchpad/orient/orient.js` measures from pixels that the base is on
+the same side in both views; `orient/tap.js` checks a tap in the turned
+view selects the node drawn there. Any harness that projects station
+positions must use the same rule (see `holoplay.js` `homeYaw`).
+
+### Lanes never cross
+
+The owner found overlapping lanes hard to read. `buildLanes` now accepts
+lanes shortest first, in mirror pairs, only if they cross nothing, leave
+every node at least 28 degrees from its other lanes and clear foreign
+nodes. Before: 3-5 crossings per map and 0-degree angles on almost every
+map. After: none, with about 2 fewer lanes per map. That alone tilted
+the ladder toward the player by 8-10 points at Officer and Captain; a
+0.01 production nudge to each brought it back. Any future change to lane
+rules needs the same ladder, doctrine, rush and mission re-measure.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

@@ -440,8 +440,8 @@
           <div class="grouplabel" style="margin-bottom:6px">Opponent</div>
           <div class="row" id="diffRow">
             <button data-diff="0" title="The AI builds at 80% of your rate, reacts slowly, and does not research">Cadet <small>−20%</small></button>
-            <button data-diff="1" class="on" title="The AI builds at 86% of your rate but researches and presses steadily">Officer <small>−14%</small></button>
-            <button data-diff="2" title="The AI builds at 93% of your rate, reacts faster and masses five positions">Captain <small>−7%</small></button>
+            <button data-diff="1" class="on" title="The AI builds at 87% of your rate but researches and presses steadily">Officer <small>−13%</small></button>
+            <button data-diff="2" title="The AI builds at 94% of your rate, reacts faster and masses five positions">Captain <small>−6%</small></button>
             <button data-diff="3" title="An even fight on output: the AI matches your rate, reacts fastest, and coordinates six positions">Commander <small>even</small></button>
           </div>
           <details class="netbox" id="ascBox">
@@ -667,6 +667,15 @@
   // nothing for it. Both draw on the one canvas.
   let renderer = null;           // assigned once `flat` is defined, below
   let viewPref = "flat";
+
+  // Which way up the board is drawn. Your own base belongs on the near
+  // side -- the bottom of a portrait screen, the left of a landscape one --
+  // the way a board game seats you. The generator puts seat 1 at the top
+  // of a portrait map, so the host on a phone saw their base at the top in
+  // 2D and then watched the board spin round when they switched to 3D,
+  // whose camera faced home. Now both views share this one decision, so
+  // switching only ever tilts the board, never turns it.
+  let flipView = false;
   let holo = null;               // the 3D renderer, once it has been needed
 
   // Presentation-only state, kept separate from the simulation.
@@ -730,13 +739,26 @@
   }
   window.addEventListener("resize", resize);
 
-  // Which way the table faces is part of a game, not of the camera: each
-  // player's own Command should be the nearest thing on screen, host and
-  // guest alike, so it is set whenever a game begins and on every switch
-  // to 3D. A player's own orbiting only lasts until the next game.
+  // Decided once when a game begins, from where the two Commands start,
+  // and never again mid-match: a Command that changes hands must not spin
+  // the board under someone's thumb. Campaign boards have their Commands
+  // side by side or level, so they keep the orientation they were drawn
+  // in.
+  function orientBoard() {
+    if (!game) return;
+    const mine = game.nodes.find((n) => n.type === "command" && n.owner === mySeat);
+    const theirs = game.nodes.find((n) => n.type === "command" && n.owner === foeSeat);
+    flipView = !!(mine && theirs) &&
+      (game.mapH > game.mapW ? mine.y < theirs.y : mine.x > theirs.x);
+    faceHome();
+  }
+
+  // The 3D camera at yaw 0 sees the board exactly as the flat view draws
+  // it unturned, so the half turn is the whole of the agreement between
+  // them. A player's own orbiting only lasts until the next game.
   function faceHome() {
     if (renderer && renderer.name === "holo" && game) {
-      renderer.setYaw(window.OutpostHolo.yawFacing(game, mySeat));
+      renderer.setYaw(flipView ? Math.PI : 0);
     }
   }
 
@@ -777,8 +799,25 @@
   const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
   // The flat board is a plane, so height has nowhere to go: wz is accepted
   // to match the interface and ignored.
-  const screenOfFlat = (wx, wy, wz) =>
-    ({ x: wx * view.scale + view.ox, y: wy * view.scale + view.oy, scale: view.scale });
+  const screenOfFlat = (wx, wy, wz) => {
+    const g = drawingMirror || game;
+    if (flipView && g) { wx = g.mapW - wx; wy = g.mapH - wy; }
+    return { x: wx * view.scale + view.ox, y: wy * view.scale + view.oy, scale: view.scale };
+  };
+
+  // The flat board turned half a turn, for whoever starts on the far
+  // side. Turning the canvas would turn every number upside down with it,
+  // so the positions are reflected through the centre instead, for the
+  // length of one draw: a stand-in game whose nodes carry mirrored
+  // coordinates and inherit everything else (lanes, adjacency, doctrines),
+  // so the drawing code and the engine helpers it calls need no change.
+  let drawingMirror = null;      // the real game, while a mirrored draw runs
+  function mirrored(g) {
+    const W = g.mapW, H = g.mapH;
+    const m = Object.create(g);
+    m.nodes = g.nodes.map((n) => Object.assign({}, n, { x: W - n.x, y: H - n.y }));
+    return m;
+  }
 
   // ---------------------------------------------------------------
   // Game lifecycle
@@ -809,7 +848,7 @@
     syncPauseBtn();
     document.getElementById("endOverlay").hidden = true;
     document.getElementById("seedLabel").textContent = s;
-    faceHome();
+    orientBoard();
     resize();
     updateHud();
     if (isOnline() && netRole === "host") session.restart(game);
@@ -826,8 +865,12 @@
   function pickFlat(px, py, touch) {
     const w = toWorld(px, py);
     const slack = (touch ? 24 : 9) / view.scale;
+    // Search the nodes where they are drawn. Inside a mirrored draw `game`
+    // already is the stand-in; outside one, mirror it here, and hand the
+    // caller back the real node.
+    const src = drawingMirror || !flipView ? game : mirrored(game);
     let best = null, bestD = Infinity;
-    for (const n of game.nodes) {
+    for (const n of src.nodes) {
       const r = E.nodeStats(n).radius + slack;
       const d = Math.hypot(n.x - w.x, n.y - w.y);
       // Rank by how far inside the target the tap landed, so the nearest
@@ -836,7 +879,7 @@
         best = n; bestD = d - E.nodeStats(n).radius;
       }
     }
-    return best;
+    return best && src !== game ? game.nodes[best.id] : best;
   }
 
   function localPt(ev) {
@@ -1868,7 +1911,7 @@
         applyWelcomeDoctrines(msg);
         E.applySnapshot(game, msg.snapshot);
         selection.clear(); pendingTarget = null;
-        faceHome();
+        orientBoard();
         resize();
         started = true; paused = false;
         document.getElementById("startOverlay").hidden = true;
@@ -1932,7 +1975,7 @@
           applyWelcomeDoctrines(msg);
           E.applySnapshot(game, msg.snapshot);
           selection.clear(); pendingTarget = null;
-          faceHome();
+          orientBoard();
           resize();
           started = true; paused = false;
           document.getElementById("startOverlay").hidden = true;
@@ -2252,26 +2295,41 @@
     }
     ctx.globalAlpha = 1;
 
-    ctx.save();
-    if (shake.t > 0) {
-      const k = shake.t / 0.34;
-      const m = shake.mag * k * k; // eased decay
-      ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
+    // Swap in the mirrored stand-in (and mirrored effects) for the draw
+    // only, and always swap back: nothing outside this function may ever
+    // see mirrored coordinates.
+    const real = game, realParticles = particles, realFloaters = floaters;
+    if (flipView) {
+      const W = real.mapW, H = real.mapH;
+      drawingMirror = real;
+      game = mirrored(real);
+      particles = realParticles.map((p) => Object.assign({}, p, { x: W - p.x, y: H - p.y }));
+      floaters = realFloaters.map((f) => Object.assign({}, f, { x: W - f.x, y: H - f.y }));
     }
-    ctx.translate(view.ox, view.oy);
-    ctx.scale(view.scale, view.scale);
+    ctx.save();
+    try {
+      if (shake.t > 0) {
+        const k = shake.t / 0.34;
+        const m = shake.mag * k * k; // eased decay
+        ctx.translate((Math.random() - 0.5) * m, (Math.random() - 0.5) * m);
+      }
+      ctx.translate(view.ox, view.oy);
+      ctx.scale(view.scale, view.scale);
 
-    drawLanes(now);
-    drawFleets(now);
-    drawNodes(now);
-    drawAimMode(now);
-    drawDragArrow();
-    drawPendingTarget(now);
-    drawHoverPreview();
-    drawParticles();
-    drawFloaters();
-
-    ctx.restore();
+      drawLanes(now);
+      drawFleets(now);
+      drawNodes(now);
+      drawAimMode(now);
+      drawDragArrow();
+      drawPendingTarget(now);
+      drawHoverPreview();
+      drawParticles();
+      drawFloaters();
+    } finally {
+      ctx.restore();
+      game = real; particles = realParticles; floaters = realFloaters;
+      drawingMirror = null;
+    }
   }
 
   // The original top-down renderer, behind the interface. It still reads

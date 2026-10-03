@@ -53,6 +53,84 @@ test("maps are point-symmetric, so neither side gets a better position", () => {
   }
 });
 
+// Lane drawing: planar, well separated, symmetric. Shapes are the boards
+// the page would produce for a phone in portrait and a desktop window.
+const LANE_SHAPES = [["portrait", 390 / 844], ["landscape", 1280 / 800]].map(([name, asp]) => ({
+  name, mapW: Math.sqrt(1000 * 640 * asp), mapH: Math.sqrt(1000 * 640 / asp)
+}));
+function laneMaps(seeds) {
+  const out = [];
+  for (const sh of LANE_SHAPES) {
+    for (let seed = 1; seed <= seeds; seed++) {
+      out.push({ label: `${sh.name} seed ${seed}`, g: E.createGame({ seed, mapW: sh.mapW, mapH: sh.mapH }) });
+    }
+  }
+  return out;
+}
+function segPoint(a, b, p) {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+  return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+}
+const orient = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+const properCross = (a, b, c, d) =>
+  orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+
+test("generated lanes never cross each other", () => {
+  for (const { label, g } of laneMaps(40)) {
+    for (let i = 0; i < g.lanes.length; i++) for (let j = i + 1; j < g.lanes.length; j++) {
+      const p = g.lanes[i], q = g.lanes[j];
+      if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
+      assert.ok(!properCross(g.nodes[p.a], g.nodes[p.b], g.nodes[q.a], g.nodes[q.b]),
+        `${label}: lanes ${p.a}-${p.b} and ${q.a}-${q.b} cross`);
+    }
+  }
+});
+
+test("lanes leaving a node are at least 28 degrees apart", () => {
+  for (const { label, g } of laneMaps(40)) {
+    for (const v of g.nodes) {
+      const dirs = g.lanes.filter((l) => l.a === v.id || l.b === v.id).map((l) => {
+        const o = g.nodes[l.a === v.id ? l.b : l.a];
+        return Math.atan2(o.y - v.y, o.x - v.x);
+      });
+      for (let i = 0; i < dirs.length; i++) for (let j = i + 1; j < dirs.length; j++) {
+        let d = Math.abs(dirs[i] - dirs[j]);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        assert.ok(d * 180 / Math.PI >= 28 - 1e-6, `${label}: node ${v.id} has two lanes ${(d * 180 / Math.PI).toFixed(1)} degrees apart`);
+      }
+    }
+  }
+});
+
+test("no lane passes through or beside a node that is not one of its ends", () => {
+  for (const { label, g } of laneMaps(40)) {
+    for (const l of g.lanes) for (const m of g.nodes) {
+      if (m.id === l.a || m.id === l.b) continue;
+      const gap = segPoint(g.nodes[l.a], g.nodes[l.b], m) - E.NODE_TYPES[m.type].radius;
+      assert.ok(gap >= 18, `${label}: lane ${l.a}-${l.b} passes ${gap.toFixed(1)} units from node ${m.id}'s edge`);
+    }
+  }
+});
+
+test("lanes are point-symmetric and every generated board stays connected", () => {
+  for (const { label, g } of laneMaps(40)) {
+    const twin = (id) => {
+      const n = g.nodes[id];
+      return g.nodes.find((m) => Math.abs(m.x - (g.mapW - n.x)) < 1e-6 && Math.abs(m.y - (g.mapH - n.y)) < 1e-6).id;
+    };
+    const keys = new Set(g.lanes.map((l) => Math.min(l.a, l.b) + ":" + Math.max(l.a, l.b)));
+    assert.equal(keys.size, g.lanes.length, `${label}: duplicate lane`);
+    for (const l of g.lanes) {
+      const a = twin(l.a), b = twin(l.b);
+      assert.ok(keys.has(Math.min(a, b) + ":" + Math.max(a, b)), `${label}: lane ${l.a}-${l.b} has no mirror`);
+    }
+    for (const n of g.nodes) {
+      assert.ok(n.id === 0 || E.findPath(g, 0, n.id), `${label}: node ${n.id} unreachable`);
+    }
+  }
+});
+
 test("each side starts with exactly one command node and nothing else", () => {
   for (let seed = 1; seed <= 20; seed++) {
     const g = E.createGame({ seed });

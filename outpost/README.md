@@ -341,6 +341,18 @@ asteroid belt on top of the defender edge, Fortify and a level-3 upgrade
 pushes them past what any realistic concentration can crack — which is
 exactly how the original stalemate began.
 
+### Lanes never cross
+
+Lanes are accepted shortest first and only if they cross no other lane,
+leave each node at least 28 degrees from its neighbours' lanes, and pass
+clear of every node they do not connect. Before this, a typical map had
+three to five crossings and pairs of nearly parallel lanes, and which
+line went where was genuinely hard to read. The maps keep the same
+positions, types and roughly the same number of connections; only the
+line work changed. It still moved the balance: with slightly fewer
+routes the AI was 8-10 points weaker at Officer and Captain until their
+production was nudged up by 0.01 each.
+
 ### Why terrain, and not narrower maps
 
 Fewer lanes was measured first as the way to create chokepoints, and
@@ -566,7 +578,7 @@ ladder, which needs a Commander win to appear at all.
 ## Difficulty is stated, not hidden
 
 The tiers differ mainly by an openly-applied production multiplier —
-Cadet −20%, Officer −14%, Captain −7%, Commander even — and the buttons
+Cadet −20%, Officer −13%, Captain −6%, Commander even — and the buttons
 say so. Captain exists because Officer to Commander used to be a jump of
 1.00 to 1.75 in one press, most of the game's whole difficulty range in
 a single step, with nothing in between for someone who has outgrown an

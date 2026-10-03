@@ -744,49 +744,184 @@
     return { nodes, lanes, mapW: W, mapH: H };
   }
 
-  // Lanes connect each node to its nearest neighbours, then the graph is
-  // forced connected. Lanes are the whole strategic skeleton: you can only
-  // order a move between linked nodes, so chokepoints are real.
+  // ---- lane layout ------------------------------------------------------
+  // Lanes are the whole strategic skeleton: you can only order a move
+  // between linked nodes, so chokepoints are real. They also have to be
+  // READ at a glance on a phone. The first version linked every node to its
+  // four nearest neighbours, which on the shipped seeds drew a mean of
+  // 2.9 (portrait) to 5.5 (landscape) lane crossings per map, fans of lanes
+  // leaving a node a few degrees apart (down to 0.0) and lanes drawn
+  // straight through a third node's body (up to 27 units inside it) -- 89%
+  // to 99% of maps had at least one of those, and the line work read as a
+  // tangle even though the graph itself was fine.
+  //
+  // So lanes are now chosen greedily, shortest first, and a candidate is
+  // only accepted if the drawing stays clean against everything already
+  // accepted: it may not cross or run beside another lane, it may not leave
+  // a node within LANE_MIN_ANGLE of a lane already there, and it may not
+  // pass within LANE_CLEARANCE of any node that is not one of its ends.
+  // Shortest-first matters: it keeps the lanes a person would draw by hand
+  // and lets the long diagonal be the one that is refused.
+  //
+  // Measured over 200 seeds on a 390x844 and a 1280x800 board (before ->
+  // after): crossings 2.94 / 5.47 per map -> 0, smallest angle at a node
+  // 0.0 -> 28.1 degrees, deepest a lane cut into a foreign node 27 units ->
+  // clear by 63, lanes 31.8 / 34.2 -> 29.6 / 29.4, mean degree 4.25 / 4.62
+  // -> 3.95 / 3.97, disconnected maps 0 -> 0. Crossings and the angle rule
+  // do all the work on these shapes; the clearance and gap rules never bind
+  // (the relaxed layout leaves 60+ units) and stay as guards for a board
+  // shape nobody measured. A tighter pool (5 neighbours, degree 5) gave
+  // ~28.5 lanes and tilted the ladder further toward the player.
+  //
+  // Even so, fewer lanes tilted the ladder toward the player (Officer +8,
+  // Captain +10 points over 300 seeds), so Officer / Captain AI production
+  // was re-fitted from 0.86 / 0.93 to 0.87 / 0.94 (see DIFFICULTY).
+  //
+  // The maps are point-symmetric, so a lane is only ever accepted together
+  // with its mirror image (the lane between the two twins of its ends); the
+  // greedy order is by length, which a rotation preserves, so the pair is
+  // judged once and the whole layout stays symmetric.
+  const LANE_MIN_ANGLE = 28 * Math.PI / 180;
+  const LANE_CLEARANCE = 18;   // map units of empty space beyond a node's body
+  const LANE_GAP = 14;         // closest two unrelated lanes may run
+  const LANE_MAX_DEGREE = 6;
+  const LANE_NEIGHBOURS = 7;   // candidate pool per node before filtering
+
   function buildLanes(nodes, maxRange) {
-    const key = (a, b) => (a < b ? a + ":" + b : b + ":" + a);
-    const set = new Map();
-    const add = (a, b) => {
-      if (a === b) return;
-      const k = key(a, b);
-      if (!set.has(k)) set.set(k, { a: Math.min(a, b), b: Math.max(a, b) });
+    const n = nodes.length;
+    const range = maxRange || 340;
+    const radius = nodes.map((m) => (NODE_TYPES[m.type] || { radius: 22 }).radius);
+
+    // Mirror twin of every node, found by geometry about the centroid (the
+    // centroid of a point-symmetric set IS the centre), so this does not
+    // depend on how ids happen to be paired. A node with no twin maps to
+    // -1 and its lanes are simply added one at a time.
+    let cx = 0, cy = 0;
+    for (const m of nodes) { cx += m.x; cy += m.y; }
+    cx /= n; cy /= n;
+    const twin = nodes.map((m) => {
+      let best = -1, bd = 1e-3;
+      for (const o of nodes) {
+        const d = Math.hypot(o.x - (2 * cx - m.x), o.y - (2 * cy - m.y));
+        if (d < bd) { bd = d; best = o.id; }
+      }
+      return best;
+    });
+    const idx = new Map(nodes.map((m, i) => [m.id, i]));
+    const tw = (i) => (twin[i] < 0 ? -1 : idx.get(twin[i]));
+
+    const P = nodes;
+    const segPt = (a, b, p) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const t = l2 ? clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0, 1) : 0;
+      return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+    };
+    const orient = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const crosses = (a, b, c, d) =>
+      orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+    const segGap = (a, b, c, d) => crosses(a, b, c, d) ? 0
+      : Math.min(segPt(a, b, c), segPt(a, b, d), segPt(c, d, a), segPt(c, d, b));
+    const angleAt = (v, a, b) => {
+      const u = Math.atan2(P[a].y - P[v].y, P[a].x - P[v].x);
+      const w = Math.atan2(P[b].y - P[v].y, P[b].x - P[v].x);
+      let d = Math.abs(u - w);
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      return d;
     };
 
-    // Connect to the 3 nearest neighbours within a sane range.
-    for (const n of nodes) {
-      const near = nodes
-        .filter((m) => m.id !== n.id)
-        .map((m) => ({ m, d: dist(n, m) }))
-        .sort((p, q) => p.d - q.d)
-        .slice(0, 4);
-      for (const { m, d } of near) if (d < (maxRange || 340)) add(n.id, m.id);
-    }
+    const lanes = [];                 // accepted [a, b] index pairs
+    const deg = new Array(n).fill(0);
+    const have = new Set();
+    const key = (a, b) => (a < b ? a * n + b : b * n + a);
 
-    // Force connectivity: repeatedly join the component holding node 0 to
-    // the closest node outside it. Without this a map can generate with an
-    // unreachable pocket, which reads as a bug to the player.
-    for (let guard = 0; guard < 200; guard++) {
-      const seen = componentFrom(nodes, [...set.values()], 0);
-      if (seen.size === nodes.length) break;
-      let best = null;
-      for (const n of nodes) {
-        if (!seen.has(n.id)) continue;
-        for (const m of nodes) {
-          if (seen.has(m.id)) continue;
-          const d = dist(n, m);
-          if (!best || d < best.d) best = { a: n.id, b: m.id, d };
+    // Does lane (a,b) sit cleanly among `lanes` and `pending`? `lax` relaxes
+    // the rules in steps for the connectivity pass: 0 = all rules,
+    // 1 = no degree cap and half the angle / clearance / gap, 2 = only
+    // "do not cross", 3 = anything goes.
+    function fits(a, b, pending, lax) {
+      if (lax >= 3) return true;
+      const ang = lax >= 1 ? LANE_MIN_ANGLE / 2 : LANE_MIN_ANGLE;
+      const clr = lax >= 1 ? LANE_CLEARANCE / 2 : LANE_CLEARANCE;
+      const gap = lax >= 1 ? LANE_GAP / 2 : LANE_GAP;
+      if (lax === 0 && (deg[a] >= LANE_MAX_DEGREE || deg[b] >= LANE_MAX_DEGREE)) return false;
+      if (lax <= 1) {
+        for (let m = 0; m < n; m++) {
+          if (m === a || m === b) continue;
+          if (segPt(P[a], P[b], P[m]) < radius[m] + clr) return false;
         }
       }
-      if (!best) break;
-      add(best.a, best.b);
+      for (const [c, d] of lanes.concat(pending)) {
+        const shared = c === a || c === b || d === a || d === b;
+        if (shared) {
+          if (lax >= 2) continue;
+          const v = (c === a || d === a) ? a : b;
+          const x = v === a ? b : a, y = c === v ? d : c;
+          if (x === y) return false;
+          if (angleAt(v, x, y) < ang) return false;
+        } else if (lax >= 2 ? crosses(P[a], P[b], P[c], P[d])
+                            : segGap(P[a], P[b], P[c], P[d]) < gap) return false;
+      }
+      return true;
     }
 
-    return [...set.values()].map((l) => ({
-      a: l.a, b: l.b, length: dist(nodes[l.a], nodes[l.b])
+    // Accept a lane and its mirror together, or neither.
+    function tryAdd(a, b, lax) {
+      const ma = tw(a), mb = tw(b);
+      const selfMirror = (ma === a && mb === b) || (ma === b && mb === a);
+      const mirror = ma < 0 || mb < 0 || selfMirror ? null : [ma, mb];
+      if (have.has(key(a, b))) return false;
+      if (mirror && have.has(key(mirror[0], mirror[1]))) return false;
+      if (!fits(a, b, [], lax)) return false;
+      if (mirror) {
+        if (!fits(mirror[0], mirror[1], [[a, b]], lax)) return false;
+        // The two halves must also sit cleanly beside each other.
+      }
+      for (const [p, q] of mirror ? [[a, b], mirror] : [[a, b]]) {
+        lanes.push([p, q]); have.add(key(p, q)); deg[p]++; deg[q]++;
+      }
+      return true;
+    }
+
+    // Candidates: each node's nearest few neighbours in range, shortest
+    // first so the cleanest, most local lanes win the contested space.
+    const cand = new Map();
+    for (let i = 0; i < n; i++) {
+      const near = [];
+      for (let j = 0; j < n; j++) if (j !== i) near.push({ j, d: dist(P[i], P[j]) });
+      near.sort((p, q) => p.d - q.d);
+      for (const { j, d } of near.slice(0, LANE_NEIGHBOURS)) {
+        if (d < range && !cand.has(key(i, j))) cand.set(key(i, j), { a: Math.min(i, j), b: Math.max(i, j), d });
+      }
+    }
+    const order = [...cand.values()].sort((p, q) => p.d - q.d || p.a - q.a || p.b - q.b);
+    for (const c of order) tryAdd(c.a, c.b, 0);
+
+    // Connectivity: join the component holding node 0 to the rest with the
+    // shortest lane that keeps the drawing clean, loosening the rules one
+    // step at a time only when nothing clean exists, so a pocket is never
+    // left but the weakest rule is the one that gives.
+    for (let guard = 0; guard < 200; guard++) {
+      const seen = componentFrom(nodes, lanes.map(([a, b]) => ({ a: nodes[a].id, b: nodes[b].id })), nodes[0].id);
+      if (seen.size === n) break;
+      let done = false;
+      for (let lax = 0; lax <= 3 && !done; lax++) {
+        const pairs = [];
+        for (let i = 0; i < n; i++) {
+          if (!seen.has(nodes[i].id)) continue;
+          for (let j = 0; j < n; j++) {
+            if (seen.has(nodes[j].id)) continue;
+            pairs.push({ a: i, b: j, d: dist(P[i], P[j]) });
+          }
+        }
+        pairs.sort((p, q) => p.d - q.d || p.a - q.a || p.b - q.b);
+        for (const p of pairs) if (tryAdd(p.a, p.b, lax)) { done = true; break; }
+      }
+      if (!done) break;
+    }
+
+    return lanes.map(([a, b]) => ({
+      a: Math.min(nodes[a].id, nodes[b].id), b: Math.max(nodes[a].id, nodes[b].id),
+      length: dist(nodes[a], nodes[b])
     }));
   }
 
@@ -1250,10 +1385,16 @@
   // the other side: at 0.90 the AI wins The Waist outright on every
   // seed, which turns a campaign mission the player is supposed to
   // learn from into a loss. Measure both, never nudge by intuition.
+  //
+  // Lane generation was later made planar (see buildLanes), which removed
+  // ~3 of 32 lanes and moved the ladder to 98 / 91 / 51 / 36 over 300
+  // seeds (Officer, Captain +8 / +10). Officer 0.86 -> 0.87 and Captain
+  // 0.93 -> 0.94 brought them back to 84 / 46 (300 seeds). Cadet stays at
+  // 0.80 for The Waist.
   const DIFFICULTY = [
     { interval: 2.4, margin: 1.30, minGarrison: 10, maxAttackers: 3, send: 0.60, upgrade: false, produce: 0.80 },
-    { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 0.86 },
-    { interval: 1.5, margin: 1.45, minGarrison: 11, maxAttackers: 5, send: 0.75, upgrade: true,  produce: 0.93 },
+    { interval: 1.8, margin: 1.40, minGarrison: 11, maxAttackers: 4, send: 0.70, upgrade: true,  produce: 0.87 },
+    { interval: 1.5, margin: 1.45, minGarrison: 11, maxAttackers: 5, send: 0.75, upgrade: true,  produce: 0.94 },
     { interval: 1.2, margin: 1.50, minGarrison: 12, maxAttackers: 6, send: 0.80, upgrade: true,  produce: 1.00 }
   ];
   const TOP_TIER = DIFFICULTY.length - 1;

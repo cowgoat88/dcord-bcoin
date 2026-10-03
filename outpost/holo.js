@@ -262,11 +262,6 @@
   const UNIT = {};
   for (const k of ["circle", "square", "star", "diamond", "hex"]) UNIT[k] = unitShape(k);
   const RING = UNIT.circle;
-  const RING_FINE = (() => {
-    const p = [];
-    for (let i = 0; i < 40; i++) p.push([Math.cos(i * TAU / 40), Math.sin(i * TAU / 40)]);
-    return p;
-  })();
 
   // Same generator as engine.js makeRng, copied so holo.js stays
   // standalone. Render never touches Math.random: the sky is seeded.
@@ -470,21 +465,19 @@
       };
       for (let gx = G; gx < W; gx += G) addLine(gx, 0, gx, H);
       for (let gy = G; gy < H; gy += G) addLine(0, gy, W, gy);
+      // The grid is set well under the lanes. Every line on this board
+      // that is not a lane competes with the lanes, and the lanes are the
+      // whole strategic skeleton: the owner reported range rings about the
+      // centre reading as extra connections, so those are gone and the
+      // grid is kept only as a faint floor.
       ctx.strokeStyle = "#6f9ad6"; ctx.lineWidth = 1;
       for (let b = 0; b < 4; b++) {
         const a = segs[b];
-        ctx.globalAlpha = 0.20 - b * 0.04;   // bucket 0 is nearest
+        ctx.globalAlpha = 0.11 - b * 0.022;   // bucket 0 is nearest
         ctx.beginPath();
         for (let i = 0; i < a.length; i += 4) { ctx.moveTo(a[i], a[i + 1]); ctx.lineTo(a[i + 2], a[i + 3]); }
         ctx.stroke();
       }
-      // Range rings about the centre.
-      ctx.strokeStyle = "#6f9ad6"; ctx.globalAlpha = 0.16; ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (const f of [0.28, 0.58, 0.88]) {
-        tracePoly(RING_FINE, W / 2, H / 2, 0, Math.min(W, H) * f * 0.5 * 1.15, 0);
-      }
-      ctx.stroke();
       ctx.globalAlpha = 1;
     }
 
