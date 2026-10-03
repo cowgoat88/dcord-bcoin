@@ -647,6 +647,16 @@
   // there is no camera to manage and nothing can happen off-screen.
   let view = { scale: 1, ox: 0, oy: 0 };
 
+  // Which renderer draws the board. Everything below the interface (the
+  // fitted view, hit testing, the canvas transform) belongs to the
+  // renderer; input, selection and the HUD stay out here and only ask it
+  // two things: what is under this point, and where does this world point
+  // land. `flat` is the original top-down view and is always available.
+  // `viewPref` is the stored choice ("flat" | "holo"); nothing acts on it
+  // until the holotable renderer is loaded and the control exists.
+  let renderer = null;           // assigned once `flat` is defined, below
+  let viewPref = "flat";
+
   // Presentation-only state, kept separate from the simulation.
   let selection = new Set();
   let hoverId = null;
@@ -677,10 +687,7 @@
     return { mapW: Math.sqrt(area * aspect), mapH: Math.sqrt(area / aspect) };
   }
 
-  function resize() {
-    const wrap = document.getElementById("boardWrap");
-    const w = wrap.clientWidth, h = wrap.clientHeight;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  function resizeFlat(w, h, dpr) {
     canvas.width = Math.floor(w * dpr);
     canvas.height = Math.floor(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -700,10 +707,22 @@
       }
     }
   }
+
+  // Measures the board and hands the size to whichever renderer is
+  // active. Every caller wants "fit to the board as it is now", so the
+  // measuring lives here rather than in each renderer.
+  function resize() {
+    const wrap = document.getElementById("boardWrap");
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.resize(wrap.clientWidth, wrap.clientHeight, dpr);
+  }
   window.addEventListener("resize", resize);
 
   const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
-  const toScreen = (wx, wy) => ({ x: wx * view.scale + view.ox, y: wy * view.scale + view.oy });
+  // The flat board is a plane, so height has nowhere to go: wz is accepted
+  // to match the interface and ignored.
+  const screenOfFlat = (wx, wy, wz) =>
+    ({ x: wx * view.scale + view.ox, y: wy * view.scale + view.oy, scale: view.scale });
 
   // ---------------------------------------------------------------
   // Game lifecycle
@@ -747,7 +766,7 @@
   // cursor, so touch gets a generous extra radius (converted from screen
   // pixels, so it is the same real-world finger size at any zoom). Without
   // this, nodes near each other are genuinely hard to hit on a phone.
-  function nodeAt(px, py, touch) {
+  function pickFlat(px, py, touch) {
     const w = toWorld(px, py);
     const slack = (touch ? 24 : 9) / view.scale;
     let best = null, bestD = Infinity;
@@ -779,7 +798,7 @@
     try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* not fatal */ }
     const touch = ev.pointerType !== "mouse";
     const p = localPt(ev);
-    const n = nodeAt(p.x, p.y, touch);
+    const n = renderer.pick(p.x, p.y, touch);
     drag = {
       fromId: n && n.owner === mySeat ? n.id : null,
       overId: n ? n.id : null,
@@ -805,7 +824,7 @@
   canvas.addEventListener("pointermove", (ev) => {
     const p = localPt(ev);
     const touch = ev.pointerType !== "mouse";
-    const n = nodeAt(p.x, p.y, touch && !!drag);
+    const n = renderer.pick(p.x, p.y, touch && !!drag);
     hoverId = n ? n.id : null;
     if (drag) {
       if (Math.hypot(p.x - drag.x, p.y - drag.y) > 10) {
@@ -822,7 +841,7 @@
     const d = drag; drag = null;
     if (d.consumed) return;                       // long-press already handled it
     const p = localPt(ev);
-    const target = nodeAt(p.x, p.y, d.touch);
+    const target = renderer.pick(p.x, p.y, d.touch);
 
     // A drag is unambiguous — it names its own source and target — so it
     // commits straight away on mouse and touch alike.
@@ -2080,7 +2099,8 @@
     c.closePath();
   }
 
-  function render(now, dt) {
+  function renderFlat(frame) {
+    const now = frame.now;
     const w = canvas.clientWidth, h = canvas.clientHeight;
     ctx.clearRect(0, 0, w, h);
 
@@ -2119,6 +2139,20 @@
 
     ctx.restore();
   }
+
+  // The original top-down renderer, behind the interface. It still reads
+  // selection, drag, particles and the like from the closure above: those
+  // overlays move behind the interface only when a second renderer needs
+  // to draw them too. Defined here, after the functions it names, because
+  // the object is built once at load.
+  const flat = {
+    name: "flat",
+    resize: resizeFlat,
+    render: renderFlat,
+    pick: pickFlat,
+    screenOf: screenOfFlat
+  };
+  renderer = flat;
 
   // Lanes are the whole strategic skeleton — which positions can support
   // which — so they are drawn as real infrastructure rather than hairlines.
@@ -2522,7 +2556,7 @@
     if (!drag || drag.fromId === null || !drag.moved) return;
     const a = game.nodes[drag.fromId];
     const w = toWorld(drag.x, drag.y);
-    const tgt = nodeAt(drag.x, drag.y);
+    const tgt = renderer.pick(drag.x, drag.y);
     const valid = tgt && tgt.id !== drag.fromId;
     const sources = selection.has(drag.fromId) ? [...selection] : [drag.fromId];
 
@@ -2867,7 +2901,7 @@
     });
     floaters = floaters.filter((f) => { f.life -= dt; return f.life > 0; });
 
-    if (game) render(now, dt);
+    if (game) renderer.render({ game: game, now: now, dt: dt });
 
     hudAcc += dt;
     if (hudAcc > 0.12) { hudAcc = 0; updateHud(); }
@@ -2898,6 +2932,7 @@
     }
     if (typeof p.doctrine === "string" && E.DOCTRINES[p.doctrine]) doctrine = p.doctrine;
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
+    if (p.view === "flat" || p.view === "holo") viewPref = p.view;
   })();
 
   buildCampaign();
