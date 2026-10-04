@@ -69,42 +69,79 @@
 
     // -----------------------------------------------------------------
     {
-      id: "the-waist",
+      // The id changed when the mission was rebuilt: a clear recorded for
+      // the old one (hold the middle of a cut board) would otherwise show
+      // as a clear of this one.
+      id: "meridian-yard",
       name: "The Waist",
       doctrine: "logistics",
       difficulty: 0,
       brief:
-        "Your holdings are two clusters joined by a single crossing, and " +
-        "the enemy sits on top of it. They will cut you in half, probably " +
-        "more than once. Most commanders would watch the far side go dark.",
-      hint: "Deep Logistics keeps a severed position at 90% output. Let them cut it.",
-      objective: { kind: "eliminate" },
-      goal: "Take every enemy position. Expect to fight it cut in half.",
-      // 0 home Command · 1,2 near cluster · 3 THE WAIST · 4,5,6 far cluster
-      // 7 their Command · 8,9,10 theirs, all adjacent to the waist
+        "Anchorage is safe and the Doomstar in it is intact, but every Relay " +
+        "that could charge it is in the Annex, on the far side of the " +
+        "Meridian Yard \u2014 and the Freight Combine runs ninety hulls " +
+        "across the Yard on a timetable. While they dock nothing you can " +
+        "mass will take it, and when they land on a position of yours it " +
+        "falls. The Yard is never yours for long. It is empty for a few " +
+        "seconds at a time.",
+      hint: "The bar under the toolbar counts the Yard's timetable. Take the Yard when it opens, cross, take the Annex, and its Relays charge the Doomstar for as long as the Yard stays yours. Deep Logistics keeps the Annex producing at 90% while it is cut off. Then shoot the Hub: it is garrisoned past anything a fleet can break.",
+      // The Combine only runs freight; it does not come looking for you.
+      // Without this the opponent routine retakes the Yard the moment it
+      // is empty, and the timetable stops being the puzzle.
+      posture: "static",
+      objective: { kind: "capture", nodeId: 11, seconds: 600 },
+      goal: "Capture the Rail Hub within 10 minutes. Fleets alone cannot break it.",
+      script: {
+        convoys: [
+          // Two freight runs a minute apart-ish, in opposite directions,
+          // staggered so the Yard is open about two seconds in three.
+          { id: "north", name: "North freight", from: 11, to: 5, onward: 12,
+            count: 90, dwell: 8, first: 14, every: 48 },
+          { id: "south", name: "South freight", from: 12, to: 5, onward: 11,
+            count: 90, dwell: 8, first: 38, every: 48 }
+        ],
+        dispatches: [
+          { at: 1, tone: "story",
+            text: "ANCHORAGE \u2014 The Doomstar is intact and cold. Its Relay field is in the Annex, beyond the Meridian Yard." },
+          { at: 7, tone: "story",
+            text: "Combine freight crosses the Yard on a timetable: ninety hulls, docked eight seconds, then onward." },
+          { at: 15, tone: "warn",
+            text: "North freight is landing. Do not be standing in the Yard." },
+          { at: 90, tone: "story",
+            text: "The Hub is garrisoned far beyond what fleets can break. Charge the Doomstar and shoot it." }
+        ]
+      },
+      // 0 Anchorage (your Command) · 1 the Doomstar · 2 Foundry · 3 Ore Dock
+      // 4 Gatehouse · 5 THE YARD · 6 East Gate · 7,8,9 Annex Relays · 10 Annex Foundry
+      // 11 Rail Hub (dug into the belt) · 12 Combine Command · 13,14 their outliers
       map: {
         w: 1000, h: 640,
         nodes: [
-          { x: 120, y: 320, type: "command", owner: PLAYER, garrison: 32 },
-          { x: 230, y: 170, type: "factory", owner: PLAYER, garrison: 14 },
-          { x: 230, y: 470, type: "mine", owner: PLAYER, garrison: 10 },
-          { x: 440, y: 320, type: "relay", terrain: "well", owner: PLAYER, garrison: 10 },
-          { x: 640, y: 150, type: "factory", owner: PLAYER, garrison: 12 },
-          { x: 640, y: 490, type: "mine", owner: PLAYER, garrison: 10 },
-          { x: 700, y: 320, type: "factory", owner: NEUTRAL, garrison: 10 },
-          { x: 920, y: 320, type: "command", owner: ENEMY, garrison: 55 },
-          { x: 440, y: 110, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 26 },
-          { x: 440, y: 530, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 26 },
-          { x: 860, y: 120, type: "mine", owner: ENEMY, garrison: 16 },
-          { x: 860, y: 520, type: "mine", owner: ENEMY, garrison: 16 }
+          { name: "Anchorage", x: 90, y: 320, type: "command", owner: PLAYER, garrison: 30 },
+          { name: "Doomstar", x: 250, y: 320, type: "doomstar", owner: PLAYER, garrison: 24 },
+          { name: "Foundry", x: 190, y: 150, type: "factory", owner: PLAYER, garrison: 16 },
+          { name: "Ore Dock", x: 190, y: 490, type: "mine", owner: PLAYER, garrison: 10 },
+          { name: "Gatehouse", x: 400, y: 320, type: "factory", owner: PLAYER, garrison: 20 },
+          { name: "Meridian Yard", x: 520, y: 320, type: "factory", owner: ENEMY, garrison: 4 },
+          { name: "East Gate", x: 640, y: 320, type: "factory", owner: NEUTRAL, garrison: 8 },
+          { name: "Annex Relay A", x: 760, y: 170, type: "relay", owner: NEUTRAL, garrison: 9 },
+          { name: "Annex Relay B", x: 760, y: 470, type: "relay", owner: NEUTRAL, garrison: 9 },
+          { name: "Annex Relay C", x: 890, y: 320, type: "relay", owner: NEUTRAL, garrison: 10 },
+          { name: "Annex Foundry", x: 770, y: 320, type: "factory", owner: NEUTRAL, garrison: 8 },
+          { name: "Rail Hub", x: 520, y: 110, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 235 },
+          { name: "Combine Command", x: 520, y: 540, type: "command", owner: ENEMY, garrison: 60 },
+          { name: "North Battery", x: 720, y: 70, type: "factory", owner: ENEMY, garrison: 30 },
+          { name: "South Battery", x: 720, y: 580, type: "factory", owner: ENEMY, garrison: 30 }
         ],
-        // Node 3 is the only link between the two halves, and 8 and 9 are
-        // both one hop from it. Losing it is a matter of time.
+        // The Yard (5) is the only way anywhere: Gatehouse reaches it from
+        // the west, the East Gate from the east, and the Hub and the
+        // Combine's Command hang off its other two sides. The Annex is a dead end
+        // behind the Gate, which is why nobody bothers to guard it.
         lanes: [
-          [0, 1], [0, 2], [1, 3], [2, 3],
-          [3, 4], [3, 5], [4, 6], [5, 6], [6, 7],
-          [8, 3], [9, 3], [8, 1], [9, 2],
-          [7, 10], [7, 11], [10, 4], [11, 5], [8, 10], [9, 11]
+          [0, 1], [0, 2], [0, 3], [1, 4], [2, 4], [3, 4],
+          [4, 5], [5, 6], [5, 11], [5, 12],
+          [6, 7], [6, 8], [6, 10], [7, 10], [8, 10], [10, 9], [7, 9], [8, 9],
+          [11, 13], [12, 14]
         ]
       }
     },
@@ -222,7 +259,76 @@
           [3, 6], [4, 7], [5, 6], [5, 7], [6, 8], [7, 8], [5, 8]
         ]
       }
+    },
+
+    // -----------------------------------------------------------------
+    {
+      id: "last-light",
+      name: "Last Light",
+      doctrine: "relays",
+      difficulty: 0,
+      brief:
+        "Beacon Station is the last uplink in the sector and the Array " +
+        "beside it is the last weapon. A relief fleet is six minutes out. " +
+        "The Combine has three staging depots on the far ridge and it " +
+        "launches a wave from each on a timetable, every one bigger than " +
+        "the last, and every wave keeps going after it lands. You will " +
+        "not hold all three posts. You do not have to: a wave is only as " +
+        "big as the depot it was drawn from.",
+      hint: "The strip under the toolbar names the depot filling next and how many hulls it will launch. Forward Relays charges the Array twice as fast: shoot a depot while it fills and the wave is that much smaller, then take the empty depot and it never launches again.",
+      posture: "static",
+      objective: { kind: "survive", seconds: 420, keep: [0, 1] },
+      goal: "Hold Beacon Station and the Array for 7 minutes.",
+      script: {
+        convoys: [
+          // Staggered by a quarter of the cycle so there is always one
+          // wave to answer and never three at once. Each wave lands on a
+          // post, then pushes on toward whatever sits behind it.
+          { id: "ridge", name: "Ridge wave", label: "Ridge", from: 7, to: 4, onward: 2,
+            count: 56, grow: 8, dwell: 6, first: 40, every: 80, draw: true },
+          { id: "mid", name: "Mid wave", label: "Mid", from: 8, to: 5, onward: 1,
+            count: 56, grow: 8, dwell: 6, first: 65, every: 80, draw: true },
+          { id: "deep", name: "Deep wave", label: "Deep", from: 9, to: 6, onward: 3,
+            count: 56, grow: 8, dwell: 6, first: 90, every: 80, draw: true }
+        ],
+        dispatches: [
+          { at: 1, tone: "story",
+            text: "BEACON STATION \u2014 Relief is six minutes out. Hold the station and the Array until it arrives." },
+          { at: 8, tone: "story",
+            text: "Combine depots on the ridge are filling. Each launches a wave when its timer runs out." },
+          { at: 30, tone: "warn",
+            text: "First wave in ten seconds. Ridge Depot. Reinforce the Ridge Post or shoot the depot." },
+          { at: 150, tone: "story",
+            text: "A depot that launches is empty for a moment. Take it and it never launches again." }
+        ]
+      },
+      // 0 Beacon Station · 1 the Array (Doomstar) · 2,3 your Relays
+      // 4,5,6 forward posts · 7,8,9 their depots
+      map: {
+        w: 1000, h: 640,
+        nodes: [
+          { name: "Beacon Station", x: 110, y: 320, type: "command", owner: PLAYER, garrison: 40 },
+          { name: "The Array", x: 330, y: 320, type: "doomstar", owner: PLAYER, garrison: 22 },
+          { name: "North Relay", x: 230, y: 140, type: "relay", owner: PLAYER, garrison: 16 },
+          { name: "South Relay", x: 230, y: 500, type: "relay", owner: PLAYER, garrison: 16 },
+          { name: "Ridge Post", x: 560, y: 130, type: "factory", owner: PLAYER, garrison: 24 },
+          { name: "Mid Post", x: 580, y: 320, type: "factory", owner: PLAYER, garrison: 24 },
+          { name: "Deep Post", x: 560, y: 510, type: "factory", owner: PLAYER, garrison: 24 },
+          { name: "Ridge Depot", x: 880, y: 100, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
+          { name: "Mid Depot", x: 910, y: 320, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
+          { name: "Deep Depot", x: 880, y: 540, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
+          { name: "Combine Command", x: 990, y: 320, type: "command", owner: ENEMY, garrison: 80 }
+        ],
+        // Each depot touches exactly one post, so a wave's target is never
+        // in doubt. The posts are linked so a garrison can swing between
+        // them, and each hangs off the line behind it.
+        lanes: [
+          [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [1, 5], [2, 4], [3, 6],
+          [4, 5], [5, 6], [4, 7], [5, 8], [6, 9], [7, 10], [8, 10], [9, 10]
+        ]
+      }
     }
+
   ];
 
   function byId(id) {
@@ -230,10 +336,24 @@
     return null;
   }
 
-  // Everything createGame needs for this mission, in one object.
-  function optionsFor(mission) {
+  // The same board turned on its side. Missions are drawn landscape, and
+  // on a portrait phone a landscape board fits to a third of the screen
+  // width; turning it (x and y swapped, nothing else) fills the screen and
+  // changes nothing the simulation can see -- every distance, lane and
+  // index is the same, so a mission plays identically either way.
+  function transposed(map) {
     return {
-      map: mission.map,
+      w: map.h, h: map.w,
+      nodes: map.nodes.map((n) => Object.assign({}, n, { x: n.y, y: n.x })),
+      lanes: map.lanes
+    };
+  }
+
+  // Everything createGame needs for this mission, in one object. Pass
+  // `portrait` to get the board turned for a tall screen.
+  function optionsFor(mission, portrait) {
+    return {
+      map: portrait ? transposed(mission.map) : mission.map,
       objective: mission.objective,
       doctrine: mission.doctrine,
       foeDoctrine: mission.foeDoctrine || "standard",
@@ -241,9 +361,10 @@
       missionId: mission.id,
       foeTech: mission.foeTech || null,
       posture: mission.posture || "normal",
+      script: mission.script || null,
       ascension: 0
     };
   }
 
-  return { MISSIONS, byId, optionsFor };
+  return { MISSIONS, byId, optionsFor, transposed };
 });

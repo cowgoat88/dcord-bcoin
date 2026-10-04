@@ -183,7 +183,7 @@ and nothing else.
 
 ## Campaign
 
-Five hand-built missions on the start card, one per doctrine. A skirmish
+Six hand-built missions on the start card. A skirmish
 map is generated and point-symmetric so that a loss is never the map's
 fault; a mission is the exact opposite on purpose — the ground is
 lopsided, the brief is specific, and the doctrine it hands you is meant
@@ -192,7 +192,8 @@ to be the way through.
 | Mission | Hands you | Asks for |
 |---|---|---|
 | **Two Fronts** | ➤ Vanguard | Hold two listening posts, three hops apart down separate arms, for 45 seconds |
-| **The Waist** | ● Deep Logistics | Take everything, while the enemy repeatedly cuts your territory in half |
+| **The Waist** | ● Deep Logistics | Charge a Doomstar whose Relays are across a crossing that heavy freight closes every half minute, then shoot the Hub dug in behind it |
+| **Last Light** | ★ Forward Relays | Hold Beacon Station and the Array for 7 minutes against three depots that launch ever bigger waves on a timetable |
 | **The Redoubt Gate** | ★ Forward Relays | Capture a command dug in behind an asteroid wall, in 6 minutes |
 | **Deep Seam** | ◈ Prospectors | Hold every Mine on the map at once for 25 seconds |
 | **Hard Shell** | ▲ Shock Troops | Crack an opponent already researched to Fortify III, in 4 minutes |
@@ -206,6 +207,53 @@ every position always loses, whatever the brief says.
 
 Missions are recorded separately from your skirmish record, so a
 scripted board never pollutes the difficulty tiers' win rate.
+
+### Scripted missions: a timetable, and a story
+
+The Waist and Last Light run their own traffic. A mission can schedule
+**convoys** (an enemy fleet sent down one lane on a clock, free or drawn
+out of a depot's garrison, optionally growing each run, optionally
+docking on its landing node and moving on after a dwell) and
+**dispatches** (a line of story at a time). A convoy is an ordinary
+fleet, so assaults, capture and supply all apply to it; the script only
+decides when it leaves. Missions that do this set the opponent to
+*static*: it produces and holds but never moves, so the timetable is the
+whole threat and cannot be disturbed by the opponent routine. An
+objective can also `keep` positions: lose any of them and the mission is
+lost, whatever else you hold.
+
+The campaign strip under the toolbar shows the objective with its clock
+first, and the timetable as chips: green while a crossing is open, amber
+as freight lands, red while it is docked; a staged wave shows the depot,
+the seconds to launch and the hulls it will carry. It is a strip of its
+own, not part of the toolbar, because an objective in the toolbar pushed
+Menu off the screen on every mission at every width tested.
+
+**The Waist.** Anchorage holds a Doomstar and no Relays. The Relays are
+in the Annex, beyond the Meridian Yard, and Combine freight crosses the
+Yard on a half-minute timetable: it lands ninety hulls on whatever you
+hold there, docks for eight seconds, and moves on, leaving the Yard
+empty for about fourteen seconds. Take it in the window, cross, take the
+Annex (which Deep Logistics keeps producing at 90% while it is cut
+off), and the Relays charge the weapon for exactly as long as the Yard
+stays yours. The Hub is dug into an asteroid belt at 235 against a
+45 cap: fleets cannot break it, strikes can, and a scripted play of the
+intended route wins in about four minutes of the ten allowed.
+
+**Last Light.** Three depots on the far ridge fill and launch a wave
+each on a stagger, 56 hulls and eight more every run, and each wave
+lands on a forward post and then pushes on toward whatever stands
+behind it. A wave is only as big as the depot it was drawn from, which
+is why the Array matters: shoot a depot while it fills and the wave is
+26 smaller, and an empty depot can be taken so that it never launches
+again. Forward Relays charges the Array twice as fast, which is the
+only reason that is possible every wave.
+
+Both are checked by `campaign.test.js`, which plays each mission the way
+its hint describes and also the ways it is meant to punish: no weapon,
+no Annex, reinforcing alone, doing nothing. A scripted bot proves the
+mission can be done and that the shortcuts do not work; it says nothing
+about how hard a person finds it.
 
 ### How well tuned are they, honestly
 
@@ -222,7 +270,7 @@ What the measurements do say, over 40 runs per mission per doctrine:
 | Mission | Intended doctrine | Every other doctrine |
 |---|---|---|
 | Two Fronts | 75% | 43–83% |
-| The Waist | 83% | 35–98% |
+| The Waist (original, replaced) | 83% | 35–98% |
 | The Redoubt Gate | 100% | 0–60% |
 | Deep Seam | 28% | 15–28% |
 | Hard Shell | 33% | 8–23% |
@@ -272,7 +320,9 @@ The Redoubt Gate and Hard Shell look like real doctrine locks. The Waist
 and Two Fronts are flavoured but anyone can win them. Treat the low
 absolute numbers with suspicion in the other direction too: a bot that
 cannot shuttle a garrison or play to a clock failing 70% of the time is
-not evidence that a person will. These need play, not more simulation.
+not evidence that a person will. These need play, not more simulation. The new Waist and Last Light are
+not in the table above: the doctrine sweep tooling cannot play a
+timetable, so they are covered by the scripted-solution tests instead.
 
 ## The Doomstar
 

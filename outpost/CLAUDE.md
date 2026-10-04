@@ -368,6 +368,30 @@ damage. The station is drawn as an orb in every view: `paintOrb` /
 builds a sphere with trench and a dish that turns toward the target;
 its `doomFocus()` tells the overlay where the laser starts.
 
+### Campaign missions that run their own traffic
+
+`campaign.js` missions can carry a `script` (convoys and dispatches, see
+`stepScript` in engine.js) and an objective `keep` list, and set the
+opponent to `posture: "static"`. The reason for static: with the normal
+opponent routine alive, the AI retakes the crossing the moment it is
+empty and the timetable stops being the puzzle. `campaign.test.js` plays
+each scripted mission the intended way and the ways it must punish; add
+the same pair of plays for any new scripted mission, because the
+doctrine-sweep harnesses cannot play a timetable.
+
+The objective, and the timetable, live on `#missionBar` under the
+toolbar, never in `#hud`. An objective in the toolbar pushed Menu off
+the screen at every width on every mission, and Menu is the way out of
+a match. `scratchpad/mis/campaign_hud.js` checks all missions at ten
+widths (toolbar one row, Menu clickable and leaving the match, strip
+inside the viewport, board below it) and fails on the old build, which
+is the proof that it can see the bug. A strip that changes height has
+to resize the board, hence the ResizeObserver on `#boardWrap`.
+
+Missions are drawn landscape. On a portrait screen `optionsFor(m, true)`
+turns the board (x and y swapped); lanes, indices and distances are
+untouched, so it is the same mission, and a test holds it to that.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

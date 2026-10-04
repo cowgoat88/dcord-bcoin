@@ -79,6 +79,39 @@
   button:disabled { opacity: .35; cursor: default; }
   button.on { background: var(--player-dim); border-color: var(--player); color: var(--player); }
 
+  /* ---- campaign strip: objective, timetable alerts ---- */
+  #missionBar {
+    display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap;
+    padding: 4px 14px; background: rgba(12,18,32,.92); border-bottom: 1px solid var(--line);
+    font-size: 11px; z-index: 4;
+  }
+  #missionBar[hidden] { display: none; }
+  #missionBar .mname { flex: 0 0 auto; color: var(--gold); font-weight: 700; letter-spacing: .6px; text-transform: uppercase; font-size: 10px; }
+  #missionBar .mobj { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #missionBar .malerts { display: flex; flex-wrap: wrap; gap: 5px; flex: 0 1 auto; }
+  .achip { padding: 1px 8px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap;
+           font-variant-numeric: tabular-nums; font-size: 10.5px; background: rgba(255,255,255,.04); }
+  .achip.open  { color: #86efac; border-color: rgba(134,239,172,.55); background: rgba(34,197,94,.12); }
+  .achip.warn  { color: #fcd34d; border-color: rgba(252,211,77,.55); background: rgba(245,158,11,.12); }
+  .achip.shut  { color: #fda4af; border-color: rgba(253,164,175,.55); background: rgba(244,63,94,.14); }
+  /* A story beat: shown over the top of the board for a few seconds, never
+     over a control and never taking a tap. */
+  #dispatch {
+    position: absolute; left: 50%; top: 8px; transform: translateX(-50%); max-width: min(560px, calc(100% - 24px));
+    padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(252,211,77,.4); background: rgba(10,14,24,.88);
+    color: var(--text); font-size: 11.5px; line-height: 1.45; text-align: center; z-index: 7;
+    pointer-events: none; opacity: 0; transition: opacity .35s;
+  }
+  #dispatch.show { opacity: 1; }
+  #dispatch.warn { border-color: rgba(253,164,175,.6); }
+  #dispatch[hidden] { display: none; }
+  @media (max-width: 620px) {
+    #missionBar { padding: 3px 8px; gap: 2px 8px; font-size: 10.5px; }
+    #missionBar .mobj { flex: 1 1 100px; }
+    #missionBar .malerts { flex: 1 1 100%; }
+    #dispatch { font-size: 10.5px; padding: 6px 10px; top: 6px; }
+  }
+
   /* ---- board ---- */
   #boardWrap { position: relative; flex: 1 1 auto; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
@@ -388,7 +421,9 @@
     /* A mission brief is several sentences. On the shortest phones that
        is exactly what pushes Deploy past the bottom, so the prose gets
        its own scroll rather than the whole card growing. */
-    #missionBrief { max-height: 132px; overflow-y: auto; }
+    #missionBrief { max-height: 104px; overflow-y: auto; }
+    /* Six missions: tighter rows so Deploy stays on screen. */
+    .mission { padding: 5px 9px; margin-bottom: 3px; }
   }
 </style>
 </head>
@@ -402,7 +437,6 @@
     <span class="stat"><span class="k">Credits</span><span class="v gold" id="stCredits">0</span></span>
     <span class="stat" id="statFoeTech"><span class="k">Enemy tech</span><span class="v foe" id="stFoeTech">⚔0 ⛨0</span></span>
     <span class="stat" id="statDoc"><span class="k">Doctrine</span><span class="v" id="stDoc">—</span></span>
-    <span class="stat" id="statObj" hidden><span class="k">Objective</span><span class="v" id="stObj">—</span></span>
     <span class="stat doomstat"><span class="k">Doomstar</span>
       <span class="chargebar" title="Charged by every supplied Relay you hold"><i id="chargeFill"></i><b id="chargeTxt">0/20</b></span>
     </span>
@@ -416,8 +450,18 @@
     <button id="btnMenu" title="Leave this match and go back to the menu (Esc)">Menu</button>
   </div>
 
+  <!-- Campaign only: the objective and the mission's timetable live on
+       their own strip under the toolbar, so a long objective can never push
+       Menu off the screen and nothing here sits over the board. -->
+  <div id="missionBar" hidden>
+    <span class="mname" id="mbName"></span>
+    <span class="mobj" id="mbObj"></span>
+    <span class="malerts" id="mbAlerts"></span>
+  </div>
+
   <div id="boardWrap">
     <canvas id="boardGL" hidden></canvas>
+    <div id="dispatch" role="status" aria-live="polite" hidden></div>
     <canvas id="board"></canvas>
     <div id="toast" role="status" aria-live="polite"></div>
 
@@ -795,6 +839,17 @@
     renderer.resize(wrap.clientWidth, wrap.clientHeight, dpr);
   }
   window.addEventListener("resize", resize);
+  // The campaign strip can change height (chips wrap, a chip comes and
+  // goes), and the board is whatever is left, so follow the board itself
+  // rather than the window.
+  if (typeof ResizeObserver !== "undefined") {
+    let lastBoard = "";
+    new ResizeObserver(() => {
+      const w = document.getElementById("boardWrap");
+      const sig = w.clientWidth + "x" + w.clientHeight;
+      if (sig !== lastBoard) { lastBoard = sig; resize(); }
+    }).observe(document.getElementById("boardWrap"));
+  }
 
   // Decided once when a game begins, from where the two Commands start,
   // and never again mid-match: a Command that changes hands must not spin
@@ -1122,7 +1177,7 @@
     // A campaign mission brings its own board, brief and doctrine; a
     // skirmish generates one. Online is always a skirmish.
     game = mission && !isOnline()
-      ? E.createGame(CAMPAIGN.optionsFor(mission))
+      ? E.createGame(CAMPAIGN.optionsFor(mission, shape.mapH > shape.mapW))
       : E.createGame({
           seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
           layout: layout,
@@ -1412,7 +1467,7 @@
   function describeNode(n) {
     const s = E.nodeStats(n, game);
     const who = n.owner === mySeat ? "Yours" : n.owner === foeSeat ? "Enemy" : "Neutral";
-    return E.NODE_TYPES[n.type].label + " · " + who + " · " +
+    return (n.name ? n.name + " (" + E.NODE_TYPES[n.type].label + ")" : E.NODE_TYPES[n.type].label) + " · " + who + " · " +
       Math.floor(n.garrison) + "/" + s.cap +
       (n.owner !== NEUTRAL
         ? " · defends at \u00d7" + (E.DEFENDER_EDGE * E.fortifyMult(game, n.owner)).toFixed(2)
@@ -2562,6 +2617,8 @@
         burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
         floatText(ev.x, ev.y, "HELD", "#cbd5e1");
         if (ev.attacker === mySeat || ev.owner === mySeat) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "dispatch") {
+        showDispatch(ev.text, ev.tone);
       } else if (ev.kind === "doomlock") {
         // The two-second warning: the side being shot is told outright.
         if (ev.owner === mySeat) toast("Laser locked \u2014 strike in " + ev.seconds + "s");
@@ -3563,7 +3620,7 @@
       const st = E.nodeStats(n, game);
       const cut = n.inSupply === false;
       const bits = [
-        "<b>" + E.NODE_TYPES[n.type].label + "</b>" + (n.level ? " L" + n.level : ""),
+        "<b>" + (n.name || E.NODE_TYPES[n.type].label) + "</b>" + (n.level ? " L" + n.level : ""),
         Math.floor(n.garrison) + "/" + st.cap,
         (st.unitRate * (cut ? E.OUT_OF_SUPPLY_RATE : 1)).toFixed(2) + "/s" +
           (cut ? " <span style='color:var(--doom)'>(CUT OFF)</span>" : "")
@@ -3631,28 +3688,7 @@
       ? relays + " Relay" + (relays === 1 ? "" : "s") + " charging (+" + relays + " every " + E.DOOM_CHARGE_INTERVAL + "s)"
       : "No Relays charging \u2014 take a Relay and keep it supplied";
 
-    // Objective readout: only a campaign mission has one.
-    const objStat = document.getElementById("statObj");
-    const prog = E.objectiveProgress(game);
-    objStat.hidden = !prog;
-    if (prog) {
-      const clock = prog.left === null || prog.left === undefined
-        ? "" : " \u00b7 " + mmss(Math.ceil(prog.left)) + " left";
-      let txt = "";
-      if (prog.kind === "hold") {
-        txt = Math.floor(prog.held) + "/" + prog.need + "s" +
-          (prog.onTarget ? "" : " \u2014 not held");
-      } else if (prog.kind === "survive") {
-        txt = "hold out";
-      } else if (prog.kind === "capture") {
-        txt = "take the target";
-      } else if (prog.kind === "eliminate") {
-        txt = "clear the map";
-      }
-      document.getElementById("stObj").textContent = txt + clock;
-      document.getElementById("stObj").style.color =
-        prog.kind === "hold" && !prog.onTarget ? "var(--enemy)" : "";
-    }
+    updateMissionBar();
 
     // Only mark a target once the weapon could actually be used.
     const armed = (game.charge[mySeat] || 0) >= E.DOOM_CHARGE_NEEDED;
@@ -3690,6 +3726,115 @@
     } else {
       upBtn.disabled = true; upBtn.textContent = "Upgrade"; upBtn.title = "";
     }
+  }
+
+  // ---------------------------------------------------------------
+  // Campaign strip
+  // ---------------------------------------------------------------
+  // The objective, and the timetable of whatever the mission runs, on a
+  // strip of their own under the toolbar. They used to be a stat in the
+  // toolbar; a long objective there pushed Menu off the screen, and Menu
+  // is the way out of a match.
+  const nodeName = (id) => {
+    const n = game.nodes[id];
+    return (n && n.name) || (n ? E.NODE_TYPES[n.type].label : "?");
+  };
+  function objectiveText(prog) {
+    // The clock leads: on a phone the end of the line is what gets cut.
+    const clock = prog.left === null || prog.left === undefined
+      ? "" : mmss(Math.ceil(prog.left)) + " \u00b7 ";
+    let txt = "";
+    if (prog.kind === "hold") {
+      txt = "Hold " + Math.floor(prog.held) + "/" + prog.need + "s" + (prog.onTarget ? "" : " \u2014 not held");
+    } else if (prog.kind === "survive") {
+      txt = "Hold out";
+    } else if (prog.kind === "capture") {
+      txt = "Take " + nodeName(game.objective.nodeId);
+    } else if (prog.kind === "eliminate") {
+      txt = "Clear the map";
+    }
+    if (prog.keep && prog.keep.length) {
+      const lost = prog.keep.filter((id) => game.nodes[id].owner !== mySeat);
+      txt += " \u00b7 keep " + prog.keep.map(nodeName).join(" + ") + (lost.length ? " \u2014 LOST" : "");
+    }
+    return clock + txt;
+  }
+  // One chip per crossing (convoys that share a landing node are one
+  // crossing: it is open only while none of them is there) and one per
+  // staged wave. Colour says whether to act: green go, amber soon, red no.
+  function alertChips() {
+    const st = E.scriptStatus(game);
+    if (!st || !st.length) return [];
+    const chips = [];
+    const secs = (x) => Math.ceil(x) + "s";
+    const crossings = new Map();
+    for (const c of st) {
+      if (c.draw) {
+        const strength = c.strength ? " \u00b7 " + c.strength : "";
+        if (c.state === "assembling") chips.push({ cls: "warn", text: c.label + " \u25b2 " + secs(c.seconds) + strength });
+        else if (c.state === "inbound") chips.push({ cls: "shut", text: "\u26a0 " + c.label + " " + secs(c.seconds) + strength });
+        else chips.push({ cls: "", text: c.label + " \u2014" });
+      } else {
+        if (!crossings.has(c.nodeId)) crossings.set(c.nodeId, []);
+        crossings.get(c.nodeId).push(c);
+      }
+    }
+    for (const [id, list] of crossings) {
+      const name = nodeName(id);
+      const docked = list.filter((c) => c.state === "docked").sort((a, b) => a.seconds - b.seconds)[0];
+      const inbound = list.filter((c) => c.state === "inbound").sort((a, b) => a.seconds - b.seconds)[0];
+      const leaving = list.some((c) => c.state === "leaving");
+      if (docked) chips.unshift({ cls: "shut", text: name + " CLOSED \u00b7 leaves " + secs(docked.seconds) });
+      else if (inbound) chips.unshift({ cls: "warn", text: name + " \u26a0 landing " + secs(inbound.seconds) });
+      else {
+        // Only convoys with nothing on the lane count toward the next landing.
+        const next = Math.min(...list.filter((c) => c.state === "clear" && c.seconds !== null).map((c) => c.seconds), Infinity);
+        chips.unshift({ cls: "open", text: name + " OPEN" + (leaving ? " \u00b7 clearing" : "") + (next < Infinity ? " \u00b7 " + secs(next) : "") });
+      }
+    }
+    return chips;
+  }
+  let missionBarSig = "";
+  function updateMissionBar() {
+    const bar = document.getElementById("missionBar");
+    const prog = game ? E.objectiveProgress(game) : null;
+    // Only in a campaign match that is actually being played: the menu
+    // over a finished mission must not keep showing its strip.
+    const show = !!(started && game && game.missionId && (prog || game.script));
+    if (bar.hidden === show) { bar.hidden = !show; resize(); }
+    if (!show) { missionBarSig = ""; return; }
+    const m = CAMPAIGN && CAMPAIGN.byId(game.missionId);
+    const chips = alertChips();
+    const objTxt = prog ? objectiveText(prog) : "";
+    const html = JSON.stringify([m && m.name, objTxt, chips]);
+    if (html === missionBarSig) return;      // nothing changed: leave the DOM alone
+    missionBarSig = html;
+    document.getElementById("mbName").textContent = m ? m.name : "";
+    const obj = document.getElementById("mbObj");
+    obj.textContent = objTxt;
+    obj.style.color = prog && prog.kind === "hold" && !prog.onTarget ? "var(--enemy)" : "";
+    const box = document.getElementById("mbAlerts");
+    box.textContent = "";
+    for (const c of chips) {
+      const el = document.createElement("span");
+      el.className = "achip " + c.cls; el.textContent = c.text;
+      box.appendChild(el);
+    }
+  }
+  // Story beats ("dispatches") from the mission script.
+  let dispatchTimer = 0;
+  function showDispatch(text, tone) {
+    const el = document.getElementById("dispatch");
+    el.textContent = text;
+    el.className = tone === "warn" ? "warn" : "";
+    el.hidden = false;
+    void el.offsetWidth;                      // restart the fade
+    el.classList.add("show");
+    clearTimeout(dispatchTimer);
+    dispatchTimer = setTimeout(() => {
+      el.classList.remove("show");
+      dispatchTimer = setTimeout(() => { el.hidden = true; }, 400);
+    }, Math.max(4500, Math.min(9000, text.length * 55)));
   }
 
   function showEnd() {

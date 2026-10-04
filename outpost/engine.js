@@ -163,7 +163,10 @@
   function stepObjective(game, dt) {
     const obj = game.objective;
     if (!obj) return null;
-    if (obj.kind === "eliminate" && !obj.seconds) return null;
+    // `keep` names positions that must stay yours: losing any of them
+    // loses the mission, whatever else the brief asks.
+    if (obj.keep && obj.keep.some((id) => game.nodes[id] && game.nodes[id].owner !== PLAYER)) return ENEMY;
+    if (obj.kind === "eliminate" && !obj.seconds && !obj.keep) return null;
     const targets = objectiveNodes(game, obj);
     const holding = targets.length > 0 && targets.every((n) => n.owner === PLAYER);
 
@@ -197,16 +200,16 @@
   function objectiveProgress(game) {
     const obj = game.objective;
     if (!obj) return null;
-    if (obj.kind === "eliminate" && !obj.seconds) return null;
+    if (obj.kind === "eliminate" && !obj.seconds && !obj.keep) return null;
     const left = obj.seconds ? Math.max(0, obj.seconds - game.time) : null;
     if (obj.kind === "hold") {
       const need = obj.holdFor || 0;
       return { kind: "hold", held: Math.min(need, game.holdTimer || 0), need, left,
                onTarget: objectiveNodes(game, obj).every((n) => n.owner === PLAYER) };
     }
-    if (obj.kind === "survive") return { kind: "survive", left };
-    if (obj.kind === "eliminate") return { kind: "eliminate", left };
-    if (obj.kind === "capture") return { kind: "capture", left };
+    if (obj.kind === "survive") return { kind: "survive", left, keep: obj.keep || null };
+    if (obj.kind === "eliminate") return { kind: "eliminate", left, keep: obj.keep || null };
+    if (obj.kind === "capture") return { kind: "capture", left, keep: obj.keep || null };
     return null;
   }
 
@@ -1495,7 +1498,10 @@
       terrain: FLAT_TYPES.indexOf(n.type) !== -1 ? "open" : (n.terrain || "open"),
       owner: n.owner === undefined ? NEUTRAL : n.owner,
       garrison: n.garrison === undefined ? 0 : n.garrison,
-      level: n.level || 0
+      level: n.level || 0,
+      // A mission may name its positions ("Transit Yard"); the view shows
+      // the name in the selection line and in the mission alerts.
+      name: n.name || null
     }));
     const lanes = spec.lanes.map((l) => ({
       a: Math.min(l[0], l[1]), b: Math.max(l[0], l[1])
@@ -1562,6 +1568,8 @@
       winner: null,
       objective: o.objective || { kind: "eliminate" },
       posture: o.posture || "normal",
+      // Scheduled traffic and story for a mission (see stepScript).
+      script: makeScript(o.script),
       // Captured at creation: "its own ground" cannot mean "whatever it
       // happens to hold", or a defender that takes one node has licence
       // to take the next.
@@ -1749,6 +1757,7 @@
 
     stepAssaults(game, dt);
     stepDoomShot(game, dt);
+    stepScript(game, dt);
     stepCharge(game, dt);
 
     if (!game.humanFoe && canFire(game, ENEMY)) fireDoomstar(game, ENEMY);
@@ -1771,6 +1780,133 @@
       const owned = nodesOf(game, seat).length;
       if (owned > game.stats[seat].peakNodes) game.stats[seat].peakNodes = owned;
     }
+  }
+
+  // ---- mission scripts -------------------------------------------------
+  // A mission can run a timetable. Two things are scheduled, both pure
+  // data in campaign.js:
+  //
+  //   convoys    enemy fleets sent along one lane on a clock. `from` and
+  //              `to` are node ids; every `every` seconds from `first` a
+  //              fleet of `count` leaves `from` for `to` and fights what it
+  //              finds there like any other fleet. With `onward` and
+  //              `dwell`, whatever then stands on `to` (if the enemy still
+  //              holds it) leaves for `onward` `dwell` seconds after the
+  //              fleet lands -- heavy transports that dock and move on,
+  //              closing the crossing while they are there. By default the
+  //              fleet is free (the transports come from off the map);
+  //              with `draw` it is taken out of the depot's garrison, which
+  //              makes the depot something worth hitting while it fills.
+  //              `grow` adds that many hulls to every run after the first.
+  //   dispatches story: `text` is shown once at `at` seconds.
+  //
+  // A convoy is an ordinary fleet in game.fleets, so every rule that
+  // applies to fleets -- assaults, capture, supply -- applies to it. The
+  // only thing the script adds is when it launches.
+  function makeScript(spec) {
+    if (!spec) return null;
+    return {
+      convoys: (spec.convoys || []).map((c, i) => ({
+        id: c.id || "convoy" + i,
+        name: c.name || "Convoy",
+        label: c.label || c.name || "Convoy",
+        from: c.from, to: c.to,
+        onward: c.onward === undefined ? null : c.onward,
+        count: c.count, grow: c.grow || 0, launched: 0,
+        dwell: c.dwell || 0, draw: !!c.draw,
+        first: c.first || 0, every: c.every || 0,
+        next: c.first || 0,
+        pending: []
+      })),
+      dispatches: (spec.dispatches || []).map((d) => ({
+        at: d.at || 0, text: d.text, tone: d.tone || "info", fired: false
+      }))
+    };
+  }
+
+  function convoyTravel(game, c) {
+    return dist(game.nodes[c.from], game.nodes[c.to]) / fleetSpeed(game, ENEMY);
+  }
+
+  function launchConvoy(game, c) {
+    const from = game.nodes[c.from], to = game.nodes[c.to];
+    if (!from || !to || from.owner !== ENEMY) return;    // a lost depot runs no convoy
+    // `grow` makes each run bigger than the last: a campaign that escalates.
+    let count = c.count + c.grow * c.launched;
+    c.launched += 1;
+    if (c.draw) {
+      count = Math.min(count, Math.floor(from.garrison));
+      if (count < MIN_SEND) return;
+      from.garrison -= count;
+    }
+    const duration = convoyTravel(game, c);
+    game.fleets.push({
+      owner: ENEMY, from: c.from, to: c.to, count, path: [c.from, c.to],
+      leg: 0, t: 0, duration, convoy: c.id
+    });
+    if (c.onward !== null) c.pending.push(game.time + duration + c.dwell);
+    emit(game, { kind: "convoy", id: c.id, name: c.name, x: from.x, y: from.y, nodeId: c.to, count, eta: duration });
+  }
+
+  function departConvoy(game, c) {
+    const at = game.nodes[c.to];
+    if (!at || at.owner !== ENEMY || Math.floor(at.garrison) < MIN_SEND) return;
+    if (!sendFleet(game, c.to, c.onward, 1, ENEMY)) game.fleets[game.fleets.length - 1].convoy = c.id;
+  }
+
+  function stepScript(game, dt) {
+    const s = game.script;
+    if (!s) return;
+    for (const c of s.convoys) {
+      if (game.time >= c.next) {
+        launchConvoy(game, c);
+        c.next = c.every ? c.next + c.every : Infinity;
+      }
+      while (c.pending.length && game.time >= c.pending[0]) {
+        c.pending.shift();
+        departConvoy(game, c);
+      }
+    }
+    for (const d of s.dispatches) {
+      if (!d.fired && game.time >= d.at) {
+        d.fired = true;
+        emit(game, { kind: "dispatch", text: d.text, tone: d.tone });
+      }
+    }
+  }
+
+  // What the timetable is doing right now, for the mission bar: one entry
+  // per convoy with a state and the seconds until it changes.
+  //   clear       nothing on the lane; `seconds` to the next landing
+  //   assembling  (draw convoys) the depot is filling; `seconds` to launch
+  //   inbound     in flight toward `nodeId`; `seconds` to landing
+  //   docked      landed and still there; `seconds` until it moves on
+  //   leaving     moving on to the next depot
+  function scriptStatus(game) {
+    const s = game.script;
+    if (!s) return null;
+    return s.convoys.map((c) => {
+      const out = { id: c.id, name: c.name, label: c.label, nodeId: c.to, fromId: c.from, draw: c.draw, state: "clear", seconds: null, strength: null };
+      const inbound = game.fleets.find((f) => f.convoy === c.id && f.to === c.to);
+      const leaving = c.onward !== null && game.fleets.find((f) => f.convoy === c.id && f.to === c.onward);
+      if (inbound) {
+        out.state = "inbound"; out.seconds = Math.max(0, (1 - inbound.t) * inbound.duration); out.strength = Math.round(inbound.count);
+      } else if (leaving) {
+        out.state = "leaving"; out.seconds = Math.max(0, (1 - leaving.t) * leaving.duration);
+      } else if (c.pending.length) {
+        out.state = "docked"; out.seconds = Math.max(0, c.pending[0] - game.time);
+      } else if (c.next !== Infinity) {
+        const wait = Math.max(0, c.next - game.time);
+        if (c.draw) {
+          const depot = game.nodes[c.from];
+          out.state = "assembling"; out.seconds = wait;
+          out.strength = depot.owner === ENEMY ? Math.min(c.count + c.grow * c.launched, Math.floor(depot.garrison)) : 0;
+        } else {
+          out.seconds = wait + convoyTravel(game, c);
+        }
+      }
+      return out;
+    });
   }
 
   function resolveArrival(game, f) {
@@ -1927,6 +2063,10 @@
   }
 
   function stepAI(game, dt) {
+    // "static": the opponent only holds and produces. A mission that
+    // runs its own traffic (see stepScript) uses this so the timetable is
+    // the whole threat and cannot be disturbed by the opponent routine.
+    if (game.posture === "static") return;
     const cfg = DIFFICULTY[clamp(game.difficulty | 0, 0, DIFFICULTY.length - 1)];
     game.ai.timer -= dt;
     if (game.ai.timer > 0) return;
@@ -2190,6 +2330,7 @@
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, buildMap, createGame, LAYOUTS, validLayout,
     OBJECTIVES, stepObjective, objectiveProgress, objectiveNodes,
+    stepScript, scriptStatus,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
     terrainOf, terrainDefence,

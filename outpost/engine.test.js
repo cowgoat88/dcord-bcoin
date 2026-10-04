@@ -1936,3 +1936,133 @@ test("only an orbital map carries rings for the 3D floor, and the stations sit o
     }
   }
 });
+
+// ---------------------------------------------------------------------
+// Mission scripts: timetabled convoys, dispatches, static opponent, keep
+// ---------------------------------------------------------------------
+// A depot (0) and a yard (1) the player's gate (2) touches, an onward
+// siding (3) and a player Command (4) behind the gate. Lane lengths of
+// 115 units are a second of flight each at the stock fleet speed.
+function yardMap() {
+  return {
+    w: 700, h: 300,
+    nodes: [
+      { name: "Depot", x: 300, y: 40, type: "factory", owner: ENEMY, garrison: 30 },
+      { name: "Yard", x: 300, y: 155, type: "factory", owner: ENEMY, garrison: 0 },
+      { name: "Gate", x: 185, y: 155, type: "factory", owner: PLAYER, garrison: 20 },
+      { name: "Siding", x: 300, y: 270, type: "factory", owner: ENEMY, garrison: 0 },
+      { name: "Home", x: 70, y: 155, type: "command", owner: PLAYER, garrison: 20 },
+      { name: "Their Command", x: 520, y: 155, type: "command", owner: ENEMY, garrison: 40 }
+    ],
+    lanes: [[0, 1], [1, 2], [1, 3], [2, 4], [1, 5]]
+  };
+}
+function yardGame(extra) {
+  return E.createGame(Object.assign({
+    map: yardMap(), posture: "static",
+    script: { convoys: [{ id: "run", name: "Freight", from: 0, to: 1, onward: 3, count: 80, dwell: 5, first: 10, every: 40 }] }
+  }, extra));
+}
+
+test("a timetabled convoy lands, takes the crossing, docks, and moves on", () => {
+  const g = yardGame();
+  assert.equal(g.fleets.length, 0, "nothing flies before the first run");
+  assert.deepEqual(E.scriptStatus(g).map((s) => s.state), ["clear"]);
+  assert.ok(Math.abs(E.scriptStatus(g)[0].seconds - (10 + 1)) < 0.2, "the strip counts to the landing, not the launch");
+
+  run(g, 10.4);
+  assert.equal(E.scriptStatus(g)[0].state, "inbound", "launched at `first`");
+  assert.equal(g.fleets[0].owner, ENEMY);
+  assert.equal(g.fleets[0].count, 80, "a free convoy does not draw on the depot");
+  assert.equal(g.nodes[0].garrison > 30, true, "the depot kept producing");
+
+  // Take the Yard before it lands so the convoy has something to take.
+  g.nodes[1].owner = PLAYER; g.nodes[1].garrison = 12;
+  run(g, 2.5);
+  assert.equal(g.nodes[1].owner, ENEMY, "a convoy that outweighs a position takes it");
+  assert.equal(E.scriptStatus(g)[0].state, "docked");
+  const docked = g.nodes[1].garrison;
+  assert.ok(docked > 20, "and sits there as a garrison: " + docked);
+
+  run(g, 3.4);
+  assert.equal(E.scriptStatus(g)[0].state, "leaving", "after the dwell it moves on");
+  assert.ok(g.nodes[1].garrison < 1, "the Yard is empty once it has gone");
+  assert.equal(g.fleets.some((f) => f.to === 3 && f.convoy === "run"), true);
+
+  // Take the empty Yard in the window; the next run is 40 s after the first.
+  run(g, 1.5);
+  assert.equal(E.scriptStatus(g)[0].state, "clear");
+  g.nodes[1].garrison = 0;
+  const win = E.scriptStatus(g)[0].seconds;
+  assert.ok(win > 20 && win < 40, "a window with real length: " + win.toFixed(1));
+});
+
+test("a convoy is not launched by a depot the enemy has lost, and can draw on the depot", () => {
+  const g = yardGame({ script: { convoys: [{ id: "d", name: "Wave", from: 0, to: 1, count: 50, draw: true, first: 5, every: 30 }] } });
+  g.nodes[0].garrison = 30;
+  run(g, 5.2);
+  assert.ok(g.fleets[0].count >= 30 && g.fleets[0].count <= 31, "a drawn wave is as big as the depot, at most: " + g.fleets[0].count);
+  assert.ok(g.nodes[0].garrison < 2, "and takes it out of the garrison: " + g.nodes[0].garrison);
+
+  const lost = yardGame({ script: { convoys: [{ id: "d", name: "Wave", from: 0, to: 1, count: 50, draw: true, first: 5, every: 30 }] } });
+  lost.nodes[0].owner = PLAYER;
+  run(lost, 40);
+  assert.equal(lost.fleets.filter((f) => f.convoy).length, 0, "take the depot and the waves stop");
+});
+
+test("convoys can grow, and a drawn wave reports its strength while the depot fills", () => {
+  const g = yardGame({ script: { convoys: [{ id: "w", name: "Wave", from: 0, to: 1, count: 20, grow: 6, draw: true, first: 5, every: 30 }] } });
+  g.nodes[0].garrison = 60;
+  const before = E.scriptStatus(g)[0];
+  assert.equal(before.state, "assembling");
+  assert.equal(before.strength, 20, "strength is what it will launch");
+  run(g, 5.2);
+  assert.equal(g.fleets[0].count, 20);
+  assert.equal(E.scriptStatus(g)[0].state, "inbound");
+  run(g, 1.5);
+  g.nodes[0].garrison = 60;
+  const next = E.scriptStatus(g)[0];
+  assert.equal(next.strength, 26, "the next one is bigger");
+});
+
+test("a dispatch is delivered once, at its time", () => {
+  const g = yardGame({ script: { convoys: [], dispatches: [{ at: 3, text: "Hello", tone: "warn" }] } });
+  run(g, 2.9);
+  assert.equal(E.drainEvents(g).filter((e) => e.kind === "dispatch").length, 0);
+  run(g, 0.3);
+  const got = E.drainEvents(g).filter((e) => e.kind === "dispatch");
+  assert.equal(got.length, 1);
+  assert.equal(got[0].text, "Hello");
+  assert.equal(got[0].tone, "warn");
+  run(g, 20);
+  assert.equal(E.drainEvents(g).filter((e) => e.kind === "dispatch").length, 0, "and never again");
+});
+
+test("a static opponent produces but never moves on its own", () => {
+  const g = yardGame({ script: null, difficulty: 3 });
+  g.nodes[1].owner = ENEMY; g.nodes[1].garrison = 40;
+  run(g, 120);
+  assert.equal(g.nodes[2].owner, PLAYER, "it does not attack");
+  assert.equal(g.nodes[1].owner, ENEMY);
+  assert.equal(g.stats[ENEMY].sent, 0, "it has sent nothing at all");
+  assert.ok(g.nodes[0].garrison > 30, "but its depots still produce");
+});
+
+test("a mission can name positions that must be kept", () => {
+  const g = yardGame({ script: null, objective: { kind: "survive", seconds: 100, keep: [2] } });
+  run(g, 5);
+  assert.equal(g.winner, null);
+  assert.deepEqual(E.objectiveProgress(g).keep, [2]);
+  g.nodes[2].owner = ENEMY;
+  run(g, 0.1);
+  assert.equal(g.winner, ENEMY, "losing a kept position loses the mission, though you still have ground");
+  const ok = yardGame({ script: null, objective: { kind: "survive", seconds: 20, keep: [2] } });
+  run(ok, 21);
+  assert.equal(ok.winner, PLAYER, "holding it to the clock wins");
+});
+
+test("map positions can carry names", () => {
+  const g = yardGame();
+  assert.equal(g.nodes[1].name, "Yard");
+  assert.ok(!E.createGame({ seed: 3 }).nodes[0].name, "generated maps are unnamed");
+});
