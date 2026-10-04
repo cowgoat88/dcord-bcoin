@@ -238,3 +238,7 @@ never pauses, resets or desyncs the match and keeps the selection.
   a Death Star sphere (trench, panel lines, a dish that turns to aim,
   tributary beams converging during the 2 s lock-on), and the superlaser
   arc starts from the dish.
+- **Default**: Enhanced is the default (a first visit opens in 3D+). The
+  iPhone human gate (solo and online: smooth, not hot, survives app
+  switching) has not been run; the automatic fallback is what stands
+  behind the default until it is.

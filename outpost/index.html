@@ -745,7 +745,7 @@
   // renderer ("holo-gl", see below) draws WebGL on a second canvas under
   // it and uses this one only for the overlays and the input.
   let renderer = null;           // assigned once `flat` is defined, below
-  let viewPref = "flat";
+  let viewPref = "holo";          // default: the 3D view (Enhanced when it can run)
 
   // Which way up the board is drawn. Your own base belongs on the near
   // side -- the bottom of a portrait screen, the left of a landscape one --
@@ -957,6 +957,7 @@
     syncViewBtn();
   });
   function setGfx(v) {
+    gfxChosen = true;
     if (gfxPref === v) return;
     gfxPref = v;
     prefs.write({ gfx: gfxPref });
@@ -982,7 +983,8 @@
   // jitter and still catches a renderer that is genuinely choking.
   const GL_SLOW_MS = 42;         // median frame interval that counts as too slow
   const GL_WINDOW_MS = 3000;     // how long it must stay slow before acting
-  let gfxPref = "off";           // stored: "on" | "off"
+  let gfxPref = "on";            // stored: "on" | "off". On unless the player turned it off.
+  let gfxChosen = false;         // the player has said so (stored, or by pressing a control)
   let gl = null;                 // the WebGL renderer, only while Enhanced shows
   let glDead = false;            // fell back this session
   let glLoading = null;          // promise for the script load, once started
@@ -1095,7 +1097,13 @@
     glDead = true;
     if (gl && renderer === gl) setRenderer(window.OutpostHolo ? standardHolo() : flat);
     dropGL();
-    toast("Enhanced 3D off (" + reason + ") \u2014 " + (is3D(renderer) ? "standard 3D" : "flat map"));
+    // Enhanced is on by default now. A device that has no WebGL at all
+    // would be told so at every visit for something it never asked for, so
+    // that one case is silent unless the player turned Enhanced on
+    // themselves. Anything that went wrong while it was running still says so.
+    if (gfxChosen || reason !== "WebGL is not available") {
+      toast("Enhanced 3D off (" + reason + ") \u2014 " + (is3D(renderer) ? "standard 3D" : "flat map"));
+    }
     syncGfxSwitch();
     syncViewBtn();           // 3D+ drops out of the button's cycle
   }
@@ -1138,6 +1146,7 @@
   }
   document.getElementById("btnGfx").addEventListener("click", () => {
     gfxPref = gfxPref === "on" ? "off" : "on";
+    gfxChosen = true;
     prefs.write({ gfx: gfxPref });
     syncGfxSwitch();
     if (gfxPref === "on" && glDead) toast("Enhanced 3D is unavailable until you reload");
@@ -4085,7 +4094,7 @@
     if (typeof p.doctrine === "string" && E.DOCTRINES[p.doctrine]) doctrine = p.doctrine;
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
     if (p.view === "flat" || p.view === "holo") viewPref = p.view;
-    if (p.gfx === "on" || p.gfx === "off") gfxPref = p.gfx;
+    if (p.gfx === "on" || p.gfx === "off") { gfxPref = p.gfx; gfxChosen = true; }
     syncGfxSwitch();
     if (LAYOUT_CHOICES.indexOf(p.layout) !== -1) layoutPref = p.layout;
     syncMapRow();

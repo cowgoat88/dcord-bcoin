@@ -317,7 +317,17 @@ weaker at Captain and Commander (79/28/23 against classic's 88/44/31,
 `holo-gl.js` draws the 3D view on WebGL with a vendored three.js subset
 (`vendor/three.subset.min.js`, 0.186.1, rebuilt with the command in its
 header from `vendor/three.subset.entry.js`). It is loaded only when
-Enhanced is on (`prefs.gfx`, default off) and the 3D view is showing.
+Enhanced is on (`prefs.gfx`) and the 3D view is showing. Both are the
+default now: a first visit opens in 3D+ (`viewPref = "holo"`,
+`gfxPref = "on"`), and a stored choice always wins, so anyone who had
+picked 2D keeps 2D. `gfxChosen` records whether the player said so; when
+they did not, a device with no WebGL falls back to standard 3D without the
+"Enhanced 3D off" toast, because it would nag on every visit for
+something never asked for. Every other failure still toasts. The
+standing harnesses must now state both prefs (`cp3/pref2d.js`,
+`pref3d.js`): a test that relied on "nothing stored means flat" is now
+running Enhanced. `scratchpad/mis/defaults.js` covers the first visit,
+stored choices and a browser with no WebGL.
 The view button in the top bar cycles 2D -> 3D -> 3D+ (Enhanced) -> 2D;
 the switch in the help overlay sets the same pref. It started out only
 in the help overlay and the owner could not find it -- a mode that only
