@@ -75,7 +75,7 @@ doctrine is the shape of the army you brought to it.
 |---|---|---|
 | ◆ **Standard** | Balanced — nothing to exploit | — |
 | ➤ **Vanguard** | Fleets travel 25% faster | Positions build units 12% slower |
-| ● **Deep Logistics** | Cut-off positions keep 90% output instead of 30% | Credit income −30% |
+| ● **Deep Logistics** | Cut-off positions keep 90% output instead of 30%, and a cut-off Relay still charges the Doomstar | Credit income −30% |
 | ★ **Forward Relays** | Relays out-build Factories and charge the Doomstar twice as fast | Everywhere else builds 10% slower |
 | ◈ **Prospectors** | Income +70%, research 30% cheaper | Positions build units 10% slower |
 | ▲ **Shock Troops** | Assaults land 15% harder | Positions defend 6% worse and build 20% slower |
@@ -192,7 +192,7 @@ to be the way through.
 | Mission | Hands you | Asks for |
 |---|---|---|
 | **Two Fronts** | ➤ Vanguard | Hold two listening posts, three hops apart down separate arms, for 45 seconds |
-| **The Waist** | ● Deep Logistics | Charge a Doomstar whose Relays are across a crossing that heavy freight closes every half minute, then shoot the Hub dug in behind it |
+| **The Waist** | ● Deep Logistics | Get across a crossing that heavy freight closes every half minute, take the Relays behind it so they charge the Doomstar, then shoot the Hub dug in behind it, in 9 minutes |
 | **Last Light** | ★ Forward Relays | Hold Beacon Station and the Array for 7 minutes against three depots that launch ever bigger waves on a timetable |
 | **The Redoubt Gate** | ★ Forward Relays | Capture a command dug in behind an asteroid wall, in 6 minutes |
 | **Deep Seam** | ◈ Prospectors | Hold every Mine on the map at once for 25 seconds |
@@ -229,31 +229,46 @@ the seconds to launch and the hulls it will carry. It is a strip of its
 own, not part of the toolbar, because an objective in the toolbar pushed
 Menu off the screen on every mission at every width tested.
 
-**The Waist.** Anchorage holds a Doomstar and no Relays. The Relays are
-in the Annex, beyond the Meridian Yard, and Combine freight crosses the
-Yard on a half-minute timetable: it lands ninety hulls on whatever you
-hold there, docks for eight seconds, and moves on, leaving the Yard
-empty for about fourteen seconds. Take it in the window, cross, take the
-Annex (which Deep Logistics keeps producing at 90% while it is cut
-off), and the Relays charge the weapon for exactly as long as the Yard
-stays yours. The Hub is dug into an asteroid belt at 235 against a
-45 cap: fleets cannot break it, strikes can, and a scripted play of the
-intended route wins in about four minutes of the ten allowed.
+**The Waist.** Anchorage holds a Doomstar and nothing to charge it, and
+only three producing positions: the Command, the Doomstar and a mine.
+The Relays are in the Annex, beyond the Meridian Yard, and Combine
+freight crosses the Yard on a half-minute timetable: it lands ninety
+hulls on whatever you hold there, docks for eight seconds, and moves on,
+leaving the Yard empty for about fourteen seconds. A fleet that meets
+freight in a lane is gone. Take the Yard in a window, cross, take the
+Annex, and the Relays keep charging the weapon after the Yard falls
+again, because Deep Logistics Relays charge while cut off (see the
+doctrine). Then shoot the Hub. It is dug into an asteroid belt at 450
+against a cap of 45, the Combine fights at Fortify III, and Anchorage
+cannot out-build it: playing the timetable and throwing everything at
+the Hub, as a player reported doing against the first version, now
+leaves a quarter of it standing when the nine minutes run out. A
+scripted play of the intended route wins in about six and a half.
 
 **Last Light.** Three depots on the far ridge fill and launch a wave
-each on a stagger, 56 hulls and eight more every run, and each wave
-lands on a forward post and then pushes on toward whatever stands
-behind it. A wave is only as big as the depot it was drawn from, which
-is why the Array matters: shoot a depot while it fills and the wave is
-26 smaller, and an empty depot can be taken so that it never launches
-again. Forward Relays charges the Array twice as fast, which is the
-only reason that is possible every wave.
+each on a stagger, and a wave is everything its depot holds when the
+timer runs out. Each lands on a forward post and then pushes on toward
+whatever stands behind it. The strip names the depot that launches next
+and the board rings it, joins it to its target with a dashed line and
+counts it down. That is the one to answer: shoot it just before it
+launches and the wave is 26 smaller, which is what lets a post hold.
+Forward Relays charges the Array twice as fast, which is why that is
+possible every wave. An empty depot can be taken so that it never
+launches again, but not while its wave is still in the lane. Losing the
+Array or Beacon Station loses the mission, and the end screen says so
+rather than blaming the clock. The Combine is dug in (Fortify III, a
+Command of 320) so the way through is not to storm the ridge: with a
+smaller Command the generic scripted commander eliminated the whole
+Combine in 112 seconds, which is how that was found.
 
 Both are checked by `campaign.test.js`, which plays each mission the way
 its hint describes and also the ways it is meant to punish: no weapon,
 no Annex, reinforcing alone, doing nothing. A scripted bot proves the
 mission can be done and that the shortcuts do not work; it says nothing
-about how hard a person finds it.
+about how hard a person finds it. One of those shortcuts was found by a
+player, not by a bot: with a big home economy The Waist could be won
+without the weapon, which is why the test for it now fails if fleets
+alone can.
 
 ### How well tuned are they, honestly
 
@@ -449,6 +464,42 @@ position gets a broken orange ring and a CUT OFF label, and an order with
 no open route previews as **NO ROUTE** instead of silently failing. Order
 previews trace the actual lane path the fleet will take, so a detour
 looks like a detour.
+
+## Fleets meet in lanes
+
+Opposing fleets that cross on the same lane **fight where they meet**.
+Before this a lane was two roads: a fleet could fly straight past the
+enemy's army to hit a rear position, and a front line was only ever a
+line of nodes. Now a lane is a place, and a flank has to get past what
+is in it.
+
+- **No defence modifiers in flight.** No defender edge, no terrain, no
+  fortification: nobody is dug in on an open lane. Only the numbers and
+  each side's own Assault research and doctrine count, the same strength
+  both sides already fight at in an assault.
+- **The bigger fleet survives by the difference**, in real units; an
+  exact tie destroys both. A fleet destroyed in a lane never arrives, so
+  it never attacks the position it was sent at.
+- **Any meeting counts.** Fleets flying toward each other, and a faster
+  fleet (Vanguard) running a slower enemy one down on the same lane,
+  both fight. Friendly fleets pass through each other. A long tick that
+  carries two fleets past each other still fights them.
+- The board flashes the winner's colour at the spot with the number it
+  has left.
+
+Measured on skirmishes it moves almost nothing: tiers 98/91/46/30
+before against 100/95/47/32 after (60-80 seeds, within noise), the
+ascension ladder and doctrine table likewise, and the opening all-in
+stays at 0%. Skirmish fleets rarely cross because both sides mostly
+send down the same lanes the same way. What it changes is missions with
+traffic in them: a small fleet sent down a lane toward an enemy wave is
+gone, and "take the depot the moment it launches" stopped working,
+because the fleet that did it used to fly through the wave it was
+supposed to pass.
+
+Online, the host simulates the fights and the guest sees the fleets
+vanish; the flash and number are drawn from events, which the guest does
+not get.
 
 ## The one rule that matters
 

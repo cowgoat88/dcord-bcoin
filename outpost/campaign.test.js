@@ -37,73 +37,107 @@ test("every scripted convoy runs along lanes that exist", () => {
 // The Waist
 // ---------------------------------------------------------------------
 // Positions, by index in the mission's map.
-const W = { home: 0, doom: 1, foundry: 2, ore: 3, gate: 4, yard: 5, east: 6, afoundry: 10, hub: 11 };
+const W = { home: 0, doom: 1, gate: 2, yard: 3, east: 4, relays: [5, 6, 7], amine: 8, hub: 9 };
+const ANNEX = [4, 5, 6, 8, 7];            // the order a person would take it in
 function playWaist(opts) {
   opts = opts || {};
   const m = C.byId("meridian-yard");
   const g = E.createGame(C.optionsFor(m, !!opts.portrait));
   const N = (i) => g.nodes[i];
   const inFlight = (to) => g.fleets.some((f) => f.owner === PLAYER && f.to === to);
-  let think = 0;
+  let think = 0, strikes = 0, storms = 0;
   while (!g.winner && g.time < m.objective.seconds + 5) {
-    E.step(g, 0.1); E.drainEvents(g);
+    E.step(g, 0.1);
+    for (const ev of E.drainEvents(g)) if (ev.kind === "doomstar" && ev.owner === PLAYER && !ev.fizzled) strikes++;
     if (g.time < think) continue;
     think = g.time + 0.5;
-    const yard = N(W.yard), gate = N(W.gate);
-    if (!opts.noFeed) for (const id of [W.home, W.foundry, W.ore]) {
-      const n = N(id);
-      if (n.owner === PLAYER && n.garrison > (id === W.home ? 22 : 10)) E.sendFleet(g, id, W.gate, id === W.home ? 0.4 : 0.8, PLAYER);
-    }
-    // The Yard is open when nothing is inbound or docked.
+    const yard = N(W.yard), gate = N(W.gate), home = N(W.home), hub = N(W.hub);
+    // Anchorage feeds the Gatehouse.
+    if (!opts.noFeed && home.owner === PLAYER && home.garrison > 22) E.sendFleet(g, W.home, W.gate, 0.45, PLAYER);
+    // The freight timetable: the Yard is open when nothing is inbound,
+    // docked or on its way out, and the next landing is a while off.
     const st = E.scriptStatus(g);
-    const busy = st.some((s) => s.state === "inbound" || s.state === "docked");
+    const busy = st.some((s) => s.state !== "clear");
     const next = Math.min(...st.map((s) => (s.state === "clear" ? s.seconds : 0)));
-    if (yard.owner !== PLAYER && !busy && next > 4) {
+    const annexLeft = !opts.noAnnex && ANNEX.some((i) => N(i).owner !== PLAYER);
+    // Wanted force for the storm, from everything that could go.
+    const sources = g.nodes.filter((n) => n.owner === PLAYER && n.type !== "doomstar" && n.id !== W.yard);
+    const potential = sources.reduce((a, n) => a + Math.floor(n.garrison * 0.95), 0);
+    const stormNeed = E.defenceOf(g, hub) * 1.25 + 8;
+    const wantYard = annexLeft || (opts.brute ? potential > 50 : potential > stormNeed);
+    // 1. Take the Yard when it opens.
+    if (yard.owner !== PLAYER && wantYard && !busy && next > 5) {
       const need = Math.ceil(yard.garrison * 1.25) + 4;
       if (Math.floor(gate.garrison) >= need && !inFlight(W.yard)) E.sendFleet(g, W.gate, W.yard, Math.min(1, need / gate.garrison), PLAYER);
     }
-    if (yard.owner === PLAYER && !opts.noAnnex && N(W.east).owner !== PLAYER && gate.garrison >= 24 && !inFlight(W.east)) E.sendFleet(g, W.gate, W.east, 1, PLAYER);
-    if (N(W.east).owner === PLAYER && !opts.noAnnex) {
-      for (const tgt of [W.afoundry, 7, 8, 9]) {
-        const t = N(tgt);
-        if (t.owner === PLAYER || inFlight(tgt)) continue;
-        const src = [W.east, W.afoundry, 7, 8, 9].map(N).filter((n) => n.owner === PLAYER && n.id !== tgt && E.areLinked(g, n.id, tgt)).sort((a, b) => b.garrison - a.garrison)[0];
-        if (src && src.garrison >= t.garrison + 4) E.sendFleet(g, src.id, tgt, 1, PLAYER);
+    // 2. With the Yard ours, ferry across and take the Annex one position at a time.
+    if (yard.owner === PLAYER && annexLeft) {
+      const tgt = ANNEX.map(N).find((n) => n.owner !== PLAYER && !inFlight(n.id));
+      if (tgt) {
+        const need = tgt.garrison + 4;
+        const anx = ANNEX.map(N).filter((n) => n.owner === PLAYER && E.areLinked(g, n.id, tgt.id)).sort((a, b) => b.garrison - a.garrison)[0];
+        let have = 0; const send = [];
+        if (anx && anx.garrison - 2 >= need) send.push([anx.id, Math.min(1, need / anx.garrison)]);
+        else {
+          for (const n of [gate, home]) {
+            const give = Math.floor(n.garrison * (n.id === W.home ? 0.8 : 0.95));
+            if (give >= 3 && E.findPath(g, n.id, tgt.id, PLAYER)) { send.push([n.id, give / n.garrison]); have += give; }
+          }
+          if (have < need) send.length = 0;
+        }
+        for (const [id, f] of send) E.sendFleet(g, id, tgt.id, Math.min(1, f), PLAYER);
       }
     }
+    // 3. Fire when charged. The weapon needs no connection.
     if (!opts.noFire && E.canFire(g, PLAYER) && !g.doomShot) E.fireDoomstar(g, PLAYER, W.hub);
-    // Storm the Hub through an open Yard once the force clearly outweighs it.
-    if (yard.owner === PLAYER) {
-      const hub = N(W.hub);
+    // 4. Storm the Hub through an open Yard once the force clearly outweighs it
+    // (or, brute-forcing, as soon as there is something to throw).
+    if (yard.owner === PLAYER && !annexLeft && !st.some((s) => s.state === "inbound" || s.state === "leaving")) {
+      const need = opts.brute ? 50 : stormNeed;
       let force = 0; const srcs = [];
-      for (const n of g.nodes) {
-        if (n.owner !== PLAYER || n.type === "doomstar" || n.id === W.yard) continue;
-        const send = Math.floor(n.garrison * (n.id === W.home ? 0.7 : 0.95));
-        if (send >= 3) { force += send; srcs.push([n.id, send / n.garrison]); }
-      }
-      if (force > E.defenceOf(g, hub) * 1.25 + 8) for (const [id, f] of srcs) E.sendFleet(g, id, W.hub, Math.min(1, f), PLAYER);
+      for (const n of sources) { const send = Math.floor(n.garrison * (n.id === W.home ? 0.7 : 0.95)); if (send >= 3 && E.findPath(g, n.id, W.hub, PLAYER)) { force += send; srcs.push([n.id, send / n.garrison]); } }
+      if (force > need) { storms++; for (const [id, f] of srcs) E.sendFleet(g, id, W.hub, Math.min(1, f), PLAYER); }
     }
   }
-  return { winner: g.winner, t: g.time, strikes: g.stats[PLAYER].fired, hub: g.nodes[W.hub].garrison };
+  return { winner: g.winner, t: g.time, strikes, storms, hub: g.nodes[W.hub].garrison };
 }
 
 test("The Waist: the timetable, the Annex and the Doomstar win it", () => {
   const r = playWaist();
   assert.equal(r.winner, PLAYER, "the intended plan must win: " + JSON.stringify(r));
-  assert.ok(r.strikes >= 3, "and it takes several strikes, not one: " + r.strikes);
-  assert.ok(r.t > 120, "and it is not over in two minutes: " + r.t.toFixed(0) + "s");
+  assert.ok(r.strikes >= 5, "and it takes several strikes, not one: " + r.strikes);
+  assert.ok(r.t > 150, "and it is not over in two and a half minutes: " + r.t.toFixed(0) + "s");
 });
 
-test("The Waist: without the Doomstar the Hub cannot be broken", () => {
+test("The Waist: timing the freight and throwing everything at the Hub does not work", () => {
+  // Reported from play: with a big home economy the Hub fell to fleets
+  // alone. Anchorage now has a Command, the Doomstar and a mine.
+  const r = playWaist({ noFire: true, brute: true });
+  assert.equal(r.winner, ENEMY, "fleets alone must not do it: " + JSON.stringify(r));
+});
+
+test("The Waist: the Hub cannot be stormed without first shooting it", () => {
   const r = playWaist({ noFire: true });
-  assert.equal(r.winner, ENEMY, "fleets alone must not do it");
-  assert.ok(r.hub >= 230, "the Hub is untouched: " + r.hub);
+  assert.equal(r.winner, ENEMY);
+  assert.ok(r.hub >= 440, "it is untouched: " + r.hub);
 });
 
 test("The Waist: without the Annex there is nothing to charge the weapon", () => {
   const r = playWaist({ noAnnex: true });
   assert.equal(r.winner, ENEMY);
   assert.equal(r.strikes, 0);
+});
+
+test("The Waist: the Annex keeps charging after the Yard has fallen again", () => {
+  const m = C.byId("meridian-yard");
+  const g = E.createGame(C.optionsFor(m));
+  for (const i of [5, 6, 7]) { g.nodes[i].owner = PLAYER; g.nodes[i].garrison = 12; }
+  E.computeSupply(g);
+  assert.equal(g.nodes[5].inSupply, false, "the Annex is cut off from Anchorage");
+  assert.equal(E.chargingRelays(g, PLAYER).length, 3, "and its Relays charge anyway");
+  const before = g.charge[PLAYER];
+  for (let t = 0; t < 10; t += 0.1) E.step(g, 0.1);
+  assert.ok(g.charge[PLAYER] - before >= 8, "charge climbs without a connection: " + (g.charge[PLAYER] - before));
 });
 
 test("The Waist: standing at the Gatehouse and waiting loses to the clock", () => {
@@ -131,7 +165,9 @@ function playLight(mode, opts) {
       if (c.state !== "inbound" && !(c.state === "assembling" && c.seconds < 8)) continue;
       const post = N(c.nodeId);
       if (post.owner !== PLAYER) continue;
-      const need = c.strength / 1.25 + 4;
+      // What the wave will be once the Array has had its say.
+      const shot = !opts.noFire && g.doomShot && g.doomShot.targetId === c.fromId ? 26 : 0;
+      const need = Math.max(0, c.strength - shot) / 1.25 + 4;
       let have = post.garrison + g.fleets.filter((f) => f.owner === PLAYER && f.to === post.id).reduce((s, f) => s + f.count, 0);
       if (have >= need) continue;
       const donors = g.nodes.filter((n) => n.owner === PLAYER && n.id !== post.id && n.type !== "doomstar" && E.findPath(g, n.id, post.id, PLAYER))
@@ -147,8 +183,10 @@ function playLight(mode, opts) {
     if (mode !== "smart") continue;
     // Shoot the depot that is about to launch the biggest wave.
     if (!opts.noFire && E.canFire(g, PLAYER) && !g.doomShot) {
-      const cand = st.filter((c) => c.state === "assembling" && c.seconds < 25 && N(c.fromId).owner === ENEMY)
-        .sort((a, b) => b.strength - a.strength)[0];
+      // Late enough that the depot cannot refill, early enough that the
+      // two-second lock lands before the wave leaves.
+      const cand = st.filter((c) => c.state === "assembling" && c.seconds > 2.4 && c.seconds < 9 && N(c.fromId).owner === ENEMY)
+        .sort((a, b) => a.seconds - b.seconds)[0];
       if (cand) E.fireDoomstar(g, PLAYER, cand.fromId);
     }
     // And take a depot once it has launched and is empty.
@@ -156,13 +194,16 @@ function playLight(mode, opts) {
       const d = N(c.fromId);
       if (d.owner !== ENEMY || d.garrison > 18) continue;
       if (c.state === "assembling" && c.seconds < 12 && c.strength > 8) continue;
+      // Not while its wave is still on the lane: a small fleet sent down
+      // the lane meets the wave head-on and is gone.
+      if (c.state === "inbound") continue;
       const post = N(c.nodeId);
       if (post.owner !== PLAYER) continue;
       const need = Math.ceil(d.garrison * 1.25) + 3;
       if (post.garrison - 6 >= need && !g.fleets.some((f) => f.owner === PLAYER && f.to === d.id)) E.sendFleet(g, post.id, d.id, Math.min(1, need / post.garrison), PLAYER);
     }
   }
-  return { winner: g.winner, t: g.time };
+  return { winner: g.winner, t: g.time, posts: [4, 5, 6].filter((i) => N(i).owner === PLAYER).length, depots: [7, 8, 9].filter((i) => N(i).owner === PLAYER).length, lost: [0, 1].filter((i) => N(i).owner !== PLAYER) };
 }
 
 test("Last Light: shooting the depots as they fill, and holding, wins it", () => {

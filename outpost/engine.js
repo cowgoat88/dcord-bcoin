@@ -278,7 +278,7 @@
     },
     logistics: {
       label: "Deep Logistics", icon: "\u25cf",
-      up: "Cut-off positions keep 90% output, not 30%",
+      up: "Cut-off positions keep 90% output, and Relays keep charging",
       down: "Credit income \u221230%",
       mods: { cutoff: 0.90, credits: 0.70 }
     },
@@ -532,8 +532,20 @@
 
   // How much charge one held Relay contributes per tick: every Relay you
   // hold and can still supply, whether or not the enemy is next door.
+  //
+  // Deep Logistics is the exception: a cut-off Relay keeps charging at
+  // that doctrine's cut-off rate (90%) instead of going dark. It is the
+  // doctrine's whole claim -- a position cut off from Command is still
+  // working -- carried to the one output that supply used to switch off
+  // completely, and it is what lets The Waist's Annex charge the weapon
+  // from behind a crossing it cannot hold. Doctrines without it are
+  // unchanged: a cut-off Relay charges nothing.
   function relayCharge(game, node) {
-    if (node.type !== "relay" || node.inSupply === false) return 0;
+    if (node.type !== "relay") return 0;
+    if (node.inSupply === false) {
+      const keeps = docMod(game, node.owner, "cutoff");
+      return keeps > OUT_OF_SUPPLY_RATE ? keeps : 0;
+    }
     return 1;
   }
 
@@ -1740,8 +1752,11 @@
 
     // Fleet movement: advance along the current lane, then hand off to the
     // next leg of the route until the final node is reached.
-    const remaining = [];
     for (const f of game.fleets) {
+      // Where it is on its lane before it moves: the other half of every
+      // lane meeting is where each fleet was a tick ago.
+      const L0 = laneOf(game, f);
+      f.lk = L0.key; f.ls = L0.s;
       f.t += dt / f.duration;
       while (f.t >= 1 && f.leg < f.path.length - 2) {
         f.leg += 1;
@@ -1750,6 +1765,13 @@
         f.duration = dist(a, b) / fleetSpeed(game, f.owner);
         f.t *= 1; // carry the overshoot into the new leg
       }
+    }
+    // Opposing fleets that meet in a lane fight there, before anything
+    // arrives anywhere: whoever reaches a node has already won the road.
+    stepLaneCombat(game);
+    const remaining = [];
+    for (const f of game.fleets) {
+      if (f.count <= 0) continue;
       if (f.t < 1) { remaining.push(f); continue; }
       resolveArrival(game, f);
     }
@@ -1780,6 +1802,89 @@
       const owned = nodesOf(game, seat).length;
       if (owned > game.stats[seat].peakNodes) game.stats[seat].peakNodes = owned;
     }
+  }
+
+  // ---- fleets meeting in a lane ----------------------------------------
+  // Two opposing fleets that cross on the same lane fight where they meet.
+  // Before this, fleets passed through each other as if the lane were two
+  // roads, so a flank was a free ride past the enemy's army and the front
+  // line was only ever a line of nodes. Now a lane is a place.
+  //
+  // There are no defence modifiers in flight: no defender edge, no
+  // terrain, no fortification, because nobody is dug in on an open lane.
+  // Only the numbers and the attacker's own research and doctrine (the
+  // same assault strength both sides fight at in any assault) count. The
+  // smaller fleet is destroyed and the larger loses the difference, in
+  // real units; an exact tie destroys both.
+  //
+  // A meeting is a crossing: each fleet's position along the lane is
+  // tracked in one fixed direction, and the order of two fleets swapping
+  // (or touching) between ticks is a meeting, whichever way each was
+  // flying -- which also catches a faster fleet overtaking a slower one.
+  function laneOf(game, f) {
+    const a = f.path[f.leg], b = f.path[f.leg + 1];
+    const lo = a < b ? a : b, hi = a < b ? b : a;
+    // Position from the lower id toward the higher, in 0..1.
+    const t = f.t > 1 ? 1 : f.t < 0 ? 0 : f.t;
+    return { key: lo + "-" + hi, s: a < b ? t : 1 - t, start: a < b ? 0 : 1, a, b, t };
+  }
+
+  function stepLaneCombat(game) {
+    const fleets = game.fleets;
+    if (fleets.length < 2) return;
+    const groups = new Map();
+    for (const f of fleets) {
+      if (f.count <= 0) continue;
+      const L = laneOf(game, f);
+      // A fleet that turned onto this lane during the tick came from the
+      // node at its end of it.
+      const prev = f.lk === L.key && f.ls !== undefined ? f.ls : L.start;
+      f.lp = prev; f.lc = L;
+      let g = groups.get(L.key);
+      if (!g) { g = []; groups.set(L.key, g); }
+      g.push(f);
+    }
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      for (let i = 0; i < g.length; i++) {
+        for (let j = i + 1; j < g.length; j++) {
+          const a = g[i], b = g[j];
+          if (a.owner === b.owner || a.count <= 0 || b.count <= 0) continue;
+          const before = a.lp - b.lp, after = a.lc.s - b.lc.s;
+          // Swapped, or touching. A pair that began the tick together
+          // (two fleets launched from one node) has not met anything.
+          if (before === 0) continue;
+          if (before * after > 0) continue;
+          fightInLane(game, a, b);
+        }
+      }
+    }
+  }
+
+  function fightInLane(game, a, b) {
+    const ma = assaultMult(game, a.owner), mb = assaultMult(game, b.owner);
+    const ea = a.count * ma, eb = b.count * mb;
+    const pa = lanePoint(game, a), pb = lanePoint(game, b);
+    const x = (pa.x + pb.x) / 2, y = (pa.y + pb.y) / 2;
+    const cA = a.count, cB = b.count;
+    let winner = 0, left = 0;
+    if (ea > eb) { a.count = (ea - eb) / ma; b.count = 0; winner = a.owner; left = a.count; }
+    else if (eb > ea) { b.count = (eb - ea) / mb; a.count = 0; winner = b.owner; left = b.count; }
+    else { a.count = 0; b.count = 0; }
+    // A fleet that is almost nothing is nothing.
+    if (a.count < 0.5) a.count = 0;
+    if (b.count < 0.5) b.count = 0;
+    emit(game, {
+      kind: "clash", x, y, owner: winner, count: Math.round(left),
+      sides: [{ owner: a.owner, count: Math.round(cA) }, { owner: b.owner, count: Math.round(cB) }]
+    });
+  }
+
+  // Where a fleet is on the board.
+  function lanePoint(game, f) {
+    const A = game.nodes[f.path[f.leg]], B = game.nodes[f.path[f.leg + 1]];
+    const t = f.t > 1 ? 1 : f.t < 0 ? 0 : f.t;
+    return { x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t };
   }
 
   // ---- mission scripts -------------------------------------------------
@@ -2330,7 +2435,7 @@
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
     generateMap, buildLanes, buildMap, createGame, LAYOUTS, validLayout,
     OBJECTIVES, stepObjective, objectiveProgress, objectiveNodes,
-    stepScript, scriptStatus,
+    stepScript, scriptStatus, stepLaneCombat, lanePoint,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,
     terrainOf, terrainDefence,

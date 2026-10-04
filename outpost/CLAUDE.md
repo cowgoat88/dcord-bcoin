@@ -392,6 +392,46 @@ Missions are drawn landscape. On a portrait screen `optionsFor(m, true)`
 turns the board (x and y swapped); lanes, indices and distances are
 untouched, so it is the same mission, and a test holds it to that.
 
+### Fleets fight in lanes, and a tick-by-tick crossing is what detects it
+
+`stepLaneCombat` runs after fleets move and before anything arrives. It
+tracks each fleet's position along its lane in one fixed direction
+(`f.lk`/`f.ls` are stamped before the move, so a fleet that turned onto a
+new lane mid-tick starts from the node it came from) and a pair of
+opposing fleets whose order swaps, or touches, between ticks fights. A
+pair that began the tick at the same spot is skipped. No defence
+modifiers; Assault research and doctrine only. Emits `clash` (x, y,
+winner, count left, both sides) for the UI.
+
+Two things to remember when writing a bot or a test: a small fleet sent
+down a lane toward an enemy wave dies, and a fleet that used to "slip
+past" something no longer does. `campaign.test.js` bots wait for lanes to
+clear for that reason. Guests get no `clash` events, so no flash online.
+
+Measured before and after on skirmishes (`scratchpad/lane/`), it moves
+nothing outside noise, because skirmish fleets rarely cross. Re-measure
+if the AI ever starts sending fleets through each other's lanes.
+
+### Deep Logistics Relays charge when cut off
+
+`relayCharge` returns the doctrine's cut-off rate (0.9) for a cut-off
+Relay when the doctrine has one above the default, so only Deep
+Logistics changes. It was asked for because The Waist's Annex cannot be
+held connected, and a Doomstar that only charges while the crossing is
+yours turns the mission into retaking the crossing after every convoy.
+
+### A mission's brute-force route has to be measured, not assumed
+
+The first Waist could be won without the Doomstar by timing the freight
+and sending fleets at the Hub, and the first Last Light "smart" bot won
+by sending a fleet to take a depot while its wave was still in the lane,
+which only worked because fleets passed through each other. Give every
+scripted mission a bot for the route it must not allow and make the test
+fail if that route wins. What stopped the Waist brute force was not the
+Hub's garrison alone (attrition does not care how big a number is when
+it does not regenerate) but Fortify III on the Combine and a smaller
+home economy. A strike ignores fortification and a fleet does not.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

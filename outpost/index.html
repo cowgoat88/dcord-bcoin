@@ -93,6 +93,7 @@
            font-variant-numeric: tabular-nums; font-size: 10.5px; background: rgba(255,255,255,.04); }
   .achip.open  { color: #86efac; border-color: rgba(134,239,172,.55); background: rgba(34,197,94,.12); }
   .achip.warn  { color: #fcd34d; border-color: rgba(252,211,77,.55); background: rgba(245,158,11,.12); }
+  .achip.next  { font-weight: 700; color: #fef3c7; background: rgba(245,158,11,.28); border-color: #fcd34d; }
   .achip.shut  { color: #fda4af; border-color: rgba(253,164,175,.55); background: rgba(244,63,94,.14); }
   /* A story beat: shown over the top of the board for a few seconds, never
      over a control and never taking a tap. */
@@ -352,7 +353,10 @@
     position: absolute; left: 50%; transform: translateX(-50%);
     bottom: 16px; background: rgba(17,24,40,.95); border: 1px solid var(--line);
     padding: 7px 14px; border-radius: 7px; font-size: 11px; color: var(--text);
-    pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 8; white-space: nowrap;
+    pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 8;
+    /* One line when it fits, wrapped when it does not: the doctrine line
+       at the start of a match is longer than a phone is wide. */
+    width: max-content; max-width: calc(100% - 24px); text-align: center; line-height: 1.4;
   }
   #toast.show { opacity: 1; }
 
@@ -2617,6 +2621,15 @@
         burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
         floatText(ev.x, ev.y, "HELD", "#cbd5e1");
         if (ev.attacker === mySeat || ev.owner === mySeat) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "clash") {
+        // Two fleets met in a lane. The winner's colour is the flash; the
+        // number is what it has left, so the cost of the fight is readable.
+        const mine = ev.sides.some((x) => x.owner === mySeat);
+        const col = ev.owner ? colorOf(ev.owner) : "#cbd5e1";
+        burst(ev.x, ev.y, col, 14, 95, 0.5);
+        burst(ev.x, ev.y, "#ffffff", 5, 60, 0.3);
+        floatText(ev.x, ev.y, ev.owner ? String(ev.count) : "\u2715", col);
+        if (mine) { addShake(2.5); sfx.repulse(); }
       } else if (ev.kind === "dispatch") {
         showDispatch(ev.text, ev.tone);
       } else if (ev.kind === "doomlock") {
@@ -3496,8 +3509,87 @@
     H.paintLock(c, from, to, tr, H.lockProgress(game), ds.t, colorOf(ds.owner), performance.now());
   }
 
+  // The mission's timetable, on the board itself. The strip says when;
+  // this says where. A depot that is about to launch is ringed and joined
+  // to the position it will hit by a dashed line; the soonest one is the
+  // loudest, so the player never has to read three timers to find which
+  // wave is next. A wave in flight rings its target; a crossing is ringed
+  // green while it is open, amber as freight lands and red while it is
+  // docked. Drawn in screen space, like the lock-on, in every view.
+  function drawMissionCues(c, so) {
+    if (!started || !game || !game.script || game.winner) return;
+    const st = E.scriptStatus(game);
+    if (!st || !st.length) return;
+    const H = window.OutpostHolo, threeD = is3D(renderer);
+    const t = performance.now() / 1000;
+    const spot = (id) => {
+      const n = game.nodes[id];
+      const p = so(n.x, n.y, threeD ? H.HEIGHT[n.type] * 0.5 : 0);
+      if (!p) return null;
+      const r = threeD ? H.RADIUS[n.type] * 0.92 * p.scale : E.nodeStats(n, game).radius * p.scale;
+      return { x: p.x, y: p.y, r };
+    };
+    const label = (str, x, y, col, px) => {
+      c.font = "700 " + (px || 11) + "px system-ui, sans-serif";
+      c.textAlign = "center"; c.textBaseline = "middle";
+      c.lineWidth = 3.5; c.strokeStyle = "rgba(5,9,18,.9)"; c.lineJoin = "round";
+      c.strokeText(str, x, y); c.fillStyle = col; c.fillText(str, x, y);
+    };
+    const ring = (p, grow, col, w, alpha) => {
+      c.globalAlpha = alpha; c.strokeStyle = col; c.lineWidth = w;
+      c.beginPath(); c.arc(p.x, p.y, p.r + grow, 0, Math.PI * 2); c.stroke();
+    };
+    const secs = (x) => Math.ceil(x) + "s";
+    // The wave that launches soonest.
+    let nextId = null, nextT = Infinity;
+    for (const w of st) if (w.draw && w.state === "assembling" && w.seconds < nextT) { nextT = w.seconds; nextId = w.id; }
+    c.save();
+    for (const w of st) {
+      if (w.draw) {
+        const from = spot(w.fromId), to = spot(w.nodeId);
+        if (!from || !to) continue;
+        if (w.state === "assembling") {
+          const soonest = w.id === nextId;
+          const pulse = 0.5 + 0.5 * Math.sin(t * (soonest ? 6 : 2));
+          ring(from, 6 + (soonest ? 3 * pulse : 0), "#fcd34d", soonest ? 3 : 1.5, soonest ? 0.65 + 0.35 * pulse : 0.45);
+          if (soonest) {
+            // The lane it will take, and the position it will hit.
+            c.globalAlpha = 0.8; c.strokeStyle = "#fcd34d"; c.lineWidth = 2;
+            c.setLineDash([7, 6]); c.lineDashOffset = -t * 24;
+            c.beginPath(); c.moveTo(from.x, from.y); c.lineTo(to.x, to.y); c.stroke();
+            c.setLineDash([]);
+            ring(to, 8, "#fcd34d", 2, 0.5 + 0.3 * pulse);
+            c.globalAlpha = 1;
+            label("NEXT \u00b7 " + w.label + " \u00b7 " + secs(w.seconds) + (w.strength ? " \u00b7 " + w.strength : ""), from.x, from.y - from.r - 16, "#fde68a", 12);
+          } else {
+            c.globalAlpha = 1;
+            label(secs(w.seconds), from.x, from.y - from.r - 12, "#fcd34d", 10.5);
+          }
+        } else if (w.state === "inbound") {
+          const pulse = 0.5 + 0.5 * Math.sin(t * 9);
+          ring(to, 7 + 3 * pulse, "#fda4af", 3, 0.7 + 0.3 * pulse);
+          c.globalAlpha = 1;
+          label("\u26a0 " + (w.strength || "") + " \u00b7 " + secs(w.seconds), to.x, to.y - to.r - 15, "#fecdd3", 12);
+        }
+      } else {
+        const at = spot(w.nodeId);
+        if (!at) continue;
+        const col = w.state === "docked" ? "#fda4af" : w.state === "inbound" ? "#fcd34d" : "#86efac";
+        // Only one ring per crossing: the most urgent state wins.
+        const urgent = st.filter((x) => !x.draw && x.nodeId === w.nodeId)
+          .some((x) => x.state === "docked") ? "docked"
+          : st.filter((x) => !x.draw && x.nodeId === w.nodeId).some((x) => x.state === "inbound") ? "inbound" : "clear";
+        if ((w.state === "docked" ? "docked" : w.state === "inbound" ? "inbound" : "clear") !== urgent) continue;
+        const pulse = 0.5 + 0.5 * Math.sin(t * (urgent === "inbound" ? 8 : 2));
+        ring(at, 9 + (urgent === "inbound" ? 3 * pulse : 0), col, urgent === "clear" ? 2 : 3, urgent === "clear" ? 0.55 : 0.7 + 0.3 * pulse);
+      }
+    }
+    c.restore();
+  }
+
   function holoOverlay(c, so) {
     drawDoomLock(c, so);
+    drawMissionCues(c, so);
     const now = performance.now();
     const W = canvas.clientWidth, H = canvas.clientHeight;
     const cam = renderer.camera();
@@ -3768,10 +3860,15 @@
     const chips = [];
     const secs = (x) => Math.ceil(x) + "s";
     const crossings = new Map();
+    // The wave that launches soonest is the one to answer: it leads the
+    // strip and is the one the board rings.
+    let nextId = null, nextT = Infinity;
+    for (const c of st) if (c.draw && c.state === "assembling" && c.seconds < nextT) { nextT = c.seconds; nextId = c.id; }
     for (const c of st) {
       if (c.draw) {
         const strength = c.strength ? " \u00b7 " + c.strength : "";
-        if (c.state === "assembling") chips.push({ cls: "warn", text: c.label + " \u25b2 " + secs(c.seconds) + strength });
+        if (c.state === "assembling" && c.id === nextId) chips.unshift({ cls: "warn next", text: "NEXT " + c.label + " \u25b2 " + secs(c.seconds) + strength });
+        else if (c.state === "assembling") chips.push({ cls: "warn", text: c.label + " \u25b2 " + secs(c.seconds) + strength });
         else if (c.state === "inbound") chips.push({ cls: "shut", text: "\u26a0 " + c.label + " " + secs(c.seconds) + strength });
         else chips.push({ cls: "", text: c.label + " \u2014" });
       } else {
@@ -3871,13 +3968,22 @@
     document.getElementById("endTitle").textContent = won ? "Victory" : "Defeat";
     document.getElementById("endTitle").style.color = won ? "var(--player)" : "var(--enemy)";
     const stillStanding = game.nodes.some((n) => n.owner === mySeat);
+    // A mission can name positions that must be kept. Losing one is its own
+    // way to lose, and the end screen has to say which: "the clock beat you"
+    // is false when the clock had minutes left.
+    const keptLost = !won && game.objective && game.objective.keep
+      ? game.objective.keep.map((id) => game.nodes[id]).filter((n) => n && n.owner !== mySeat) : [];
     document.getElementById("endText").textContent = won
       ? (game.missionId && game.objective.kind !== "eliminate"
           ? "Objective complete."
           : "The map is yours. Every enemy position has fallen.")
-      : stillStanding
-        ? "The clock beat you. The objective was never met."
-        : "Your last position was overrun.";
+      : keptLost.length
+        ? "You lost " + keptLost.map((n) => (n.name || E.NODE_TYPES[n.type].label) +
+            (n.type === "doomstar" ? " (the Doomstar)" : "")).join(" and ") +
+          ". The mission was to keep it."
+        : stillStanding
+          ? "The clock beat you. The objective was never met."
+          : "Your last position was overrun.";
     const t = Math.floor(game.time);
     document.getElementById("endTime").textContent =
       Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0");
@@ -3945,7 +4051,7 @@
       } else {
         renderer.render(fr);
         // The flat board draws in world space; the lock-on is screen space.
-        if (renderer === flat) drawDoomLock(ctx, screenOfFlat);
+        if (renderer === flat) { drawDoomLock(ctx, screenOfFlat); drawMissionCues(ctx, screenOfFlat); }
       }
     }
 

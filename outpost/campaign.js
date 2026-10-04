@@ -77,27 +77,31 @@
       doctrine: "logistics",
       difficulty: 0,
       brief:
-        "Anchorage is safe and the Doomstar in it is intact, but every Relay " +
-        "that could charge it is in the Annex, on the far side of the " +
-        "Meridian Yard \u2014 and the Freight Combine runs ninety hulls " +
-        "across the Yard on a timetable. While they dock nothing you can " +
-        "mass will take it, and when they land on a position of yours it " +
-        "falls. The Yard is never yours for long. It is empty for a few " +
-        "seconds at a time.",
-      hint: "The bar under the toolbar counts the Yard's timetable. Take the Yard when it opens, cross, take the Annex, and its Relays charge the Doomstar for as long as the Yard stays yours. Deep Logistics keeps the Annex producing at 90% while it is cut off. Then shoot the Hub: it is garrisoned past anything a fleet can break.",
+        "Anchorage is safe and the Doomstar in it is intact, but it has " +
+        "nothing to charge it: every Relay in reach is in the Annex, on " +
+        "the far side of the Meridian Yard, and the Freight Combine runs " +
+        "ninety hulls across the Yard on a timetable. While they dock " +
+        "nothing you can mass will take it, and when they land on a " +
+        "position of yours it falls. The Yard is never yours for long. " +
+        "It is empty for a few seconds at a time, and a fleet that meets " +
+        "freight in a lane is gone.",
+      hint: "The strip under the toolbar counts the Yard's timetable. Take the Yard when it opens, cross, and take the Annex: Deep Logistics Relays keep charging the Doomstar after the Yard falls again. Anchorage cannot out-build the Hub, so shoot it. Fleets alone will not break it.",
       // The Combine only runs freight; it does not come looking for you.
       // Without this the opponent routine retakes the Yard the moment it
       // is empty, and the timetable stops being the puzzle.
       posture: "static",
-      objective: { kind: "capture", nodeId: 11, seconds: 600 },
-      goal: "Capture the Rail Hub within 10 minutes. Fleets alone cannot break it.",
+      // Dug in: every position of theirs fights at Fortify III. Strikes
+      // ignore it and fleets do not, which is the whole case for the weapon.
+      foeTech: { assault: 0, fortify: 3 },
+      objective: { kind: "capture", nodeId: 9, seconds: 540 },
+      goal: "Capture the Rail Hub within 9 minutes. Fleets alone cannot break it.",
       script: {
         convoys: [
-          // Two freight runs a minute apart-ish, in opposite directions,
-          // staggered so the Yard is open about two seconds in three.
-          { id: "north", name: "North freight", from: 11, to: 5, onward: 12,
+          // Two freight runs, in opposite directions, staggered so the
+          // Yard is open about two seconds in three.
+          { id: "north", name: "North freight", from: 9, to: 3, onward: 10,
             count: 90, dwell: 8, first: 14, every: 48 },
-          { id: "south", name: "South freight", from: 12, to: 5, onward: 11,
+          { id: "south", name: "South freight", from: 10, to: 3, onward: 9,
             count: 90, dwell: 8, first: 38, every: 48 }
         ],
         dispatches: [
@@ -106,42 +110,41 @@
           { at: 7, tone: "story",
             text: "Combine freight crosses the Yard on a timetable: ninety hulls, docked eight seconds, then onward." },
           { at: 15, tone: "warn",
-            text: "North freight is landing. Do not be standing in the Yard." },
+            text: "North freight is landing. Do not be standing in the Yard, or in its lanes." },
           { at: 90, tone: "story",
-            text: "The Hub is garrisoned far beyond what fleets can break. Charge the Doomstar and shoot it." }
+            text: "Anchorage cannot out-build the Hub. Charge the Doomstar and shoot it." }
         ]
       },
-      // 0 Anchorage (your Command) · 1 the Doomstar · 2 Foundry · 3 Ore Dock
-      // 4 Gatehouse · 5 THE YARD · 6 East Gate · 7,8,9 Annex Relays · 10 Annex Foundry
-      // 11 Rail Hub (dug into the belt) · 12 Combine Command · 13,14 their outliers
+      // 0 Anchorage (your Command) · 1 the Doomstar · 2 Gatehouse
+      // 3 THE YARD · 4 East Gate · 5,6,7 Annex Relays · 8 Annex Mine
+      // 9 Rail Hub (dug into the belt) · 10 Combine Command · 11,12 their outliers
       map: {
         w: 1000, h: 640,
         nodes: [
-          { name: "Anchorage", x: 90, y: 320, type: "command", owner: PLAYER, garrison: 30 },
+          { name: "Anchorage", x: 90, y: 320, type: "command", owner: PLAYER, garrison: 36 },
           { name: "Doomstar", x: 250, y: 320, type: "doomstar", owner: PLAYER, garrison: 24 },
-          { name: "Foundry", x: 190, y: 150, type: "factory", owner: PLAYER, garrison: 16 },
-          { name: "Ore Dock", x: 190, y: 490, type: "mine", owner: PLAYER, garrison: 10 },
-          { name: "Gatehouse", x: 400, y: 320, type: "factory", owner: PLAYER, garrison: 20 },
+          { name: "Gatehouse", x: 400, y: 320, type: "mine", owner: PLAYER, garrison: 14 },
           { name: "Meridian Yard", x: 520, y: 320, type: "factory", owner: ENEMY, garrison: 4 },
-          { name: "East Gate", x: 640, y: 320, type: "factory", owner: NEUTRAL, garrison: 8 },
+          { name: "East Gate", x: 640, y: 320, type: "mine", owner: NEUTRAL, garrison: 8 },
           { name: "Annex Relay A", x: 760, y: 170, type: "relay", owner: NEUTRAL, garrison: 9 },
           { name: "Annex Relay B", x: 760, y: 470, type: "relay", owner: NEUTRAL, garrison: 9 },
           { name: "Annex Relay C", x: 890, y: 320, type: "relay", owner: NEUTRAL, garrison: 10 },
-          { name: "Annex Foundry", x: 770, y: 320, type: "factory", owner: NEUTRAL, garrison: 8 },
-          { name: "Rail Hub", x: 520, y: 110, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 235 },
+          { name: "Annex Mine", x: 770, y: 320, type: "mine", owner: NEUTRAL, garrison: 8 },
+          { name: "Rail Hub", x: 520, y: 110, type: "factory", terrain: "asteroid", owner: ENEMY, garrison: 450 },
           { name: "Combine Command", x: 520, y: 540, type: "command", owner: ENEMY, garrison: 60 },
           { name: "North Battery", x: 720, y: 70, type: "factory", owner: ENEMY, garrison: 30 },
           { name: "South Battery", x: 720, y: 580, type: "factory", owner: ENEMY, garrison: 30 }
         ],
-        // The Yard (5) is the only way anywhere: Gatehouse reaches it from
+        // The Yard (3) is the only way anywhere: Gatehouse reaches it from
         // the west, the East Gate from the east, and the Hub and the
-        // Combine's Command hang off its other two sides. The Annex is a dead end
-        // behind the Gate, which is why nobody bothers to guard it.
+        // Combine's Command hang off its other two sides. The Annex is a
+        // dead end behind the Gate, which is why nobody bothers to guard
+        // it. Anchorage has three producing positions and no more: the
+        // Command, the Doomstar and a mine.
         lanes: [
-          [0, 1], [0, 2], [0, 3], [1, 4], [2, 4], [3, 4],
-          [4, 5], [5, 6], [5, 11], [5, 12],
-          [6, 7], [6, 8], [6, 10], [7, 10], [8, 10], [10, 9], [7, 9], [8, 9],
-          [11, 13], [12, 14]
+          [0, 1], [1, 2], [2, 3], [3, 4], [3, 9], [3, 10],
+          [4, 5], [4, 6], [4, 8], [5, 8], [6, 8], [8, 7], [5, 7], [6, 7],
+          [9, 11], [10, 12]
         ]
       }
     },
@@ -275,21 +278,27 @@
         "the last, and every wave keeps going after it lands. You will " +
         "not hold all three posts. You do not have to: a wave is only as " +
         "big as the depot it was drawn from.",
-      hint: "The strip under the toolbar names the depot filling next and how many hulls it will launch. Forward Relays charges the Array twice as fast: shoot a depot while it fills and the wave is that much smaller, then take the empty depot and it never launches again.",
+      hint: "The strip and the board both mark the depot that launches next, and how many hulls it holds. A wave is everything its depot holds, so shoot the depot just before it launches (Forward Relays charges the Array twice as fast) and the wave is 26 smaller. Fleets that meet in a lane fight there: let the wave land before you send anything down its lane, then take the empty depot and it never launches again.",
       posture: "static",
+      // Dug in, so that taking the depots by storm is not the plan: a
+      // strike ignores fortification and a fleet does not.
+      foeTech: { assault: 0, fortify: 3 },
       objective: { kind: "survive", seconds: 420, keep: [0, 1] },
       goal: "Hold Beacon Station and the Array for 7 minutes.",
       script: {
         convoys: [
-          // Staggered by a quarter of the cycle so there is always one
-          // wave to answer and never three at once. Each wave lands on a
-          // post, then pushes on toward whatever sits behind it.
+          // Staggered by a third of the cycle so there is always one
+          // wave to answer and never three at once. A wave is everything
+          // the depot holds when its timer runs out (`count` is only a
+          // ceiling), so a strike on a depot is that many hulls fewer.
+          // Each wave lands on a post, then pushes on toward whatever sits
+          // behind it.
           { id: "ridge", name: "Ridge wave", label: "Ridge", from: 7, to: 4, onward: 2,
-            count: 56, grow: 8, dwell: 6, first: 40, every: 80, draw: true },
+            count: 200, dwell: 6, first: 40, every: 80, draw: true },
           { id: "mid", name: "Mid wave", label: "Mid", from: 8, to: 5, onward: 1,
-            count: 56, grow: 8, dwell: 6, first: 65, every: 80, draw: true },
+            count: 200, dwell: 6, first: 65, every: 80, draw: true },
           { id: "deep", name: "Deep wave", label: "Deep", from: 9, to: 6, onward: 3,
-            count: 56, grow: 8, dwell: 6, first: 90, every: 80, draw: true }
+            count: 200, dwell: 6, first: 90, every: 80, draw: true }
         ],
         dispatches: [
           { at: 1, tone: "story",
@@ -314,10 +323,10 @@
           { name: "Ridge Post", x: 560, y: 130, type: "factory", owner: PLAYER, garrison: 24 },
           { name: "Mid Post", x: 580, y: 320, type: "factory", owner: PLAYER, garrison: 24 },
           { name: "Deep Post", x: 560, y: 510, type: "factory", owner: PLAYER, garrison: 24 },
-          { name: "Ridge Depot", x: 880, y: 100, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
-          { name: "Mid Depot", x: 910, y: 320, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
-          { name: "Deep Depot", x: 880, y: 540, type: "factory", owner: ENEMY, garrison: 60, level: 3 },
-          { name: "Combine Command", x: 990, y: 320, type: "command", owner: ENEMY, garrison: 80 }
+          { name: "Ridge Depot", x: 880, y: 100, type: "factory", owner: ENEMY, garrison: 62, level: 2 },
+          { name: "Mid Depot", x: 910, y: 320, type: "factory", owner: ENEMY, garrison: 62, level: 2 },
+          { name: "Deep Depot", x: 880, y: 540, type: "factory", owner: ENEMY, garrison: 62, level: 2 },
+          { name: "Combine Command", x: 990, y: 320, type: "command", owner: ENEMY, garrison: 320 }
         ],
         // Each depot touches exactly one post, so a wave's target is never
         // in doubt. The posts are linked so a garrison can swing between

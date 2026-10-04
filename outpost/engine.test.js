@@ -2066,3 +2066,178 @@ test("map positions can carry names", () => {
   assert.equal(g.nodes[1].name, "Yard");
   assert.ok(!E.createGame({ seed: 3 }).nodes[0].name, "generated maps are unnamed");
 });
+
+// ---------------------------------------------------------------------
+// Fleets meeting in a lane
+// ---------------------------------------------------------------------
+// A (player) and B (enemy) at either end of a 460-unit lane: four seconds
+// of flight at the stock fleet speed. Each can send at the other.
+function laneGame(extra) {
+  const g = E.createGame(Object.assign({
+    map: {
+      w: 700, h: 300,
+      nodes: [
+        { x: 60, y: 150, type: "command", owner: PLAYER, garrison: 60 },
+        { x: 520, y: 150, type: "command", owner: ENEMY, garrison: 60 },
+        { x: 290, y: 40, type: "factory", owner: NEUTRAL, garrison: 5 }
+      ],
+      lanes: [[0, 1], [0, 2], [1, 2]]
+    },
+    posture: "static"
+  }, extra));
+  return g;
+}
+function launch(g, from, to, count, owner) {
+  g.nodes[from].garrison = count + 0.001;
+  assert.equal(E.sendFleet(g, from, to, 1, owner), undefined);
+}
+
+test("opposing fleets that meet in a lane fight there, and the bigger one survives by the difference", () => {
+  const g = laneGame();
+  launch(g, 0, 1, 40, PLAYER);
+  launch(g, 1, 0, 25, ENEMY);
+  run(g, 1.5);
+  assert.equal(g.fleets.length, 2, "not yet in the same place");
+  run(g, 1.0);
+  assert.equal(g.fleets.length, 1, "they met mid-lane and one is gone");
+  const f = g.fleets[0];
+  assert.equal(f.owner, PLAYER);
+  assert.ok(Math.abs(f.count - 15) < 0.01, "40 against 25 leaves 15: " + f.count);
+  const ev = E.drainEvents(g).filter((e) => e.kind === "clash");
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].owner, PLAYER);
+  assert.ok(ev[0].x > 150 && ev[0].x < 430, "and it happened in the middle of the lane: " + ev[0].x);
+  // The survivor carries on and lands as the 15 that remain.
+  run(g, 4);
+  assert.equal(g.nodes[1].owner, PLAYER, "the survivor still arrives, and 15 take a node the enemy just emptied");
+});
+
+test("an exact tie destroys both fleets, and nothing arrives", () => {
+  const g = laneGame();
+  launch(g, 0, 1, 30, PLAYER);
+  launch(g, 1, 0, 30, ENEMY);
+  run(g, 6);
+  assert.equal(g.fleets.length, 0);
+  assert.equal(g.nodes[0].owner, PLAYER); assert.equal(g.nodes[1].owner, ENEMY);
+});
+
+test("there are no defence modifiers in flight: terrain, fortification and the defender's edge do not apply", () => {
+  const g = laneGame();
+  g.tech[ENEMY] = { assault: 0, fortify: 3 };
+  g.nodes[1].terrain = "asteroid";
+  launch(g, 0, 1, 31, PLAYER);
+  launch(g, 1, 0, 30, ENEMY);
+  run(g, 3);
+  assert.equal(g.fleets.length, 1);
+  assert.equal(g.fleets[0].owner, PLAYER, "31 beats 30 even though the enemy is fortified III on an asteroid");
+});
+
+test("assault research does count in a lane meeting, because it is the attacker's own strength", () => {
+  const g = laneGame();
+  g.tech[PLAYER] = { assault: 2, fortify: 0 };
+  launch(g, 0, 1, 25, PLAYER);        // 25 x 1.30 = 32.5
+  launch(g, 1, 0, 30, ENEMY);
+  run(g, 3);
+  assert.equal(g.fleets.length, 1);
+  assert.equal(g.fleets[0].owner, PLAYER);
+  assert.ok(Math.abs(g.fleets[0].count - 2.5 / 1.3) < 0.01, "survivors are in real units: " + g.fleets[0].count);
+});
+
+test("fleets of the same side pass through each other, and fleets on different lanes do not meet", () => {
+  const g = laneGame();
+  g.nodes[2].owner = PLAYER;
+  g.nodes[2].garrison = 20;
+  launch(g, 0, 1, 20, PLAYER);
+  g.nodes[1].garrison = 50;
+  // A second player fleet back along the same lane from a captured node.
+  g.nodes[1].owner = PLAYER;
+  launch(g, 1, 0, 10, PLAYER);
+  run(g, 3);
+  assert.equal(g.fleets.length, 2, "friendly fleets do not fight");
+  const h = laneGame();
+  launch(h, 0, 1, 40, PLAYER);       // along the long lane
+  h.nodes[2].owner = ENEMY; h.nodes[2].garrison = 30;
+  launch(h, 2, 1, 30, ENEMY);        // a different lane toward the same node
+  run(h, 2);
+  assert.equal(h.fleets.length, 2, "two lanes, no meeting");
+});
+
+test("a meeting is caught even when a long tick carries the fleets past each other", () => {
+  const g = laneGame();
+  launch(g, 0, 1, 40, PLAYER);
+  launch(g, 1, 0, 10, ENEMY);
+  // One huge step swaps their order along the lane.
+  E.step(g, 2.5);
+  assert.equal(g.fleets.length, 1);
+  assert.equal(g.fleets[0].owner, PLAYER);
+});
+
+test("a faster fleet that overtakes a slower enemy one on the same lane fights it", () => {
+  const g = laneGame({ doctrine: "vanguard" });
+  // Enemy leaves first, slowly; the player's quicker fleet catches it.
+  launch(g, 1, 0, 20, ENEMY);   // enemy flies B -> A
+  const cmd = g.nodes[1];
+  g.nodes[1].owner = ENEMY; cmd.garrison = 0;
+  g.fleets.length = 0;
+  g.fleets.push({ owner: ENEMY, from: 0, to: 1, count: 20, path: [0, 1], leg: 0, t: 0.1, duration: 4 });
+  g.fleets.push({ owner: PLAYER, from: 0, to: 1, count: 35, path: [0, 1], leg: 0, t: 0, duration: 4 / 1.4 });
+  run(g, 2.5);
+  assert.equal(g.fleets.length, 1, "the faster fleet ran the slower one down");
+  assert.equal(g.fleets[0].owner, PLAYER);
+});
+
+test("a fleet destroyed in a lane never reaches the position it was sent at", () => {
+  const g = laneGame();
+  launch(g, 0, 1, 20, PLAYER);
+  launch(g, 1, 0, 50, ENEMY);
+  run(g, 8);
+  assert.equal(g.nodes[1].owner, ENEMY);
+  const massed = E.drainEvents(g).filter((e) => e.kind === "massing" && e.owner === PLAYER);
+  assert.equal(massed.length, 0, "the player's fleet never massed on anything");
+  assert.equal(g.stats[PLAYER].captured, 0);
+});
+
+test("a three-way pile-up in one lane resolves, and every fleet is accounted for", () => {
+  const g = laneGame();
+  g.fleets.push({ owner: PLAYER, from: 0, to: 1, count: 30, path: [0, 1], leg: 0, t: 0.1, duration: 4 });
+  g.fleets.push({ owner: PLAYER, from: 0, to: 1, count: 20, path: [0, 1], leg: 0, t: 0.05, duration: 4 });
+  g.fleets.push({ owner: ENEMY, from: 1, to: 0, count: 40, path: [1, 0], leg: 0, t: 0.1, duration: 4 });
+  run(g, 3);
+  const live = g.fleets.filter((f) => f.count > 0);
+  assert.ok(live.length <= 2, "two of the three are gone or merged away: " + live.length);
+  assert.ok(g.fleets.every((f) => f.count === undefined || f.count >= 0));
+});
+
+test("Deep Logistics Relays keep charging the Doomstar when cut off; every other doctrine's go dark", () => {
+  const mk = (doctrine) => {
+    const g = E.createGame({
+      doctrine, posture: "static",
+      map: {
+        w: 700, h: 300,
+        nodes: [
+          { x: 60, y: 150, type: "command", owner: PLAYER, garrison: 20 },
+          { x: 300, y: 150, type: "doomstar", owner: PLAYER, garrison: 20 },
+          { x: 600, y: 60, type: "relay", owner: PLAYER, garrison: 10 },
+          { x: 600, y: 240, type: "relay", owner: PLAYER, garrison: 10 },
+          { x: 650, y: 150, type: "command", owner: ENEMY, garrison: 20 }
+        ],
+        // The Relays hang off the enemy's side only: nothing of yours joins them to Anchorage.
+        lanes: [[0, 1], [2, 4], [3, 4]]
+      }
+    });
+    E.computeSupply(g);
+    return g;
+  };
+  const dl = mk("logistics"), std = mk("standard");
+  assert.equal(dl.nodes[2].inSupply, false, "cut off from your Command");
+  assert.equal(E.chargingRelays(dl, PLAYER).length, 2, "but still charging under Deep Logistics");
+  assert.ok(Math.abs(E.relayCharge(dl, dl.nodes[2]) - 0.9) < 1e-9, "at the doctrine's cut-off rate");
+  assert.equal(E.chargingRelays(std, PLAYER).length, 0, "a standard Relay that is cut off charges nothing");
+  assert.equal(E.chargingRelays(mk("relays"), PLAYER).length, 0, "and neither does Forward Relays");
+  for (let t = 0; t < 12; t += 0.1) { E.step(dl, 0.1); E.step(std, 0.1); }
+  assert.ok(dl.charge[PLAYER] >= 6, "the charge climbs: " + dl.charge[PLAYER]);
+  assert.equal(std.charge[PLAYER], 0);
+  // And once supplied it is a full Relay again, not 90%.
+  dl.nodes[2].inSupply = true;
+  assert.equal(E.relayCharge(dl, dl.nodes[2]), 1);
+});
