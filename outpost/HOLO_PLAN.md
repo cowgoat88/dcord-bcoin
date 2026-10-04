@@ -166,3 +166,45 @@ match in 3D on a phone before CP4 starts. If the 3D view reads worse than
 Doomstar beam through the volume, capture flash, supply lines dimming
 when cut. README section and `CLAUDE.md` notes on what the seam is and
 how to test both renderers.
+
+# 3D Enhanced (three.js) — the `holo-gl` renderer
+
+## Fallback
+
+The last version before this work is commit `af3b853`, permanently
+playable at:
+
+https://raw.githack.com/cowgoat88/dcord-bcoin/af3b853be821e66724209406a3b21824bfe598ae/outpost/index.html
+
+In the game itself the fallback is automatic: `holo-gl` -> `holo` ->
+`flat`, on a failed script load, no WebGL, a lost context not restored
+within 3 s, or a median frame interval over 24 ms for 3 s. A fallback
+never pauses, resets or desyncs the match and keeps the selection.
+
+## Decisions
+
+- three.js 0.186.1, bundled once with esbuild into a classic IIFE
+  (`outpost/vendor/three.subset.min.js`, the subset actually used,
+  about 580 KB minified / 144 KB gzip, MIT). No ES modules, no CDN.
+- Loaded lazily, the first time Enhanced is used. 2D and standard 3D
+  players never download it.
+- A WebGL canvas sits under the existing 2D canvas. In Enhanced mode the
+  2D canvas draws only the overlays and keeps all pointer input.
+- The three.js camera is derived from `OutpostHolo.createCamera`, so
+  `pick`, `screenOf` and every overlay line up with the standard 3D
+  view; `pick` is `OutpostHolo.pick`.
+- An "Enhanced 3D graphics" switch outside the HUD, stored as
+  `prefs.gfx`, default off. The HUD 2D/3D button is unchanged.
+
+## Checkpoints
+
+- **GL1** — vendored bundle and standalone `holo-gl.js`; a Node test that
+  its camera matches `holo.js` within 0.5 px across 8 yaws at 390x844 and
+  1280x800; preview screenshots.
+- **GL2** — wiring: lazy loader, the switch, the overlay layer, gestures,
+  the fallback chain; `scratchpad/hologlplay.js` and
+  `scratchpad/glfallback.js`; all standing gates with Enhanced off and on.
+- **GL3** — effects: bloom, lit stations, ship swarms, Doomstar beam,
+  fly-in, quality tiers; legibility reviewed at phone and desktop size.
+- **Human gate** before Enhanced can default to on: one solo and one
+  online match on an iPhone — smooth, not hot, survives switching apps.
