@@ -208,3 +208,19 @@ never pauses, resets or desyncs the match and keeps the selection.
   fly-in, quality tiers; legibility reviewed at phone and desktop size.
 - **Human gate** before Enhanced can default to on: one solo and one
   online match on an iPhone — smooth, not hot, survives switching apps.
+
+## Results
+
+- **GL1 done** (`dd4d6f6`): vendored three.js 0.186.1 subset, 604 KB
+  minified / 153 KB gzip; `holo-gl.js` standalone; camera matches holo.js
+  to 8e-13 px over 8 yaws, 3 zooms, 2 sizes, 2 layouts, 3 heights.
+- **GL2 done**: Enhanced switch in the help overlay (default off), lazy
+  loader, WebGL canvas under the overlay canvas, holo-gl treated as 3D
+  everywhere, the fallback chain. `glfallback.js` forces 15 failure and
+  control scenarios (141 checks) against a stand-in renderer; every
+  standing gate passes in 2D, standard 3D and Enhanced. Against the real
+  renderer every gameplay check passes; the sandbox's software WebGL then
+  trips the slow-frame rule in a busy match, which is the fallback
+  working. Slow-frame threshold raised from 24 to 42 ms so 30 Hz devices
+  (Low Power Mode) are not switched off.
+- **GL3**: effects -- next.

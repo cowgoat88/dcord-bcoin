@@ -312,6 +312,40 @@ owner found all four play well. Orbital's quick ladder read the AI
 weaker at Captain and Commander (79/28/23 against classic's 88/44/31,
 80 seeds); if a per-style fit is ever wanted, that is where to start.
 
+### 3D Enhanced: three.js renderer with an automatic fallback
+
+`holo-gl.js` draws the 3D view on WebGL with a vendored three.js subset
+(`vendor/three.subset.min.js`, 0.186.1, rebuilt with the command in its
+header from `vendor/three.subset.entry.js`). It is loaded only when the
+"Enhanced 3D graphics" switch (in the help overlay, `prefs.gfx`, default
+off) is on and the 3D view is showing. Its camera is built from
+`OutpostHolo.createCamera`, so pick, screenOf and every overlay are
+holo.js's own; the overlays are drawn on the 2D `#board` canvas on top,
+which keeps all pointer input.
+
+The fallback is holo-gl -> holo -> flat, once per session, with one
+toast: scripts fail to load or take over 15 s, no WebGL2, create or
+render throws, a lost context not restored within 3 s, or the median
+frame interval over 42 ms for 3 s (after first dropping to low quality).
+Not 24 ms: a phone in Low Power Mode, and this sandbox's headless
+browser, run at 30 Hz -- 33 ms a frame however light the scene -- and a
+24 ms rule would switch Enhanced off on every one of them.
+
+Testing it:
+- `scratchpad/glfallback.js` forces every failure against a stand-in
+  renderer (`scratchpad/gl2/stub-*.js`, served in place of the real files)
+  and asserts one toast, the GL canvas hidden, the clock running, the
+  selection and the camera kept. `scratchpad/hologlplay.js` plays a match
+  through Enhanced by pointer events; `HOLOGL=real` points both at the
+  real renderer, `NOSHOT=1` skips screenshots.
+- Against the real renderer, this sandbox renders WebGL in software, so
+  in a busy match the slow-frame rule fires legitimately and the later
+  checks see standard 3D. That is the fallback working, not a bug, and
+  no frame timing from here says anything about a phone. Phone
+  smoothness is the owner's call on a device.
+- `scratchpad/gl1/life.js` checks the real renderer's context loss,
+  restore, throw and dispose behaviour.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

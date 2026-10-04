@@ -82,6 +82,19 @@
   /* ---- board ---- */
   #boardWrap { position: relative; flex: 1 1 auto; min-height: 0; }
   canvas { display: block; width: 100%; height: 100%; }
+  /* Enhanced 3D draws WebGL on a canvas under the board canvas. The board
+     canvas stays on top and keeps every pointer event: it is positioned
+     only so that it paints over the WebGL canvas (a positioned element
+     paints in document order), and the WebGL canvas never takes input. */
+  #board { position: relative; }
+  #boardGL { position: absolute; inset: 0; pointer-events: none; }
+  #boardGL[hidden] { display: none; }
+  /* The Enhanced switch lives in the help card, outside the toolbar, which
+     has no room left at 1280px. */
+  .gfxrow { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            margin: 2px 0 4px; font-size: 12px; text-align: left; }
+  .gfxrow button { min-width: 52px; }
+  .gfxnote { margin: 0 0 12px; font-size: 10.5px; line-height: 1.5; color: var(--muted); text-align: left; }
 
   /* ---- bottom command bar: every order lives in one place, so the
          player's attention never has to split across the screen ---- */
@@ -404,6 +417,7 @@
   </div>
 
   <div id="boardWrap">
+    <canvas id="boardGL" hidden></canvas>
     <canvas id="board"></canvas>
     <div id="toast" role="status" aria-live="polite"></div>
 
@@ -541,6 +555,11 @@
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Relay · charges</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 2.6,-2.8 9,-2.8 3.8,1.2 5.8,7.6 0,3.8 -5.8,7.6 -3.8,1.2 -9,-2.8 -2.6,-2.8" fill="none" stroke="#ff7a5c" stroke-width="1.6"/></svg> Doomstar · centre</span>
         </div>
+        <div class="gfxrow">
+          <span id="gfxLabel">Enhanced 3D graphics</span>
+          <button id="btnGfx" role="switch" aria-checked="false" aria-labelledby="gfxLabel">Off</button>
+        </div>
+        <p class="gfxnote">Shown in the 3D view. Needs WebGL and loads extra code the first time; it switches itself off if the device cannot keep up.</p>
         <div class="row">
           <button class="primary" id="btnHelpClose">Back</button>
         </div>
@@ -674,7 +693,9 @@
   // land. `flat` is the original top-down view and is always available.
   // `viewPref` is the stored choice ("flat" | "holo"). The holotable is
   // built on first use, not at load, so a player who never switches pays
-  // nothing for it. Both draw on the one canvas.
+  // nothing for it. Those two draw on the one canvas; the Enhanced
+  // renderer ("holo-gl", see below) draws WebGL on a second canvas under
+  // it and uses this one only for the overlays and the input.
   let renderer = null;           // assigned once `flat` is defined, below
   let viewPref = "flat";
 
@@ -793,15 +814,28 @@
   // it unturned, so the half turn is the whole of the agreement between
   // them. A player's own orbiting only lasts until the next game.
   function faceHome() {
-    if (renderer && renderer.name === "holo" && game) {
+    if (is3D(renderer) && game) {
       renderer.setYaw(flipView ? Math.PI : 0);
     }
   }
 
+  // "holo" and "holo-gl" are both the 3D view: they share the camera, the
+  // gestures and the overlays, and differ only in who draws the table.
+  function is3D(r) { return !!r && (r.name === "holo" || r.name === "holo-gl"); }
+
   function setRenderer(r) {
+    const prev = renderer;
     renderer = r;
     hoverId = null;
-    faceHome();
+    // Between two 3D renderers the board must not move under the player:
+    // whatever they orbited and zoomed to carries over. Anything else
+    // starts from home, as it always has.
+    let carried = false;
+    if (prev !== r && is3D(prev) && is3D(r)) {
+      try { r.setYaw(prev.getYaw()); r.setZoom(prev.getZoom()); carried = true; }
+      catch (e) { /* a dead renderer: start from home instead */ }
+    }
+    if (!carried) faceHome();
     resize();
     syncViewBtn();
   }
@@ -810,7 +844,7 @@
   // flat view is showing.
   function syncViewBtn() {
     const b = document.getElementById("btnView");
-    const toHolo = renderer.name !== "holo";
+    const toHolo = !is3D(renderer);
     b.textContent = toHolo ? "3D" : "2D";
     b.setAttribute("aria-label", toHolo ? "Switch to 3D view" : "Switch to 2D view");
     b.title = toHolo ? "Switch to the 3D holotable (V)" : "Switch back to the flat map (V)";
@@ -821,16 +855,196 @@
   function setView(name) {
     if (name === "holo") {
       if (!window.OutpostHolo) { toast("3D view is unavailable"); return; }
-      if (!holo) holo = window.OutpostHolo.create(canvas);
-      setRenderer(holo);
+      show3D();
     } else {
       setRenderer(flat);
+      dropGL();
     }
-    viewPref = renderer.name === "holo" ? "holo" : "flat";
+    viewPref = is3D(renderer) ? "holo" : "flat";
     prefs.write({ view: viewPref });
   }
   document.getElementById("btnView").addEventListener("click", () =>
-    setView(renderer.name === "holo" ? "flat" : "holo"));
+    setView(is3D(renderer) ? "flat" : "holo"));
+
+  // ---------------------------------------------------------------
+  // Enhanced 3D graphics ("holo-gl")
+  // ---------------------------------------------------------------
+  // WebGL needs a script bundle most players never use, so nothing here
+  // runs, and nothing is downloaded, unless the Enhanced switch is on
+  // and the 3D view is showing. The chain is holo-gl -> holo -> flat and
+  // it only ever goes one way: a failure swaps the renderer between two
+  // frames and leaves the game, the selection and the board's turn alone.
+  // After one failure Enhanced stays off until the page is reloaded, so a
+  // device that cannot do it is not asked again every few seconds, but
+  // the stored switch is left as the player set it.
+  const GL_LOAD_MS = 15000;      // give up on the scripts after this long
+  // Too slow means under about 24 frames a second. Not 24 ms: a phone in
+  // Low Power Mode caps the screen at 30 Hz, so every frame is 33 ms
+  // however light the scene, and a 24 ms rule would switch Enhanced off
+  // on every one of them for no reason. 42 ms clears 30 Hz with room for
+  // jitter and still catches a renderer that is genuinely choking.
+  const GL_SLOW_MS = 42;         // median frame interval that counts as too slow
+  const GL_WINDOW_MS = 3000;     // how long it must stay slow before acting
+  let gfxPref = "off";           // stored: "on" | "off"
+  let gl = null;                 // the WebGL renderer, only while Enhanced shows
+  let glDead = false;            // fell back this session
+  let glLoading = null;          // promise for the script load, once started
+  let glTicket = 0;              // bumped to cancel a load that is still pending
+  let glCanvasUsed = false;
+  const perf = { last: 0, since: 0, samples: [], stage: 0 };
+
+  const wantEnhanced = () => gfxPref === "on" && !glDead;
+  const standardHolo = () => holo || (holo = window.OutpostHolo.create(canvas));
+
+  // Scripts go in strictly in order: the renderer expects THREE to exist
+  // when it runs. A load that fails or stalls rejects, and is forgotten
+  // so that a later attempt starts clean.
+  function loadGLScripts() {
+    if (window.OutpostHoloGL) return Promise.resolve();
+    if (glLoading) return glLoading;
+    const added = [];
+    glLoading = new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) { added.forEach((el) => { el.onload = el.onerror = null; el.remove(); }); reject(err); }
+        else resolve();
+      };
+      const timer = setTimeout(() => finish(new Error("took too long to load")), GL_LOAD_MS);
+      const add = (src, next) => {
+        const el = document.createElement("script");
+        el.src = src;
+        el.async = false;
+        el.onload = next;
+        el.onerror = () => finish(new Error("could not load"));
+        added.push(el);
+        document.head.appendChild(el);
+      };
+      add("vendor/three.subset.min.js", () => add("holo-gl.js", () =>
+        window.OutpostHoloGL ? finish() : finish(new Error("could not load"))));
+    });
+    glLoading.catch(() => { glLoading = null; });
+    return glLoading;
+  }
+
+  // A WebGL canvas that has had a context cannot be given a clean one, and
+  // a disposed renderer may have released it on purpose, so every start
+  // gets a fresh element in the same place.
+  function freshGLCanvas() {
+    let el = document.getElementById("boardGL");
+    if (glCanvasUsed) {
+      const next = el.cloneNode(false);
+      el.replaceWith(next);
+      el = next;
+    }
+    glCanvasUsed = true;
+    return el;
+  }
+
+  // Which 3D renderer should be showing right now, given the switch.
+  // Called whenever the 3D view is asked for and whenever the switch moves.
+  function show3D() {
+    if (gl && renderer === gl) {
+      if (wantEnhanced()) return;
+      setRenderer(standardHolo());
+      dropGL();
+      return;
+    }
+    if (!is3D(renderer)) setRenderer(standardHolo());
+    if (!wantEnhanced()) { dropGL(); return; }
+    // The standard 3D view is already up, so the press has taken effect;
+    // Enhanced replaces it when its scripts are in, or never does.
+    const ticket = ++glTicket;
+    if (window.OutpostHoloGL) { attachGL(); return; }
+    loadGLScripts().then(() => {
+      if (ticket === glTicket && wantEnhanced() && is3D(renderer) && !gl) attachGL();
+    }, (err) => {
+      if (ticket === glTicket && wantEnhanced()) glFallback(err.message);
+    });
+  }
+
+  function attachGL() {
+    let r = null;
+    try {
+      const G = window.OutpostHoloGL;
+      if (!G.supported()) { glFallback("WebGL is not available"); return; }
+      const el = freshGLCanvas();
+      r = G.create(el, { overlayCanvas: canvas });
+      el.hidden = false;
+    } catch (e) { glFallback("could not start"); return; }
+    gl = r;
+    perf.stage = 0; resetPerf();
+    r.onFailure((why) => { if (gl === r) glFallback(typeof why === "string" && why.length < 40 ? why : "graphics failed"); });
+    setRenderer(r);
+  }
+
+  // Stops the WebGL renderer and hides its canvas. The caller has already
+  // moved `renderer` somewhere else, so nothing asks it to draw again.
+  function dropGL() {
+    glTicket++;
+    const old = gl;
+    gl = null;
+    if (old) { try { old.dispose(); } catch (e) { /* already gone */ } }
+    document.getElementById("boardGL").hidden = true;
+  }
+
+  // The single place a failure ends up. It must be safe to call twice (a
+  // context loss and a slow frame can land together), so only the first
+  // does anything, and that first call is the one toast.
+  function glFallback(reason) {
+    if (glDead) return;
+    glDead = true;
+    if (gl && renderer === gl) setRenderer(window.OutpostHolo ? standardHolo() : flat);
+    dropGL();
+    toast("Enhanced 3D off (" + reason + ") \u2014 " + (is3D(renderer) ? "standard 3D" : "flat map"));
+    syncGfxSwitch();
+  }
+
+  // Frame pacing. The phones this is for get hot and slow long before
+  // anything errors, so the renderer is judged by what the player sees:
+  // the median gap between frames over the last three seconds, which a
+  // single hiccup cannot move. Slow once -> drop the quality; slow for
+  // another full window -> leave Enhanced.
+  function resetPerf() { perf.last = 0; perf.since = 0; perf.samples.length = 0; }
+  function watchFrames(now) {
+    // A hidden tab stops painting and the first frame back has a gap of
+    // minutes; neither says anything about the renderer. The same goes for
+    // the menus and dialogs, which blur the table behind them (and so cost
+    // frames of their own) at a time when nobody is playing: Enhanced must
+    // not be judged, and switched off, before the match has even begun.
+    if (renderer !== gl || document.hidden || pausedByHide || !started || paused) { resetPerf(); return; }
+    if (perf.last) perf.samples.push({ t: now, d: now - perf.last });
+    if (!perf.since) perf.since = now;
+    perf.last = now;
+    while (perf.samples.length && perf.samples[0].t < now - GL_WINDOW_MS) perf.samples.shift();
+    if (now - perf.since < GL_WINDOW_MS || perf.samples.length < 10) return;
+    const d = perf.samples.map((s) => s.d).sort((a, b) => a - b);
+    if (d[d.length >> 1] <= GL_SLOW_MS) return;
+    if (perf.stage === 0) {
+      perf.stage = 1; resetPerf();
+      try { gl.setQuality("low"); } catch (e) { /* the next window decides */ }
+    } else {
+      glFallback("running slowly");
+    }
+  }
+  document.addEventListener("visibilitychange", resetPerf);
+
+  function syncGfxSwitch() {
+    const b = document.getElementById("btnGfx");
+    const on = gfxPref === "on";
+    b.textContent = on ? "On" : "Off";
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    b.classList.toggle("on", on);
+  }
+  document.getElementById("btnGfx").addEventListener("click", () => {
+    gfxPref = gfxPref === "on" ? "off" : "on";
+    prefs.write({ gfx: gfxPref });
+    syncGfxSwitch();
+    if (gfxPref === "on" && glDead) toast("Enhanced 3D is unavailable until you reload");
+    if (is3D(renderer)) show3D();
+  });
 
   const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
   // The flat board is a plane, so height has nowhere to go: wz is accepted
@@ -939,7 +1153,7 @@
   const touches = new Map();        // pointerId -> { x, y }
   let camMove = null;               // { mouse, id } | { mid, dist }
 
-  const holoOn = () => renderer.name === "holo";
+  const holoOn = () => is3D(renderer);
   function twoFingers() {
     const [a, b] = [...touches.values()];
     return { mx: (a.x + b.x) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) || 1 };
@@ -3477,11 +3691,21 @@
     });
     floaters = floaters.filter((f) => { f.life -= dt; return f.life > 0; });
 
-    if (game) renderer.render({
-      game: game, now: now, dt: dt, mySeat: mySeat, colorOf: colorOf,
-      underlay: renderer.name === "holo" ? holoUnderlay : null,
-      overlay: renderer.name === "holo" ? holoOverlay : null
-    });
+    if (game) {
+      const fr = {
+        game: game, now: now, dt: dt, mySeat: mySeat, colorOf: colorOf,
+        underlay: is3D(renderer) ? holoUnderlay : null,
+        overlay: is3D(renderer) ? holoOverlay : null
+      };
+      if (renderer === gl) {
+        // A WebGL renderer can throw for reasons the game cannot see; the
+        // frame is simply drawn again by whoever replaces it.
+        try { renderer.render(fr); } catch (e) { glFallback("graphics error"); renderer.render(fr); }
+        watchFrames(now);
+      } else {
+        renderer.render(fr);
+      }
+    }
 
     hudAcc += dt;
     if (hudAcc > 0.12) { hudAcc = 0; updateHud(); }
@@ -3513,6 +3737,8 @@
     if (typeof p.doctrine === "string" && E.DOCTRINES[p.doctrine]) doctrine = p.doctrine;
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
     if (p.view === "flat" || p.view === "holo") viewPref = p.view;
+    if (p.gfx === "on" || p.gfx === "off") gfxPref = p.gfx;
+    syncGfxSwitch();
     if (LAYOUT_CHOICES.indexOf(p.layout) !== -1) layoutPref = p.layout;
     syncMapRow();
   })();
