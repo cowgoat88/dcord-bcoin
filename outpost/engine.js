@@ -942,8 +942,10 @@
   // it is hard to tell which lane goes where, most of all on a phone in 3D.
   // The balance and node variety are liked, the rings on the 3D floor are
   // wanted, so only the PLACEMENT and the LANE CHOICE are redone here, as
-  // three candidate styles behind createGame({ layout }). "classic" is the
-  // generator above, untouched, and stays the default until the owner picks.
+  // three more styles behind createGame({ layout }). "classic" is the
+  // generator above, untouched. The owner played all four and kept them
+  // all: the start screen offers each one, and "Mixed" (its default) draws
+  // a different one every match.
   //
   // All three share the shape of the problem: a point-symmetric board
   // (slot k of the first half is node 2k, its 180-degree twin is node 2k+1,

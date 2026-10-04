@@ -289,6 +289,29 @@ the ladder toward the player by 8-10 points at Officer and Captain; a
 0.01 production nudge to each brought it back. Any future change to lane
 rules needs the same ladder, doctrine, rush and mission re-measure.
 
+### The invite link must not skip the doctrine screen
+
+`?join=CODE` used to jump straight into the room, so the friend who
+opened the link -- the usual way in, since Send invite shares a link --
+never saw the doctrine choice and played whatever their phone had stored.
+It now lands on the doctrine screen with "Join CODE" on the button.
+`scratchpad/netinvite.js` drives that whole path against the stand-in
+signalling server, and also checks the host is told the guest's doctrine
+(the "Opponent connected" toast used to cover that announcement) and that
+both boards use the host's map style. Run it after any change to the
+start flow or the online handlers, alongside net2tab and netphone.
+
+### Map styles: four generators, Mixed by default
+
+`createGame({ layout })` takes classic, spaced, orbital or sectors. The
+start screen offers them (beside the opponent in a skirmish, above Host
+online) plus Mixed, the default, which never repeats the style just
+played. The online welcome carries the layout so the guest builds the
+host's board. Balance was measured per style but NOT re-fitted: the
+owner found all four play well. Orbital's quick ladder read the AI
+weaker at Captain and Commander (79/28/23 against classic's 88/44/31,
+80 seeds); if a per-style fit is ever wanted, that is where to start.
+
 ## Branch
 
 Work goes on `claude/rts-city-manager-game-mkjevh`.

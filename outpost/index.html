@@ -444,6 +444,16 @@
             <button data-diff="2" title="The AI builds at 94% of your rate, reacts faster and masses five positions">Captain <small>−6%</small></button>
             <button data-diff="3" title="An even fight on output: the AI matches your rate, reacts fastest, and coordinates six positions">Commander <small>even</small></button>
           </div>
+          <div id="mapBox">
+            <div class="grouplabel" id="mapLabel" style="margin-bottom:6px">Map</div>
+            <div class="row" id="mapRow">
+              <button data-layout="mixed" class="on" title="A different map style every match">Mixed</button>
+              <button data-layout="classic" title="The original layout">Classic</button>
+              <button data-layout="spaced" title="Roomier: fewer, longer lanes">Spaced</button>
+              <button data-layout="orbital" title="Positions on rings around the Doomstar">Orbital</button>
+              <button data-layout="sectors" title="Home ground, two flanks and a central spine">Sectors</button>
+            </div>
+          </div>
           <details class="netbox" id="ascBox">
             <summary id="ascSummary">Ascension</summary>
             <div class="row" id="ascRow"></div>
@@ -700,15 +710,31 @@
   // fixed-shape map. A fixed 1000x640 map squeezed into a portrait phone
   // left the playfield in a thin band with most of the screen empty and
   // the nodes too small to tap.
-  // Candidate map generators for the owner to try: ?layout=spaced|orbital|
-  // sectors. Anything else (or nothing) is the classic generator. The host
-  // sends the choice in the online welcome, so a guest never needs the URL.
-  const LAYOUT = (() => {
+  // Which map style a skirmish or hosted online match uses. "mixed", the
+  // default, draws a different style each match; the others pin one. The
+  // owner played all four and wanted both: variety by default, and a way
+  // to pick. The choice is stored. A ?layout= link (maps.html's "play this
+  // style") overrides it for that visit without being stored. The host
+  // sends the style it actually used in the online welcome, so a guest
+  // never needs to pick one.
+  const LAYOUT_CHOICES = ["mixed"].concat(E.LAYOUTS);
+  let layoutPref = "mixed";
+  const LAYOUT_FROM_URL = (() => {
     try {
       const m = /[?&]layout=([a-z]+)/.exec(location.search);
-      return m && E.LAYOUTS.indexOf(m[1]) !== -1 ? m[1] : "classic";
-    } catch (e) { return "classic"; }
+      return m && E.LAYOUTS.indexOf(m[1]) !== -1 ? m[1] : null;
+    } catch (e) { return null; }
   })();
+  let lastLayout = null;
+  // Mixed never repeats the style just played, so three matches in a row
+  // always show at least two different boards.
+  function pickLayout(seed) {
+    const pref = LAYOUT_FROM_URL || layoutPref;
+    if (pref !== "mixed") return pref;
+    const pool = E.LAYOUTS.filter((l) => l !== lastLayout);
+    return pool[seed % pool.length];
+  }
+  const LAYOUT_NAMES = { classic: "Classic", spaced: "Spaced", orbital: "Orbital", sectors: "Sectors" };
 
   function boardShape() {
     const wrap = document.getElementById("boardWrap");
@@ -835,18 +861,23 @@
   function newGame(seed) {
     const s = seed === undefined ? (Math.floor(Math.random() * 100000) + 1) : seed;
     const shape = boardShape();
+    // "Same map again" must mean the same board, so a replayed seed keeps
+    // the style it was played on even when the choice is Mixed.
+    const layout = seed !== undefined && game && game.seed === seed && game.layout
+      ? game.layout : pickLayout(s);
     // A campaign mission brings its own board, brief and doctrine; a
     // skirmish generates one. Online is always a skirmish.
     game = mission && !isOnline()
       ? E.createGame(CAMPAIGN.optionsFor(mission))
       : E.createGame({
           seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
-          layout: LAYOUT,
+          layout: layout,
           doctrine: doctrine,
           // Ascension is a solo ladder; an online match is two people's
           // doctrines and nothing else.
           ascension: isOnline() ? 0 : ascension
         });
+    if (!mission || isOnline()) lastLayout = game.layout;
     // Seat 2 is a person online, so nothing in the simulation may act
     // for it -- not the opponent routine, and not the automatic
     // Doomstar, which used to spend the guest's charge the tick it
@@ -1118,7 +1149,9 @@
     const line = Object.keys(mine.mods).length
       ? mine.icon + " " + mine.label + " \u2014 " + mine.up
       : mine.icon + " " + mine.label;
-    toast(line + "  \u00b7  against " + foe.icon + " " + foe.label);
+    // With Mixed on, the board's style is news: say which one this is.
+    const map = !mission && LAYOUT_NAMES[game.layout] ? LAYOUT_NAMES[game.layout] + " map  \u00b7  " : "";
+    toast(map + line + "  \u00b7  against " + foe.icon + " " + foe.label);
   }
 
   function describeNode(n) {
@@ -1324,6 +1357,19 @@
     [...ev.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
   });
 
+  document.getElementById("mapRow").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-layout]"); if (!b) return;
+    layoutPref = b.dataset.layout;
+    prefs.write({ layout: layoutPref });
+    syncMapRow();
+  });
+  function syncMapRow() {
+    const shown = LAYOUT_FROM_URL || layoutPref;
+    for (const c of document.getElementById("mapRow").children) {
+      c.classList.toggle("on", c.dataset.layout === shown);
+    }
+  }
+
   // ---- the new-game flow -------------------------------------------
   // One decision per screen: mode, then the thing that mode needs, then
   // doctrine where it applies. Every control is the same element it
@@ -1336,6 +1382,7 @@
   };
   let flowMode = "skirmish";
   let flowAt = 0;            // index into FLOW[flowMode]
+  let pendingJoin = null;    // room code from an invite link, joined after the doctrine pick
 
   function stepName() { return FLOW[flowMode][flowAt]; }
   function isLastStep() { return flowAt === FLOW[flowMode].length - 1; }
@@ -1369,8 +1416,24 @@
       const bits = [label];
       if (flowMode === "skirmish" && flowAt >= 2) bits.push(TIERS[difficulty]);
       if (flowMode === "campaign" && mission) bits.push(mission.name);
+      if (flowMode === "online" && pendingJoin) bits.push("Joining " + pendingJoin);
       crumb.textContent = bits.join(" \u203a ");
     }
+
+    // One picker, two homes: beside the opponent in a skirmish, and above
+    // Host on the online screen, where it only matters to whoever hosts.
+    const mapBox = document.getElementById("mapBox");
+    const mapLabel = document.getElementById("mapLabel");
+    if (name === "online") {
+      const online = document.getElementById("stepOnline");
+      online.insertBefore(mapBox, online.firstChild);
+      mapLabel.textContent = "Map \u00b7 if you host";
+    } else if (mapBox.parentNode.id !== "stepLevel") {
+      const level = document.getElementById("stepLevel");
+      level.insertBefore(mapBox, document.getElementById("ascBox"));
+      mapLabel.textContent = "Map";
+    }
+    mapBox.hidden = name === "online" && !!pendingJoin;
 
     if (name === "online") {
       // Hosting and joining are the actions on this screen. The match
@@ -1384,7 +1447,7 @@
       start.disabled = name === "mission" && !mission;
       start.textContent = isLastStep()
         ? (flowMode === "campaign" && mission ? "Deploy \u00b7 " + mission.name : "Deploy")
-        : "Next";
+        : name === "doctrine" && pendingJoin ? "Join " + pendingJoin : "Next";
     }
     if (name === "mission") buildCampaign();
     if (name === "doctrine") showDoctrine();
@@ -1406,10 +1469,19 @@
     if (isLastStep()) return false;
     flowAt += 1;
     showStep();
+    if (stepName() === "online" && pendingJoin) {
+      const code = pendingJoin;
+      pendingJoin = null;
+      document.getElementById("joinRow").hidden = false;
+      document.getElementById("joinCode").value = code;
+      startJoining(code);
+      showStep();
+    }
     return true;
   }
   function resetFlow() {
     flowAt = 0;
+    pendingJoin = null;
     showStep();
   }
 
@@ -1841,6 +1913,10 @@
     newGame();
     document.getElementById("startOverlay").hidden = true;
     toast("Opponent connected \u2014 go.");
+    // newGame announced the doctrines, but this toast lands on top of it,
+    // so the host never learned what the guest had picked. Say it again
+    // once the "go" has been read, the same beat the guest gets.
+    setTimeout(announceDoctrine, 2200);
   }
 
   function startHosting() {
@@ -3437,6 +3513,8 @@
     if (typeof p.doctrine === "string" && E.DOCTRINES[p.doctrine]) doctrine = p.doctrine;
     if (typeof p.ascension === "number") ascension = E.clamp(p.ascension | 0, 0, E.ASCENSION_MAX);
     if (p.view === "flat" || p.view === "holo") viewPref = p.view;
+    if (LAYOUT_CHOICES.indexOf(p.layout) !== -1) layoutPref = p.layout;
+    syncMapRow();
   })();
 
   // A stored 3D choice is honoured before the first paint. Without the
@@ -3452,19 +3530,20 @@
   newGame();
   started = false;
 
-  // ?join=CODE from an invite link goes straight into the room.
+  // ?join=CODE from an invite link. It used to go straight into the room,
+  // which skipped the doctrine screen entirely: the friend who opened the
+  // link -- the common way in, since Send invite shares a link -- played
+  // whatever doctrine their phone had stored, Standard on a first visit,
+  // and never saw the choice. Now the link lands on the doctrine screen
+  // with the room named on the button; pressing it joins. The host's room
+  // waits, and survives the wait (see net.js).
   (function autoJoin() {
     const m = /[?&]join=([A-Za-z0-9]+)/.exec(location.search);
     if (!m) return;
-    const code = m[1].toUpperCase();
-    // Arriving on an invite link, drop straight onto the online screen:
-    // the status messages that follow all live there.
+    pendingJoin = m[1].toUpperCase();
     goMode("online");
-    flowAt = FLOW.online.indexOf("online");
+    flowAt = FLOW.online.indexOf("doctrine");
     showStep();
-    document.getElementById("joinRow").hidden = false;
-    document.getElementById("joinCode").value = code;
-    startJoining(code);
   })();
   requestAnimationFrame(frame);
 })();
