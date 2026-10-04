@@ -819,6 +819,15 @@
     }
   }
 
+  // A new match with Enhanced showing eases the camera in. Not part of
+  // faceHome(): that also runs when the renderer is swapped mid-match, which
+  // must never move the board under the player.
+  function introFly() {
+    if (gl && renderer === gl && typeof gl.flyIn === "function") {
+      try { gl.flyIn(); } catch (e) { /* cosmetic only */ }
+    }
+  }
+
   // "holo" and "holo-gl" are both the 3D view: they share the camera, the
   // gestures and the overlays, and differ only in who draws the table.
   function is3D(r) { return !!r && (r.name === "holo" || r.name === "holo-gl"); }
@@ -1105,6 +1114,7 @@
     document.getElementById("endOverlay").hidden = true;
     document.getElementById("seedLabel").textContent = s;
     orientBoard();
+    introFly();
     resize();
     updateHud();
     if (isOnline() && netRole === "host") session.restart(game);
@@ -2213,6 +2223,7 @@
         E.applySnapshot(game, msg.snapshot);
         selection.clear(); pendingTarget = null;
         orientBoard();
+        introFly();
         resize();
         started = true; paused = false;
         document.getElementById("startOverlay").hidden = true;
@@ -2277,6 +2288,7 @@
           E.applySnapshot(game, msg.snapshot);
           selection.clear(); pendingTarget = null;
           orientBoard();
+          introFly();
           resize();
           started = true; paused = false;
           document.getElementById("startOverlay").hidden = true;
@@ -2484,8 +2496,13 @@
   const colorOf = (owner) =>
     owner === mySeat ? "#22d3ee" : owner === NEUTRAL ? "#64748b" : "#fb7185";
 
+  // The engine events drained this frame, handed to the renderer as
+  // frame.events so Enhanced can draw the Doomstar strike from the real
+  // event. consumeEvents is still the only place that drains.
+  const frameEvents = [];
   function consumeEvents() {
     for (const ev of E.drainEvents(game)) {
+      frameEvents.push(ev);
       const c = colorOf(ev.owner);
       if (ev.kind === "launch") {
         if (ev.owner === mySeat) sfx.launch();
@@ -3665,6 +3682,7 @@
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    frameEvents.length = 0;
 
     if (game && started && !paused && !game.winner && simulatesLocally()) {
       acc += dt;
@@ -3693,7 +3711,7 @@
 
     if (game) {
       const fr = {
-        game: game, now: now, dt: dt, mySeat: mySeat, colorOf: colorOf,
+        game: game, now: now, dt: dt, mySeat: mySeat, colorOf: colorOf, events: frameEvents,
         underlay: is3D(renderer) ? holoUnderlay : null,
         overlay: is3D(renderer) ? holoOverlay : null
       };

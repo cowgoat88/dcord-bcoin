@@ -223,4 +223,13 @@ never pauses, resets or desyncs the match and keeps the selection.
   trips the slow-frame rule in a busy match, which is the fallback
   working. Slow-frame threshold raised from 24 to 42 ms so 30 Hz devices
   (Low Power Mode) are not switched off.
-- **GL3**: effects -- next.
+- **GL3 done**: bloom driven only by emissive parts (rims, engines,
+  beacons, effects; board and lanes stay below the threshold), capture
+  flares, instanced ship swarms scaled by fleet size (up to 30 ships a
+  fleet, 1500 total at high; 6 and 360 at low), a Doomstar shader beam
+  with shockwave and flash started by the real strike event
+  (`frame.events`), and a 1.5 s fly-in at match start on the same camera
+  as pick (cancelled by any touch, skipped under reduced motion). Every
+  standing gate passes in 2D, standard 3D and Enhanced; glfallback,
+  hologlplay and the context/dispose checks pass. Awaiting the iPhone
+  human gate.

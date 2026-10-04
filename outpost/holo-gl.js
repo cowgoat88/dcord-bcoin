@@ -15,6 +15,16 @@
 // whose projection reproduces holo's pixel formula exactly, so a world point
 // lands on the same pixel in both renderers (holo-gl.test.js checks 0.5 px).
 //
+// What makes it a space battle (GL3), all of it in the GL layer:
+//  - bloom from emissive parts only (rims, engines, beacons, effects);
+//  - stations that flare in the new owner's colour when they change hands;
+//  - fleets as instanced swarms, count-scaled and capped per quality tier;
+//  - a Doomstar beam + shockwave + flash, started by frame.events (the
+//    caller's drained engine events for THIS frame; never drained here);
+//  - a 1.5 s match-start fly-in, flyIn(), on the same camera maths as pick().
+// Two quality tiers, setQuality("high" | "low"): high has the composer and
+// the full swarm, low draws straight to the canvas with a small swarm.
+//
 // World mapping (engine -> three.js): x -> X, z (up) -> Y, y -> Z. With that
 // choice a three.js camera at yaw 0 sits at +Z looking toward -Z with +X on
 // its right, which is exactly the flat map seen from below, so the map's
@@ -43,8 +53,44 @@
   const PLATE_THICK = 6;
   const NEAR_FRAC = 0.1;      // near plane as a fraction of the camera distance; holo clips at the same depth
   const MAX_FLEETS = 160;     // fleets that get trails/glow; ships are capped with them
-  const MAX_SHIPS = MAX_FLEETS * 5;
   const MAX_LEVEL = 5;
+
+  // Quality tiers. "high" runs the bloom composer and the full swarm;
+  // "low" renders straight to the canvas with no post-process, a small swarm
+  // and only the cheap effects. Ship caps come from a count budget rather
+  // than a frame-time guess: ~40 vertices a ship, so 1500 ships is 60 k
+  // vertices in ONE draw call, and the measured cost in this sandbox's
+  // software GL was dominated by the composer (fill rate), not by ships.
+  //   perFleet : most ships one fleet shows;  k : ships = k * sqrt(count)
+  //   budget   : ships over all fleets (a war with ten big fleets is scaled
+  //              down together, never silently dropping a whole fleet)
+  const TIERS = {
+    high: { perFleet: 30, k: 2.2, budget: 1500, trail: true, light: true, echo: true, column: true },
+    low: { perFleet: 6, k: 1.1, budget: 360, trail: false, light: false, echo: false, column: false }
+  };
+  const MAX_SHIPS = TIERS.high.budget;
+
+  // Bloom. UnrealBloomPass works on LINEAR scene colour before tone output,
+  // so the threshold is a real brightness: only pixels above 1.0 glow. Lit
+  // board, lanes, grid and pads are authored below 1.0 (the brightest lane
+  // dash is 0.9), while station rims, engines, level rings, beacons and
+  // effects are authored 1.4-3, which is what "emissive parts drive the
+  // bloom" means here. Strength/radius were tuned by eye at 390 and 1280:
+  // 0.62/0.55 gives a halo about 10 px wide round a rim at dpr 2 without
+  // lifting the dark board anywhere (checked by sampling pixels).
+  const BLOOM = { strength: 0.62, radius: 0.55, threshold: 1.0 };
+
+  // Match-start fly-in: 1.5 s, ease-out cubic. Starts 35 degrees round, at
+  // the farthest zoom and 17 degrees higher in pitch, and lands on the
+  // game's home yaw/zoom/pitch. Cubic ease-out spends most of the move early
+  // and settles gently, so by 0.75 s the board is already 87% home and a
+  // player can start planning before it stops.
+  const FLY_MS = 1500, FLY_YAW = 35 * Math.PI / 180, FLY_PITCH = 17 * Math.PI / 180, FLY_ZOOM = 0.62;
+
+  // Doomstar strike timeline (ms after the engine event): the beam head
+  // sweeps source -> target, holds, then its tail runs down the arc.
+  const BEAM_HEAD = 320, BEAM_HOLD = 240, BEAM_TAIL = 760, BEAM_LIFE = BEAM_HEAD + BEAM_HOLD + BEAM_TAIL;
+  const RIPPLES = 8, STRIKES = 2, CAPTURE_MS = 900;
 
   // ---- access to the sibling scripts ------------------------------------
   function getHolo() {
@@ -259,6 +305,7 @@
     let lost = false, failed = false, disposed = false, lostTimer = 0;
     const failCbs = [];
     let now = 0;
+    let fly = null;                  // the match-start camera move, null when not flying
 
     // ---- three.js core ---------------------------------------------------
     const renderer = new T.WebGLRenderer({
@@ -285,6 +332,13 @@
     const hemi = new T.HemisphereLight(0xaac4ff, 0x10182a, 0.55);
     const key = new T.DirectionalLight(0xfff1dc, 3.0);
     scene.add(ambient, hemi, key, key.target);
+    // The Doomstar's flash. It is ALWAYS in the scene (intensity 0 when idle)
+    // because three.js compiles every lit material for a fixed light count:
+    // adding a light at the first strike would recompile every station
+    // shader mid-battle, a hitch on exactly the frame that should be the
+    // best one.
+    const flashLight = new T.PointLight(0xffb070, 0, 420, 2);
+    scene.add(flashLight);
 
     // Everything owned by the current game lives under `gameRoot` and is
     // freed in one go when the game changes; things shared by games
@@ -407,23 +461,46 @@
       glow.size[i] = radius;
     }
 
-    // ---- fleets: instanced ships + one dynamic line buffer for trails ---
+    // ---- fleets: instanced swarm ships + one dynamic line buffer for trails ---
     const fleetLayer = (() => {
-      // A dart: tip, two swept wings, a notch, a ridge above and a keel below.
+      // A dart: tip, two swept wings, a notch, a ridge above and a keel
+      // below, plus a small flame pyramid behind the notch. `aEng` is 0 on
+      // the hull and 1 on the flame; the shader below lights the flame far
+      // above 1.0, so the engines are what the bloom picks out of a swarm.
       const T0 = [1, 0, 0], L = [-0.7, 0, 0.62], R = [-0.7, 0, -0.62], N = [-0.3, 0, 0], U = [-0.15, 0.3, 0], D = [-0.15, -0.12, 0];
       const tris = [[T0, L, U], [T0, U, R], [L, N, U], [R, U, N], [T0, L, D], [T0, D, R], [L, N, D], [R, D, N]];
-      const p = [];
-      for (const t of tris) for (const v of t) p.push(v[0], v[1], v[2]);
+      const FB = [[-0.28, 0.1, 0.13], [-0.28, 0.1, -0.13], [-0.28, -0.1, -0.13], [-0.28, -0.1, 0.13]], FT = [-1.25, 0, 0];
+      const p = [], eng = [];
+      for (const t of tris) for (const v of t) { p.push(v[0], v[1], v[2]); eng.push(0); }
+      for (let i = 0; i < 4; i++) {
+        for (const v of [FB[i], FB[(i + 1) % 4], FT]) { p.push(v[0], v[1], v[2]); eng.push(1); }
+      }
       const g = keep(new T.BufferGeometry());
       g.setAttribute("position", new T.BufferAttribute(new Float32Array(p), 3));
+      g.setAttribute("aEng", new T.BufferAttribute(new Float32Array(eng), 1));
       g.computeVertexNormals();
       const m = keep(new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, metalness: 0.3, flatShading: true,
         side: T.DoubleSide, fog: false }));
+      const shipHigh = { value: quality === "high" ? 1 : 0 };
       // Instance colour also drives the emissive term, so a ship glows in
-      // its owner's colour rather than only being lit by it.
+      // its owner's colour rather than only being lit by it: 0.35 on the hull
+      // (lit hull stays under the bloom threshold, so a swarm keeps its
+      // shape), 2.95 on the flame (over it, so the engines glow).
       m.onBeforeCompile = (sh) => {
-        sh.fragmentShader = sh.fragmentShader.replace("#include <emissivemap_fragment>",
-          "#include <emissivemap_fragment>\n#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )\n  totalEmissiveRadiance = vColor.rgb * 0.8;\n#endif");
+        sh.vertexShader = sh.vertexShader
+          .replace("#include <common>", "#include <common>\nattribute float aEng; varying float vEng;")
+          .replace("#include <begin_vertex>", "#include <begin_vertex>\nvEng = aEng;");
+        sh.fragmentShader = sh.fragmentShader
+          .replace("#include <common>", "#include <common>\nvarying float vEng; uniform float uHigh;")
+          .replace("#include <emissivemap_fragment>",
+            "#include <emissivemap_fragment>\n#if defined( USE_COLOR ) || defined( USE_INSTANCING_COLOR )\n" +
+            // The flame is set to the same LINEAR luminance (1.7) for both sides, or rose
+            // (luminance 0.34) would glow a third as much as cyan (0.53) at equal gain;
+            // with no bloom (low) it is just the owner's full-saturation colour instead.
+            "  float l = dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722));\n" +
+            "  vec3 fl = uHigh > 0.5 ? vColor.rgb / max(l, 0.12) * 1.7 : vColor.rgb / max(max(vColor.r, vColor.g), max(vColor.b, 0.001)) * 0.9;\n" +
+            "  totalEmissiveRadiance = vColor.rgb * 0.35 + fl * vEng;\n#endif");
+        sh.uniforms.uHigh = shipHigh;
       };
       const mesh = new T.InstancedMesh(g, m, MAX_SHIPS);
       mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
@@ -433,7 +510,7 @@
       scene.add(mesh);
 
       const SEG = 6;
-      const lp = new Float32Array(MAX_FLEETS * SEG * 2 * 3), lc = new Float32Array(MAX_FLEETS * SEG * 2 * 4);
+      const lp = new Float32Array(MAX_FLEETS * (SEG + 1) * 2 * 3), lc = new Float32Array(MAX_FLEETS * (SEG + 1) * 2 * 4);
       const lg = keep(new T.BufferGeometry());
       lg.setAttribute("position", new T.BufferAttribute(lp, 3).setUsage(T.DynamicDrawUsage));
       lg.setAttribute("color", new T.BufferAttribute(lc, 4).setUsage(T.DynamicDrawUsage));
@@ -442,21 +519,153 @@
       const lines = new T.LineSegments(lg, lm);
       lines.frustumCulled = false; lines.renderOrder = 19;
       scene.add(lines);
-      return { mesh, lines, lp, lc, lg, SEG };
+      return { mesh, lines, lp, lc, lg, SEG, shipHigh };
     })();
 
+    // ---- strike effects: beam tubes and expanding ripples ---------------
+    // Both are ShaderMaterials on SHARED unit geometry; everything that
+    // varies (the arc, the radius, the front) is a uniform, so a strike
+    // allocates nothing and the beam is never rebuilt on the CPU.
+    //
+    // Beam: a tube (BEAM_S rings of BEAM_R vertices) whose `position` is
+    // (u along, cos, sin). The vertex shader bends it onto a quadratic Bezier
+    // P0 -> P1 -> P2, in the arc's own vertical plane: `side` is that
+    // plane's normal and cross(tangent, side) the other cross-section axis,
+    // so the frame can never degenerate (a Doomstar straight below the
+    // target gives a vertical tube; a frame built from "up" would flip).
+    const BEAM_S = 40, BEAM_R = 8;
+    const beamGeo = (() => {
+      const pos = new Float32Array((BEAM_S + 1) * (BEAM_R + 1) * 3), idx = [];
+      for (let i = 0; i <= BEAM_S; i++) for (let j = 0; j <= BEAM_R; j++) {
+        const o = (i * (BEAM_R + 1) + j) * 3, a = j / BEAM_R * TAU;
+        pos[o] = i / BEAM_S; pos[o + 1] = Math.cos(a); pos[o + 2] = Math.sin(a);
+      }
+      for (let i = 0; i < BEAM_S; i++) for (let j = 0; j < BEAM_R; j++) {
+        const a = i * (BEAM_R + 1) + j, b = a + BEAM_R + 1;
+        idx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+      const g = keep(new T.BufferGeometry());
+      g.setAttribute("position", new T.BufferAttribute(pos, 3));
+      g.setIndex(new T.BufferAttribute(new Uint16Array(idx), 1));
+      return g;
+    })();
+    function beamMaterial() {
+      return keep(new T.ShaderMaterial({
+        transparent: true, depthWrite: false, depthTest: true, blending: T.AdditiveBlending, fog: false, side: T.DoubleSide,
+        uniforms: {
+          uP0: { value: new T.Vector3() }, uP1: { value: new T.Vector3() }, uP2: { value: new T.Vector3() },
+          uSide: { value: new T.Vector3(0, 0, 1) }, uColor: { value: new T.Color(1, 0.5, 0.3) },
+          uRad: { value: 8 }, uHead: { value: 0 }, uTail: { value: 0 }, uFade: { value: 0 }, uTime: { value: 0 }, uShape: { value: 0 }, uGain: { value: 1 }
+        },
+        vertexShader:
+          "uniform vec3 uP0, uP1, uP2, uSide; uniform float uRad, uShape; varying float vU; varying vec3 vN; varying vec3 vV;\n" +
+          "void main(){ float u = position.x; float s = 1.0 - u;\n" +
+          "  vec3 c = s*s*uP0 + 2.0*s*u*uP1 + u*u*uP2;\n" +
+          "  vec3 t = normalize(2.0*s*(uP1-uP0) + 2.0*u*(uP2-uP1));\n" +
+          "  vec3 nrm = normalize(cross(t, uSide));\n" +
+          "  vec3 dir = uSide*position.y + nrm*position.z;\n" +
+          // arc: thin at both ends, fat in the middle; column: fat at the foot, thin at the top
+          "  float w = mix(0.3 + 0.7*sin(3.14159*u), 1.0 - 0.72*u, uShape);\n" +
+          "  vec4 mv = modelViewMatrix * vec4(c + dir*uRad*w, 1.0);\n" +
+          "  vU = u; vN = normalize(normalMatrix * dir); vV = -mv.xyz; gl_Position = projectionMatrix * mv; }",
+        fragmentShader:
+          "uniform vec3 uColor; uniform float uHead, uTail, uFade, uTime, uGain; varying float vU; varying vec3 vN; varying vec3 vV;\n" +
+          "void main(){\n" +
+          // core: facing the camera = the axis of the tube = hot
+          "  float f = abs(dot(normalize(vN), normalize(vV)));\n" +
+          "  float core = pow(f, 1.6);\n" +
+          "  float alive = smoothstep(uTail - 0.02, uTail + 0.03, vU) * (1.0 - smoothstep(uHead - 0.04, uHead, vU));\n" +
+          "  float lead = smoothstep(uHead - 0.12, uHead, vU);\n" +
+          "  float ripple = 0.8 + 0.2 * sin(vU * 70.0 - uTime * 0.045);\n" +
+          // HDR budget: ~1.1 at the edge up to ~2.4 on the axis and the head. Much
+          // more and the bloom (which blurs whatever is over 1.0) spreads the beam
+          // over a third of a phone screen: 7x was tried first and read as a flare.
+          "  vec3 col = mix(uColor, vec3(1.0, 0.9, 0.7), core * core) * (0.9 + 1.1 * core + 0.6 * lead) * ripple * uGain;\n" +
+          "  float a = (0.12 + 0.88 * core) * alive * uFade;\n" +
+          "  gl_FragColor = vec4(col * a, a);\n" +
+          "  #include <colorspace_fragment>\n}"
+      }));
+    }
+    const strikes = [];
+    for (let k = 0; k < STRIKES; k++) {
+      const mk = (shape) => {
+        const mat = beamMaterial(); mat.uniforms.uShape.value = shape;
+        const mesh = new T.Mesh(beamGeo, mat);
+        mesh.frustumCulled = false; mesh.renderOrder = 30; mesh.visible = false;
+        scene.add(mesh);
+        return { mesh, mat };
+      };
+      strikes.push({ arc: mk(0), col: mk(1), t0: -1e9, active: false, impacted: false, tx: 0, ty: 0, tz: 0, sx: 0, sy: 0, sz: 0, tid: -1, color: new T.Color() });
+    }
+    let nextStrike = 0;
+
+    // Ripple: a flat disc on the board with a ring painted by the fragment
+    // shader at radius uR (0..1 of the disc). Used for capture pulses and
+    // the strike's shockwave and its echo.
+    const rippleGeo = keep(new T.CircleGeometry(1, 48).rotateX(-Math.PI / 2));
+    const ripples = [];
+    for (let k = 0; k < RIPPLES; k++) {
+      const mat = keep(new T.ShaderMaterial({
+        transparent: true, depthWrite: false, depthTest: true, blending: T.AdditiveBlending, fog: false,
+        uniforms: { uR: { value: 0 }, uFade: { value: 0 }, uColor: { value: new T.Color() } },
+        vertexShader: "varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+        fragmentShader:
+          "uniform float uR, uFade; uniform vec3 uColor; varying vec2 vP;\n" +
+          "void main(){ float d = length(vP);\n" +
+          "  float ring = exp(-pow((d - uR) / 0.055, 2.0));\n" +
+          "  float wash = smoothstep(uR, 0.0, d) * 0.05;\n" +
+          "  float a = (ring + wash) * uFade * step(d, 1.0);\n" +
+          "  gl_FragColor = vec4(uColor * a, a);\n" +
+          "  #include <colorspace_fragment>\n}"
+      }));
+      const mesh = new T.Mesh(rippleGeo, mat);
+      mesh.frustumCulled = false; mesh.renderOrder = 16; mesh.visible = false; mesh.position.y = 1.9;
+      scene.add(mesh);
+      ripples.push({ mesh, mat, t0: 0, dur: 1, rmax: 1, power: 1, active: false });
+    }
+    let nextRipple = 0;
+    function ripple(x, z, rmax, dur, color, power, delay, lum) {
+      const r = ripples[nextRipple++ % RIPPLES];
+      r.active = true; r.t0 = now + (delay || 0); r.dur = dur; r.rmax = rmax; r.power = power;
+      r.mesh.position.x = x; r.mesh.position.z = z;
+      r.mesh.scale.set(rmax, 1, rmax);
+      r.mat.uniforms.uColor.value.copy(color).multiplyScalar(lum || 1);
+      r.mesh.visible = false;
+    }
+
     // ---- camera plumbing (same contract as holo.js) --------------------
+    // The view actually drawn: the game's yaw/zoom, plus whatever is left of
+    // the fly-in. pick(), screenOf() and the overlays all go through
+    // ensureCamera, so they follow the animated camera frame for frame; the
+    // fly-in's progress is only advanced in render() (from frame.now), never
+    // from the wall clock, so a tap between frames hits what was last drawn.
     function ensureCamera(g) {
       const mapW = g ? g.mapW : 1000, mapH = g ? g.mapH : 640;
-      const k = [cssW, cssH, mapW, mapH, yaw, zoom].join("|");
-      if (k !== camKey || !hcam) {
-        hcam = H.createCamera({ w: cssW || 300, h: cssH || 150, mapW, mapH, yaw, zoom });
-        camKey = k;
+      let ey = yaw, ez = zoom, ep;
+      if (fly) {
+        const k = fly.k;
+        ey = yaw + FLY_YAW * k;
+        ez = zoom + (clamp(zoom * FLY_ZOOM, ZMIN, ZMAX) - zoom) * k;
+        ep = H.defaultPitch(cssW || 300, cssH || 150) + FLY_PITCH * k;
+      }
+      const ck = [cssW, cssH, mapW, mapH, ey, ez, ep].join("|");
+      if (ck !== camKey || !hcam) {
+        hcam = H.createCamera({ w: cssW || 300, h: cssH || 150, mapW, mapH, yaw: ey, zoom: ez, pitch: ep });
+        camKey = ck;
         cameraFor(hcam, T, camera3);
         applyCameraDerived();
       }
       return hcam;
     }
+    function stepFly() {
+      if (!fly) return;
+      if (fly.t0 < 0) fly.t0 = now;
+      const p = (now - fly.t0) / FLY_MS;
+      if (p >= 1) { fly = null; return; }
+      const q = 1 - Math.max(0, p);
+      fly.k = q * q * q;
+    }
+    function cancelFly() { fly = null; }
     function applyCameraDerived() {
       const R = Math.hypot(hcam.mapW, hcam.mapH) / 2;
       scene.fog.near = hcam.D - R * hcam.cp;
@@ -488,7 +697,7 @@
       composer.setPixelRatio(dpr);
       composer.setSize(cssW, cssH);
       composer.addPass(new T.RenderPass(scene, camera3));
-      bloomPass = new T.UnrealBloomPass(new T.Vector2(cssW, cssH), 0.4, 0.4, 0.85);
+      bloomPass = new T.UnrealBloomPass(new T.Vector2(cssW, cssH), BLOOM.strength, BLOOM.radius, BLOOM.threshold);
       composer.addPass(bloomPass);
       composer.addPass(new T.OutputPass());
     }
@@ -574,13 +783,14 @@
       if (sharedGeo) return sharedGeo;
       const g = {};
       g.disc = (rr) => new T.CircleGeometry(rr, 36).rotateX(-Math.PI / 2);
-      g.levelRing = keep(new T.TorusGeometry(1, 0.045, 5, 28).rotateX(Math.PI / 2));
-      g.core = keep(new T.SphereGeometry(1, 14, 10));
+            g.core = keep(new T.SphereGeometry(1, 14, 10));
       g.rock = keep(new T.DodecahedronGeometry(1, 0));
       g.chimney = keep(new T.BoxGeometry(5, 11, 5));
       g.tier = keep(new T.CylinderGeometry(1, 1, 8, 6));
       g.tierEdges = keep(new T.EdgesGeometry(g.tier, 25));
       g.relayTorus = keep(new T.TorusGeometry(1, 0.11, 6, 32));
+      g.mast = keep(new T.CylinderGeometry(0.9, 1.5, 22, 6).translate(0, 11, 0));
+      g.cap = keep(new T.BoxGeometry(7.4, 2.6, 7.4));
       g.dot = keep(new T.SphereGeometry(1, 10, 8));
       sharedGeo = g;
       return g;
@@ -665,9 +875,9 @@
       const ownM = laneMat({});
       ownM.color.setScalar(1.35);
       const flowM = laneMat({ alphaMap: dash("flow", 20, 4) });
-      flowM.color.setScalar(1.6);
+      flowM.color.setScalar(0.9);   // < 1: lanes must not bloom
       const frontM = laneMat({ alphaMap: dash("front", 26, 12) });
-      frontM.color.setScalar(1.6);
+      frontM.color.setScalar(0.9);
       rec.lanes = {
         base: mkLane(full, 4.2, 0.5, 1, baseM, 5),
         own: mkLane(half, 5.4, 0.6, 2, ownM, 6),
@@ -677,13 +887,16 @@
       };
 
       // ---- stations and terrain -------------------------------------
+      const lampLit = own(new T.MeshBasicMaterial({ color: 0xfbbf24, fog: false }));
+      const lampDim = own(new T.MeshBasicMaterial({ color: 0x4a3a18, fog: false }));
       game.nodes.forEach((n, i) => {
         const g = geosFor(n.type);
         const r = g.r, h = g.h;
         const grp = new T.Group();
         grp.position.set(n.x, 0, n.y);
         gameRoot.add(grp);
-        const nr = { n, grp, g, owner: -1, col: "", level: -1, frac: -2, spin: [], cut: null, relay: null, doom: null, mats: {} };
+        const nr = { n, grp, g, owner: -1, col: "", level: -1, frac: -2, spin: [], cut: null, relay: null, doom: null, mats: {},
+          hot: new T.Color(), flashT: -1e9, hitT: -1e9, kickT: -1e9, boost: 0 };
 
         // Terrain under the pad.
         const terr = n.terrain;
@@ -741,7 +954,10 @@
         const pm = own(new T.MeshStandardMaterial({ color: 0x445566, roughness: 0.5, metalness: 0.5, emissive: 0x112233, emissiveIntensity: 0.6, fog: false }));
         const plm = own(new T.MeshStandardMaterial({ color: 0x445566, roughness: 0.35, metalness: 0.45, emissive: 0x224466, emissiveIntensity: 0.5, fog: false }));
         const em = own(new T.LineBasicMaterial({ color: 0xffffff, fog: false }));
-        nr.mats.pylon = pm; nr.mats.plate = plm; nr.mats.edge = em;
+        // Small parts that should glow (beacon, stack caps): one basic material per
+        // station, recoloured with the owner's HDR colour in setOwnerLook.
+        const acc = own(new T.MeshBasicMaterial({ color: 0xffffff, fog: false }));
+        nr.mats.pylon = pm; nr.mats.plate = plm; nr.mats.edge = em; nr.mats.acc = acc;
         const pylon = new T.Mesh(g.pylon, pm); grp.add(pylon);
         const plateGrp = new T.Group();
         plateGrp.position.y = g.plateY;
@@ -760,6 +976,14 @@
           te.scale.copy(tier.scale); te.position.copy(tier.position);
           grp.add(tier, te);
           nr.mats.tier = tm;
+          // A mast and a beacon: the Command is the one tall thin thing on
+          // the board, so it reads at any size, and the beacon blinks.
+          const mast = new T.Mesh(SG.mast, pm);
+          mast.position.y = h + 5.5; grp.add(mast);
+          const bead = new T.Mesh(SG.dot, acc);
+          bead.scale.setScalar(3.1); bead.position.y = h + 29;
+          grp.add(bead);
+          nr.bead = bead;
         } else if (g.kind === "square") {
           // Factory: twin stacks on the roof.
           const sm = own(new T.MeshStandardMaterial({ color: 0x445566, roughness: 0.4, metalness: 0.5, emissive: 0x224466, emissiveIntensity: 0.9, fog: false }));
@@ -769,6 +993,13 @@
             grp.add(c);
           }
           nr.mats.stack = sm;
+          // Glowing caps on the stacks: the factory's furnace.
+          nr.caps = [];
+          for (const sx of [-1, 1]) {
+            const cp = new T.Mesh(SG.cap, acc);
+            cp.position.set(sx * g.plateR * 0.42, h + 5.5 - 0.5 + 5.6, -g.plateR * 0.3);
+            grp.add(cp); nr.caps.push(cp);
+          }
         } else if (g.kind === "diamond") {
           nr.spin.push(plateGrp);
         } else if (g.kind === "circle") {
@@ -809,18 +1040,23 @@
           rec.doom = nr;
         }
 
-        // Level rings: amber hoops up the pylon, one per level.
+        // Level: five lamps spaced round the plate's rim, one lit per level
+        // (unlit ones stay as dim studs so the maximum is visible too). A
+        // first version stacked amber hoops above the roof; with bloom on it
+        // fused into one yellow blob sitting exactly under the garrison
+        // number, so it hid both the level and the digits. Lamps on the rim
+        // stay apart at any yaw and clear of the number.
         nr.levels = [];
-        const lm = own(new T.MeshBasicMaterial({ color: 0xfbbf24, fog: false }));
-        lm.color.setScalar(1.3);
+        const lampY = g.kind === "diamond" ? g.plateY : g.plateY + PLATE_THICK / 2 + 1.2;
         for (let k = 0; k < MAX_LEVEL; k++) {
-          const lr = new T.Mesh(SG.levelRing, lm);
-          lr.scale.setScalar(g.pw * 1.9 + 3);
-          lr.position.y = 6 + k * 6;
-          lr.visible = false;
-          grp.add(lr);
-          nr.levels.push(lr);
+          const a = -Math.PI / 2 + k * TAU / MAX_LEVEL;
+          const lamp = new T.Mesh(SG.dot, lampDim);
+          lamp.scale.setScalar(3.3);
+          lamp.position.set(Math.cos(a) * g.plateR * 1.02, lampY, Math.sin(a) * g.plateR * 1.02);
+          grp.add(lamp);
+          nr.levels.push(lamp);
         }
+        nr.mats.level = lampLit; nr.mats.levelDim = lampDim;
         rec.nodes.push(nr);
       });
       built = rec;
@@ -836,18 +1072,38 @@
     // =================================================================
     // Per-frame updates
     // =================================================================
-    function setOwnerLook(nr, str, owner) {
+    // A "hot" version of a colour: the stuff that should glow. With the
+    // composer on it is pushed to a fixed LINEAR luminance `lum` (cyan and
+    // rose differ 1.6x in luminance, so equal multipliers would make one
+    // side glow more than the other); a scale above 1 per channel is what
+    // the bloom threshold keys on. With no composer (low) an over-1 colour
+    // would just clip toward white, so it is normalised to its own full
+    // saturation instead and stays unmistakably the owner's colour.
+    const lum = (c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    function hot(out, c, L) {
+      out.copy(c);
+      if (quality === "high") return out.multiplyScalar(L / Math.max(lum(c), 0.12));
+      return out.multiplyScalar(Math.min(1, L * 0.6) / Math.max(c.r, c.g, c.b, 1e-3));
+    }
+    // `boost` (0..1) is the capture/strike flash: it lifts the same
+    // emissive terms the bloom reads, so the whole station flares and fades
+    // as one, in the NEW owner's colour.
+    function setOwnerLook(nr, str, owner, boost) {
       const c = colorFor(str);
-      const m = nr.mats, neutral = owner === 0;
-      m.plate.color.copy(c).multiplyScalar(neutral ? 0.75 : 0.62);
-      m.plate.emissive.copy(c); m.plate.emissiveIntensity = neutral ? 0.3 : 0.4;
+      const m = nr.mats, neutral = owner === 0, b = boost || 0;
+      hot(nr.hot, c, neutral ? 0.3 : 1.5);
+      m.plate.color.copy(c).multiplyScalar(neutral ? 0.7 : 0.6);
+      m.plate.emissive.copy(c); m.plate.emissiveIntensity = (neutral ? 0.25 : 0.45) + b * 3.2;
       m.pylon.color.copy(c).multiplyScalar(0.45);
-      m.pylon.emissive.copy(c); m.pylon.emissiveIntensity = neutral ? 0.12 : 0.3;
-      if (m.tier) { m.tier.color.copy(c).multiplyScalar(0.55); m.tier.emissive.copy(c); m.tier.emissiveIntensity = neutral ? 0.2 : 0.9; }
-      if (m.stack) { m.stack.color.copy(c).multiplyScalar(0.5); m.stack.emissive.copy(c); m.stack.emissiveIntensity = neutral ? 0.2 : 0.9; }
-      if (m.ring) { m.ring.color.copy(c).multiplyScalar(0.5); m.ring.emissive.copy(c); m.ring.emissiveIntensity = neutral ? 0.25 : 1.1; }
-      m.edge.color.copy(c).lerp(tmpC.set(0xffffff), neutral ? 0.1 : 0.35);
-      nr.padFill.material.color.copy(c); nr.padFill.material.opacity = neutral ? 0.1 : 0.14;
+      m.pylon.emissive.copy(c); m.pylon.emissiveIntensity = (neutral ? 0.12 : 0.3) + b * 1.6;
+      if (m.tier) { m.tier.color.copy(c).multiplyScalar(0.55); m.tier.emissive.copy(c); m.tier.emissiveIntensity = (neutral ? 0.2 : 0.9) + b * 3; }
+      if (m.stack) { m.stack.color.copy(c).multiplyScalar(0.5); m.stack.emissive.copy(c); m.stack.emissiveIntensity = (neutral ? 0.2 : 0.9) + b * 3; }
+      if (m.ring) { m.ring.color.copy(c).multiplyScalar(0.5); m.ring.emissive.copy(c); m.ring.emissiveIntensity = (neutral ? 0.25 : 1.1) + b * 3; }
+      m.edge.color.copy(nr.hot);
+      if (b > 0) m.edge.color.multiplyScalar(1 + b * 1.5);
+      m.acc.color.copy(nr.hot);
+      hot(m.level.color, colorFor("#fbbf24"), 1.4);
+      nr.padFill.material.color.copy(c); nr.padFill.material.opacity = (neutral ? 0.1 : 0.14) + b * 0.25;
       nr.padRing.material.color.copy(c);
       nr.fill.material.color.copy(c);
     }
@@ -875,8 +1131,6 @@
     const _q1 = new T.Quaternion(), _q2 = new T.Quaternion(), _m4 = new T.Matrix4();
     const _p = new T.Vector3(), _s = new T.Vector3(), _col = new T.Color();
     const AX_Y = new T.Vector3(0, 1, 0), AX_Z = new T.Vector3(0, 0, 1);
-    const FORM = [[0, 0], [-1.35, 1.15], [-1.35, -1.15], [-2.7, 2.1], [-2.7, -2.1]];
-
     function fleetPose(game, f, out) {
       const a = game.nodes[f.path[f.leg]], b = game.nodes[f.path[f.leg + 1]];
       if (!a || !b) return false;
@@ -892,57 +1146,93 @@
     const fp = {};
     const fleetLabels = [];
 
+    // Cheap stable pseudo-random in [0,1): a per-ship constant that does not
+    // depend on the fleet array's order, so a swarm keeps its shape from
+    // frame to frame (fleets have no id; owner/route/count identify one).
+    const hash01 = (a, b) => { const x = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return x - Math.floor(x); };
+    const plan = [];
+    // Swarm layout: a sunflower (golden-angle) disc stretched along the
+    // heading, so ships never line up or overlap the same way twice; plus a
+    // little jitter and a slow wobble. The leader (i = 0) sits at the front.
     function updateFleets(game, colorOf) {
+      const tier = TIERS[quality];
       const mesh = fleetLayer.mesh, lp = fleetLayer.lp, lc = fleetLayer.lc;
       let ships = 0, seg = 0, nf = 0;
       fleetLabels.length = 0;
+      plan.length = 0;
+      let want = 0;
       for (const f of game.fleets) {
         if (nf >= MAX_FLEETS) break;
         if (!fleetPose(game, f, fp)) continue;
         nf++;
+        const n = clamp(Math.round(tier.k * Math.sqrt(f.count)), 1, tier.perFleet);
+        plan.push(f, n);
+        want += n;
+      }
+      const shrink = want > tier.budget ? tier.budget / want : 1;
+      for (let pi = 0; pi < plan.length; pi += 2) {
+        const f = plan[pi];
+        let n = plan[pi + 1];
+        if (shrink < 1) n = Math.max(1, Math.floor(n * shrink));
+        fleetPose(game, f, fp);
         const col = colorFor(colorOf(f.owner));
-        const size = (5 + Math.min(9, Math.sqrt(f.count) * 0.9)) * 2.1;
+        const seed = f.owner * 7.31 + f.from * 1.7 + f.to * 3.3 + f.count * 0.013;
+        const s0 = clamp(19 - 0.35 * n, 11, 17);
+        const rad = n > 1 ? 9 + 6.8 * Math.sqrt(n) : 0;
         const vx = -fp.uy, vy = fp.ux;
-        // Heading and climb along the arc.
-        const slope = 4 * fp.H * (1 - 2 * fp.t) / fp.len;
-        _q1.setFromAxisAngle(AX_Y, -Math.atan2(fp.uy, fp.ux));
-        _q2.setFromAxisAngle(AX_Z, Math.atan(slope));
-        _q1.multiply(_q2);
-        const n = Math.min(5, 1 + Math.floor(Math.sqrt(f.count) / 1.7));
+        const head = -Math.atan2(fp.uy, fp.ux);
+        // Near the end of the leg the swarm draws in on the target, so the
+        // ships behind do not hang in mid-air when the fleet is removed.
+        const conv = clamp((1 - fp.t) * fp.len / 55, 0.3, 1);
         for (let i = 0; i < n && ships < MAX_SHIPS; i++) {
-          const s = size * (i === 0 ? 1 : 0.68) * 1.2;
-          _p.set(fp.x + (fp.ux * FORM[i][0] + vx * FORM[i][1]) * size,
-            fp.z + 3,
-            fp.y + (fp.uy * FORM[i][0] + vy * FORM[i][1]) * size);
-          _s.set(s, s, s);
+          let al = 0, la = 0;
+          if (i > 0) {
+            const r = rad * Math.sqrt(i / n), th = i * 2.39996 + seed * 6.2832;
+            al = r * Math.cos(th) * 1.35 - r * 0.3; la = r * Math.sin(th) * 0.9;
+          }
+          const h1 = hash01(seed, i), h2 = hash01(i, seed + 5.5), h3 = hash01(seed + 2.2, i + 9.1);
+          al = (al + (h1 - 0.5) * s0 * 0.9) * conv;
+          la = (la + (h2 - 0.5) * s0 * 0.9) * conv + Math.sin(now * 0.0031 + h3 * 40) * 1.6;
+          const ti = Math.min(1, fp.t + al / fp.len);
+          if (ti < 0) continue;                      // not out of the dock yet: the swarm streams out of the station
+          const slope = 4 * fp.H * (1 - 2 * ti) / fp.len;
+          const alt = 4 * fp.H * ti * (1 - ti) + 3 + Math.sin(now * 0.0043 + h3 * 60) * 2.2;
+          _q1.setFromAxisAngle(AX_Y, head + Math.sin(now * 0.002 + h2 * 30) * 0.1);
+          _q2.setFromAxisAngle(AX_Z, Math.atan(slope));
+          _q1.multiply(_q2);
+          const grow = clamp(ti * fp.len / 14, 0, 1);
+          const sc = s0 * (i === 0 ? 1.3 : 0.8 + h1 * 0.35) * grow;
+          _p.set(fp.a.x + fp.ux * fp.len * ti + vx * la, alt, fp.a.y + fp.uy * fp.len * ti + vy * la);
+          _s.set(sc, sc, sc);
           _m4.compose(_p, _q1, _s);
           mesh.setMatrixAt(ships, _m4);
-          mesh.setColorAt(ships, _col.copy(col).multiplyScalar(1.25));
+          mesh.setColorAt(ships, _col.copy(col).multiplyScalar(0.92 + h3 * 0.2));
           ships++;
         }
-        // Trail: the arc just flown (fading toward its tail), and a tether to the board.
-        const back = 28 / fp.len;
-        let px = fp.x, pz = fp.y, py = fp.z + 3;
-        for (let i = 1; i <= 5; i++) {
-          const tt = Math.max(0, fp.t - back * i / 5);
-          const nx = fp.a.x + (fp.x - fp.a.x) * (tt / Math.max(fp.t, 1e-6));
-          const nz = fp.a.y + (fp.y - fp.a.y) * (tt / Math.max(fp.t, 1e-6));
-          const ny = 4 * fp.H * tt * (1 - tt) + 3;
-          const o = seg * 6, c = seg * 8;
-          lp[o] = px; lp[o + 1] = py; lp[o + 2] = pz; lp[o + 3] = nx; lp[o + 4] = ny; lp[o + 5] = nz;
-          const a0 = 0.6 * (1 - (i - 1) / 5), a1 = 0.6 * (1 - i / 5);
-          lc[c] = col.r * 1.4; lc[c + 1] = col.g * 1.4; lc[c + 2] = col.b * 1.4; lc[c + 3] = a0;
-          lc[c + 4] = col.r * 1.4; lc[c + 5] = col.g * 1.4; lc[c + 6] = col.b * 1.4; lc[c + 7] = a1;
-          px = nx; py = ny; pz = nz; seg++;
-        }
-        {
+        const size = rad * 0.6 + s0 * 1.2;            // label/glow footprint of the whole swarm
+        if (tier.trail) {
+          // Trail: the arc just flown (fading toward its tail), and a tether to the board.
+          const back = 28 / fp.len;
+          let px = fp.x, pz = fp.y, py = fp.z + 3;
+          for (let i = 1; i <= 5; i++) {
+            const tt = Math.max(0, fp.t - back * i / 5);
+            const nx = fp.a.x + (fp.x - fp.a.x) * (tt / Math.max(fp.t, 1e-6));
+            const nz = fp.a.y + (fp.y - fp.a.y) * (tt / Math.max(fp.t, 1e-6));
+            const ny = 4 * fp.H * tt * (1 - tt) + 3;
+            const o = seg * 6, c = seg * 8;
+            lp[o] = px; lp[o + 1] = py; lp[o + 2] = pz; lp[o + 3] = nx; lp[o + 4] = ny; lp[o + 5] = nz;
+            const a0 = 0.6 * (1 - (i - 1) / 5), a1 = 0.6 * (1 - i / 5);
+            lc[c] = col.r * 1.4; lc[c + 1] = col.g * 1.4; lc[c + 2] = col.b * 1.4; lc[c + 3] = a0;
+            lc[c + 4] = col.r * 1.4; lc[c + 5] = col.g * 1.4; lc[c + 6] = col.b * 1.4; lc[c + 7] = a1;
+            px = nx; py = ny; pz = nz; seg++;
+          }
           const o = seg * 6, c = seg * 8;
           lp[o] = fp.x; lp[o + 1] = fp.z + 3; lp[o + 2] = fp.y; lp[o + 3] = fp.x; lp[o + 4] = 0.8; lp[o + 5] = fp.y;
           lc[c] = col.r; lc[c + 1] = col.g; lc[c + 2] = col.b; lc[c + 3] = 0.3;
           lc[c + 4] = col.r; lc[c + 5] = col.g; lc[c + 6] = col.b; lc[c + 7] = 0.04;
           seg++;
         }
-        glowAdd(fp.x, fp.z + 3, fp.y, col, 0.3, size * 1.5 + 6);
+        glowAdd(fp.x, fp.z + 3, fp.y, col, 0.2, size * 1.1 + 8);
         if (f.count >= 8) fleetLabels.push({ f, x: fp.x, y: fp.y, z: fp.z + 3, size, str: String(Math.round(f.count)) });
       }
       mesh.count = ships;
@@ -951,6 +1241,109 @@
       fleetLayer.lg.setDrawRange(0, seg * 2);
       fleetLayer.lg.attributes.position.needsUpdate = true;
       fleetLayer.lg.attributes.color.needsUpdate = true;
+    }
+
+    // ---- Doomstar strike ----------------------------------------------------
+    const _hot = new T.Color(), _own = new T.Color();
+    function strike(ev, colorOf) {
+      const B = built;
+      if (!B || !B.doom) return;
+      const src = B.doom, tn = B.nodes[ev.nodeId];
+      const st = strikes[nextStrike++ % STRIKES];
+      const tg = tn ? tn.g : { plateY: 30 };
+      const sx = src.n.x, sy = src.g.h + 9, sz = src.n.y;
+      const tx = ev.x, ty = tg.plateY + 4, tz = ev.y;
+      st.t0 = now; st.active = true; st.impacted = false; st.tid = tn ? ev.nodeId : -1;
+      st.sx = sx; st.sy = sy; st.sz = sz; st.tx = tx; st.ty = ty; st.tz = tz;
+      // Orange, tinted a third of the way toward the firing side's colour so
+      // the player can tell whose weapon it was without reading anything.
+      _own.copy(colorFor(colorOf(ev.owner)));
+      st.color.set(0xff8a5c).lerp(_own, 0.3);
+      const dx = tx - sx, dz = tz - sz, dist = Math.hypot(dx, dz);
+      const peak = Math.min(300, 70 + 0.5 * dist);
+      const u = st.arc.mat.uniforms;
+      u.uP0.value.set(sx, sy, sz); u.uP2.value.set(tx, ty, tz);
+      u.uP1.value.set((sx + tx) / 2, 2 * peak - (sy + ty) / 2, (sz + tz) / 2);
+      // The arc lies in the vertical plane through source and target;
+      // `side` is that plane's normal (any horizontal if they coincide).
+      if (dist > 1) u.uSide.value.set(dz / dist, 0, -dx / dist); else u.uSide.value.set(1, 0, 0);
+      u.uColor.value.copy(st.color);
+      const c = st.col.mat.uniforms;
+      c.uP0.value.set(tx, 0, tz); c.uP1.value.set(tx, 130, tz); c.uP2.value.set(tx, 260, tz);
+      c.uSide.value.set(1, 0, 0); c.uColor.value.copy(st.color);
+      src.kickT = now;
+    }
+
+    // Ease-out for sweeps; a hand-rolled helper because the shader wants a
+    // front slightly past 1 so the last segment is actually lit.
+    const easeOut = (p) => { const q = 1 - clamp(p, 0, 1); return 1 - q * q; };
+    let warmed = false;
+    function updateEffects(game) {
+      const tier = TIERS[quality];
+      const B = built;
+      const pxw = hcam.D / hcam.focal;             // world units per CSS pixel at the board's centre
+      let lightI = 0, lx = 0, ly = 0, lz = 0;
+      for (const st of strikes) {
+        if (!st.active) { if (warmed) { st.arc.mesh.visible = false; st.col.mesh.visible = false; } continue; }
+        const T0 = now - st.t0;
+        if (T0 > BEAM_LIFE + 60) { st.active = false; st.arc.mesh.visible = false; st.col.mesh.visible = false; continue; }
+        const au = st.arc.mat.uniforms;
+        const tailP = clamp((T0 - BEAM_HEAD - BEAM_HOLD) / BEAM_TAIL, 0, 1);
+        au.uHead.value = easeOut(T0 / BEAM_HEAD) * 1.06;
+        au.uTail.value = tailP * tailP * 1.06;
+        au.uFade.value = 1 - 0.85 * tailP;
+        au.uTime.value = now;
+        au.uRad.value = 4.2 * pxw;
+        au.uGain.value = quality === "high" ? 1 : 0.6;   // no bloom to carry it: keep the orange from clipping to white
+        st.arc.mesh.visible = true;
+        const Tc = T0 - BEAM_HEAD;
+        if (tier.column && Tc >= 0) {
+          const cu = st.col.mat.uniforms, tc = clamp((Tc - 120) / 420, 0, 1);
+          cu.uHead.value = easeOut(Tc / 110) * 1.06; cu.uTail.value = tc * 1.06; cu.uFade.value = 1 - 0.7 * tc;
+          cu.uTime.value = now; cu.uRad.value = 7 * pxw; cu.uGain.value = au.uGain.value;
+          st.col.mesh.visible = true;
+        } else st.col.mesh.visible = false;
+        // The strike lands when the beam head does.
+        if (T0 >= BEAM_HEAD) {
+          if (!st.impacted) {
+            st.impacted = true;
+            const tn = st.tid >= 0 ? B.nodes[st.tid] : null;
+            if (tn) tn.hitT = now;
+            hot(_hot, st.color, 1.5);
+            ripple(st.tx, st.tz, 210, 1000, _hot, 1, 0, 1);
+            if (tier.echo) ripple(st.tx, st.tz, 135, 800, _hot, 0.7, 170, 1);
+          }
+          const lt = T0 - BEAM_HEAD;
+          if (lt < 560) {
+            hot(_hot, st.color, 1.4);
+            glowAdd(st.tx, st.ty, st.tz, _hot, 0.3 * (1 - lt / 560), 24 + lt * 0.1);
+            if (tier.light) {
+              const I = 16000 * Math.exp(-lt / 150);
+              if (I > lightI) { lightI = I; lx = st.tx; ly = 80; lz = st.tz; }
+            }
+          }
+        }
+        if (T0 < BEAM_HEAD + BEAM_HOLD) { hot(_hot, st.color, 2.0); glowAdd(st.sx, st.sy, st.sz, _hot, 0.4, 26); }
+      }
+      flashLight.intensity = lightI;
+      if (lightI > 0) flashLight.position.set(lx, ly, lz);
+
+      for (const r of ripples) {
+        if (!r.active) { if (warmed) r.mesh.visible = false; continue; }
+        const T0 = now - r.t0;
+        if (T0 >= r.dur) { r.active = false; r.mesh.visible = false; continue; }
+        if (T0 < 0) { r.mesh.visible = false; continue; }
+        const p = T0 / r.dur, q = 1 - p;
+        r.mat.uniforms.uR.value = 1 - Math.pow(q, 2.2);
+        r.mat.uniforms.uFade.value = r.power * Math.pow(q, 1.4);
+        r.mesh.visible = true;
+      }
+      // First frame only: draw every effect once, invisibly, so its shader
+      // program is compiled now rather than on the first strike.
+      if (!warmed) {
+        for (const st of strikes) { st.arc.mesh.visible = true; st.col.mesh.visible = true; }
+        for (const r of ripples) r.mesh.visible = true;
+      }
     }
 
     function updateScene(game, colorOf, capOf, relayFn, capDoom) {
@@ -981,11 +1374,22 @@
         const nr = B.nodes[i], n = game.nodes[i], g = nr.g;
         nr.n = n;
         const str = colorOf(n.owner);
-        if (n.owner !== nr.owner || str !== nr.col) { setOwnerLook(nr, str, n.owner); nr.owner = n.owner; nr.col = str; }
+        // A change of owner after the first look is a capture. Read from the
+        // state rather than the engine's "capture" event so it also fires
+        // for a Doomstar wipe and for the guest, who gets no events.
+        if (nr.owner !== -1 && n.owner !== nr.owner) {
+          nr.flashT = now;
+          ripple(n.x, n.y, 110, 900, hot(tmpC2, colorFor(str), n.owner === 0 ? 0.6 : 1.8), n.owner === 0 ? 0.5 : 1, 0, 1);
+        }
+        const boost = Math.max(clamp(1 - (now - nr.flashT) / CAPTURE_MS, 0, 1), clamp(1 - (now - nr.hitT) / 700, 0, 1));
+        const bq = boost * boost;
+        if (n.owner !== nr.owner || str !== nr.col || bq > 0 || nr.boost > 0) {
+          setOwnerLook(nr, str, n.owner, bq); nr.owner = n.owner; nr.col = str; nr.boost = bq;
+        }
         const c = colorFor(str);
 
         const lv = Math.min(n.level || 0, MAX_LEVEL);
-        if (lv !== nr.level) { for (let k = 0; k < MAX_LEVEL; k++) nr.levels[k].visible = k < lv; nr.level = lv; }
+        if (lv !== nr.level) { for (let k = 0; k < MAX_LEVEL; k++) nr.levels[k].material = k < lv ? nr.mats.level : nr.mats.levelDim; nr.level = lv; }
 
         // Capacity gauge.
         const cap = capOf(n);
@@ -1035,14 +1439,20 @@
           D.halo.scale.setScalar(1 + pulse * 0.05 + best * 0.04);
           // The core brightens and throbs faster as the weapon charges.
           const throb = 0.5 + 0.5 * Math.sin(now * (0.004 + best * 0.012));
-          D.core.scale.setScalar(6.5 + best * 4 + throb * (1 + best * 2.5));
-          D.cm.color.set(best >= 1 ? 0xff7a5c : 0xffd166).multiplyScalar(1.1 + best * 1.4 + throb * 0.5);
+          const kick = clamp(1 - (now - nr.kickT) / 500, 0, 1);
+          D.core.scale.setScalar(6.5 + best * 4 + throb * (1 + best * 2.5) + kick * 9);
+          D.cm.color.set(best >= 1 ? 0xff7a5c : 0xffd166).multiplyScalar(2.3 + best * 1.8 + throb * 0.8);   // > 1 on purpose: the core is the Doomstar's bloom source
         }
 
+        // Small animated parts.
+        if (nr.bead) nr.bead.scale.setScalar(3.1 * (0.8 + 0.25 * Math.sin(now * 0.005 + i)));
+        if (nr.caps) for (const cp of nr.caps) cp.scale.y = 0.75 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.004 + i * 2));
+
         // Station glow sprite, above the plate.
-        glowAdd(n.x, g.plateY, n.y, c, n.owner === 0 ? 0.16 : 0.34, g.plateR * 2.3 + 8);
+        glowAdd(n.x, g.plateY, n.y, c, (n.owner === 0 ? 0.16 : 0.34) + bq * 0.6, g.plateR * 2.3 + 8 + bq * 40);
       }
       updateFleets(game, colorOf);
+      updateEffects(game);
       glow.geo.setDrawRange(0, glow.n);
       glow.geo.attributes.position.needsUpdate = true;
       glow.geo.attributes.aColor.needsUpdate = true;
@@ -1059,6 +1469,22 @@
       octx.strokeText(str, x, y);
       octx.fillStyle = fill;
       octx.fillText(str, x, y);
+    }
+    // A soft dark scrim under each number. The text already has a dark
+    // outline, but a bloomed Doomstar core or a charged station can sit right
+    // under a number (sampled: up to 1.0 relative luminance under the "24"
+    // over the core, white text is 0.9), where an outline alone is thin. The
+    // scrim keeps the contrast whatever the GL layer does, and fades to
+    // nothing at its edge so it never reads as a box.
+    function scrim(x, y, px, len) {
+      const ry = px * 0.9, rx = px * (0.36 * len + 0.75);
+      octx.save();
+      octx.translate(x, y); octx.scale(rx / ry, 1);
+      const g = octx.createRadialGradient(0, 0, 0, 0, 0, ry);
+      g.addColorStop(0, "rgba(3,6,14,0.62)"); g.addColorStop(0.55, "rgba(3,6,14,0.4)"); g.addColorStop(1, "rgba(3,6,14,0)");
+      octx.fillStyle = g;
+      octx.fillRect(-ry, -ry, ry * 2, ry * 2);
+      octx.restore();
     }
     const labels = [];
     const _P = { x: 0, y: 0, depth: 0, scale: 0 };
@@ -1083,7 +1509,7 @@
         labels.push({ x: sp.x, y: sp.y + 1, str: String(Math.floor(n.garrison)), px: Math.max(11, sp.px), fill: "#f1f6ff", depth: sp.depth, fleet: false });
       }
       labels.sort((a, b) => b.depth - a.depth);
-      for (const l of labels) text(l.str, l.x, l.y, l.px, l.fill, !l.fleet);
+      for (const l of labels) { scrim(l.x, l.y, l.px, l.str.length); text(l.str, l.x, l.y, l.px, l.fill, !l.fleet); }
       if (frame.overlay) {
         octx.save(); octx.globalAlpha = 1;
         frame.overlay(octx, api.screenOf);
@@ -1109,9 +1535,14 @@
         if (!cssW) resize(glCanvas.clientWidth || 300, glCanvas.clientHeight || 150, 1);
         const E = engine();
         const colorOf = frame.colorOf || ((o) => (o === (frame.mySeat === undefined ? 1 : frame.mySeat) ? DEFAULT_COLORS[1] : o === 0 ? DEFAULT_COLORS[0] : DEFAULT_COLORS[2]));
+        stepFly();
         ensureCamera(game);
         if (game) {
           if (!built || built.game !== game || built.W !== game.mapW || built.H !== game.mapH || built.nodes.length !== game.nodes.length) buildGame(game);
+          // Engine events from THIS frame (the caller drains them once and
+          // hands them over; nothing here drains). Only the Doomstar strike
+          // is drawn from one: everything else is read from the state.
+          if (frame.events) for (const ev of frame.events) if (ev && ev.kind === "doomstar") strike(ev, colorOf);
           const capFn = frame.capOf || (E ? (n) => E.nodeStats(n, game).cap : null);
           const capOf = (n) => { const c = capFn ? capFn(n) : 0; return c > 0 ? c : { command: 70, factory: 45, mine: 28, relay: 34, doomstar: 40 }[n.type] || 40; };
           const relayFn = E ? (n) => E.relayCharge(game, n) : null;
@@ -1120,6 +1551,7 @@
           if (!lost) {
             if (composer) composer.render(); else renderer.render(scene, camera3);
           }
+          warmed = true;
         }
         drawOverlay(frame, game);
       } catch (err) {
@@ -1145,6 +1577,16 @@
     }
     glCanvas.addEventListener("webglcontextlost", onLost, false);
     glCanvas.addEventListener("webglcontextrestored", onRestored, false);
+    // A finger or a wheel on the board ends the fly-in. Listened to here, on
+    // the overlay canvas that owns all pointer input, in the bubble phase
+    // AFTER the game's own handler: that handler's pick() then still sees the
+    // camera the player was looking at when they touched, and only the
+    // frames after it jump home. Passive: it never blocks a gesture.
+    const onTouchBoard = () => cancelFly();
+    if (overlay.addEventListener) {
+      overlay.addEventListener("pointerdown", onTouchBoard, { passive: true });
+      overlay.addEventListener("wheel", onTouchBoard, { passive: true });
+    }
 
     // ---- interface --------------------------------------------------------
     const api = {
@@ -1162,18 +1604,36 @@
       },
       toBoard(px, py) { return H.toBoard(ensureCamera(lastGame), px, py); },
       camera() { return ensureCamera(lastGame); },
-      orbit(dYaw) { yaw = (((yaw + dYaw) % TAU) + TAU) % TAU; },
-      setYaw(y) { yaw = ((y % TAU) + TAU) % TAU; },
+      // Anything that moves the camera by hand ends the fly-in on the spot:
+      // a player who starts turning the board is not waiting for the intro.
+      orbit(dYaw) { cancelFly(); yaw = (((yaw + dYaw) % TAU) + TAU) % TAU; },
+      setYaw(y) { cancelFly(); yaw = ((y % TAU) + TAU) % TAU; },
       getYaw() { return yaw; },
-      zoomBy(f) { zoom = clamp(zoom * f, ZMIN, ZMAX); },
-      setZoom(z) { zoom = clamp(z, ZMIN, ZMAX); },
+      zoomBy(f) { cancelFly(); zoom = clamp(zoom * f, ZMIN, ZMAX); },
+      setZoom(z) { cancelFly(); zoom = clamp(z, ZMIN, ZMAX); },
       getZoom() { return zoom; },
+      // The match-start camera move, from the game's current yaw/zoom (so
+      // call it after the board has been turned to face home). The clock is
+      // frame.now of the first frame after the call. Skipped for people who
+      // ask their system for reduced motion. Returns whether it started.
+      flyIn() {
+        try {
+          if (typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
+        } catch (e) { /* no matchMedia: fly */ }
+        fly = { t0: -1, k: 1 };
+        return true;
+      },
+      flying() { return !!fly; },
       onFailure(cb) { if (typeof cb === "function") failCbs.push(cb); if (failed) { /* already failed: stay quiet, once only */ } },
       setQuality(q) {
         q = q === "low" ? "low" : "high";
         if (q === quality) return;
         quality = q;
+        fleetLayer.shipHigh.value = q === "high" ? 1 : 0;
         buildComposer();
+        // Glowing parts are authored differently without the composer (see
+        // hot()), so every station re-reads its colours on the next frame.
+        if (built) for (const nr of built.nodes) nr.col = "";
       },
       quality() { return quality; },
       // GPU memory counts, so a test can prove dispose() frees what the
@@ -1188,12 +1648,18 @@
         clearTimeout(lostTimer);
         glCanvas.removeEventListener("webglcontextlost", onLost, false);
         glCanvas.removeEventListener("webglcontextrestored", onRestored, false);
+        if (overlay.removeEventListener) {
+          overlay.removeEventListener("pointerdown", onTouchBoard);
+          overlay.removeEventListener("wheel", onTouchBoard);
+        }
+        fly = null;
         disposeGame();
         disposeComposer();
         for (const x of shared) { try { x.dispose(); } catch (e) { /* ignore */ } }
         shared.length = 0;
         if (bgTex) { bgTex.dispose(); bgTex = null; }
         fleetLayer.mesh.dispose();
+        if (flashLight.dispose) flashLight.dispose();
         renderer.dispose();
         // A context can only be reused on the same canvas while it is
         // alive, so it is released only when the caller says the canvas is
