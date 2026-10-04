@@ -484,8 +484,21 @@
       // congestion is in the map layout, not in the floor.
       ctx.strokeStyle = "#6f9ad6"; ctx.globalAlpha = 0.16; ctx.lineWidth = 1;
       ctx.beginPath();
-      for (const f of [0.28, 0.58, 0.88]) {
-        tracePoly(RING_FINE, W / 2, H / 2, 0, Math.min(W, H) * f * 0.5 * 1.15, 0);
+      if (game.rings) {
+        // An "orbital" map lays its stations on ellipses fitted to the
+        // board (a circle only spans the short side of a 2:1 phone board),
+        // and the floor draws exactly those, so the rings mean something.
+        for (const [rx, ry] of game.rings) {
+          for (let i = 0; i < RING_FINE.length; i++) {
+            projInto(cam, W / 2 + RING_FINE[i][0] * rx, H / 2 + RING_FINE[i][1] * ry, 0, P);
+            i ? ctx.lineTo(P.x, P.y) : ctx.moveTo(P.x, P.y);
+          }
+          ctx.closePath();
+        }
+      } else {
+        for (const f of [0.28, 0.58, 0.88]) {
+          tracePoly(RING_FINE, W / 2, H / 2, 0, Math.min(W, H) * f * 0.5 * 1.15, 0);
+        }
       }
       ctx.stroke();
       ctx.globalAlpha = 1;

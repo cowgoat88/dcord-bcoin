@@ -11,7 +11,7 @@ const O = require("./online.js");
 function pair(opts) {
   const o = opts || {};
   const link = O.loopback();
-  const hostGame = E.createGame({ seed: o.seed || 7, mapW: 1000, mapH: 640, humanFoe: true });
+  const hostGame = E.createGame({ seed: o.seed || 7, mapW: o.mapW || 1000, mapH: o.mapH || 640, humanFoe: true, layout: o.layout });
   hostGame.ai.timer = Infinity;              // no AI in an online match
   const received = [];
   const rejects = [];
@@ -23,7 +23,7 @@ function pair(opts) {
     engine: E, transport: link.b, doctrine: o.doctrine,
     onWelcome: (msg) => {
       welcome = msg;
-      guestGame = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
+      guestGame = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH, layout: msg.layout });
       guestGame.ai.timer = Infinity;
       E.applySnapshot(guestGame, msg.snapshot);
     },
@@ -47,6 +47,24 @@ test("a guest that says hello is welcomed and rebuilds the same board", () => {
   );
   assert.equal(s.host.hasGuest(), true);
   assert.equal(s.guest.seat, O.GUEST_SEAT);
+});
+
+test("the welcome carries the map layout, so a guest rebuilds the host's board", () => {
+  // Seed + size alone would build the classic map on the guest whenever
+  // the host chose another generator, and every lane and node would differ.
+  for (const layout of [undefined, "classic", "spaced", "orbital", "sectors"]) {
+    const s = pair({ layout, seed: 21, mapW: 560, mapH: 1100 });
+    assert.equal(s.welcome.layout, layout || "classic");
+    assert.equal(s.guestGame.layout, layout || "classic");
+    assert.deepEqual(s.guestGame.nodes.map((n) => [n.x, n.y, n.type, n.terrain]),
+      s.hostGame.nodes.map((n) => [n.x, n.y, n.type, n.terrain]));
+    assert.deepEqual(s.guestGame.lanes, s.hostGame.lanes);
+    assert.deepEqual(s.guestGame.rings, s.hostGame.rings);
+  }
+  // A host that predates layouts sends none: the guest must fall back to classic.
+  const old = E.createGame({ seed: 21, mapW: 560, mapH: 1100 });
+  const fromOld = E.createGame({ seed: 21, mapW: 560, mapH: 1100, layout: undefined });
+  assert.deepEqual(fromOld.lanes, old.lanes);
 });
 
 test("the host's state reaches the guest verbatim", () => {

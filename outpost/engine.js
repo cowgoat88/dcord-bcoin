@@ -937,6 +937,478 @@
     return seen;
   }
 
+  // ---- alternative layouts ---------------------------------------------
+  // The owner's feedback on the shipped generator: the layout is congested --
+  // it is hard to tell which lane goes where, most of all on a phone in 3D.
+  // The balance and node variety are liked, the rings on the 3D floor are
+  // wanted, so only the PLACEMENT and the LANE CHOICE are redone here, as
+  // three candidate styles behind createGame({ layout }). "classic" is the
+  // generator above, untouched, and stays the default until the owner picks.
+  //
+  // All three share the shape of the problem: a point-symmetric board
+  // (slot k of the first half is node 2k, its 180-degree twin is node 2k+1,
+  // the Doomstar is last), slot 0 is the Command and sits at the far end of
+  // the long axis, the other six slots take the same type and terrain
+  // pools as classic. They differ in where slots go and which lanes join
+  // them. Work is done in a board frame (u along the long axis, v across,
+  // both from the centre) so one description serves a portrait phone and a
+  // landscape desktop; the first half is always u < 0, i.e. the top of a
+  // portrait board and the left of a landscape one, as classic does.
+  //
+  // Measured over 200 seeds on a 390x844 and a 1280x800 board (screen px of
+  // the flat 2D fit, phone / desktop; classic -> spaced / orbital / sectors):
+  //   lanes per map      29.6 / 29.4 -> 23.9 / 23.6   21.4 / 22.9   20.7 / 20.7
+  //   tightest stations  88 / 156    -> 110 / 204     75 / 153      90 / 160   (median per map)
+  //   lane nearest a stn 73 / 130    ->  89 / 167     62 / 129      70 / 137
+  // Crossings 0, smallest angle 28.1 -> 32-34 degrees, disconnected 0,
+  // asymmetric 0 for all. Orbital is not roomier than classic on a phone:
+  // nested ellipses leave 69 units between bands at the board's sides, so
+  // what it buys is lane readability (a spine, a ring each side, a few
+  // links between bands), not spacing. Quick ladder (80 seeds, standard v
+  // standard, Cadet..Commander, stock board): classic 98/88/44/31, spaced
+  // 100/94/53/29, orbital 98/79/28/23, sectors 100/84/36/30; no
+  // stalemates, ~150 s, rush 0% everywhere. NOT re-fitted: orbital's
+  // Captain/Commander rungs read low.
+  const LAYOUTS = ["classic", "spaced", "orbital", "sectors"];
+  function validLayout(name) { return LAYOUTS.indexOf(name) !== -1 ? name : "classic"; }
+
+  function boardFrame(W, H) {
+    const vertical = H > W;
+    const margin = Math.min(W, H) * 0.075 + 18;   // same edge margin as classic
+    const L = vertical ? H : W, S = vertical ? W : H;
+    return {
+      W, H, vertical, L, S, margin,
+      Hu: L / 2 - margin, Hv: S / 2 - margin,     // furthest a node centre may sit
+      at: (u, v) => (vertical ? { x: W / 2 + v, y: H / 2 + u } : { x: W / 2 + u, y: H / 2 + v })
+    };
+  }
+
+  // A fresh RNG stream per attempt, so a rejected layout is retried with
+  // different dice but the same seed always walks the same attempts.
+  function attemptRng(seed, salt, attempt) {
+    return makeRng(((seed >>> 0) ^ Math.imul(salt, 0x9e3779b1)) + Math.imul(attempt + 1, 7919));
+  }
+
+  // Nodes from slots: same type / terrain pools and garrisons as classic.
+  function nodesFromSlots(seed, fr, slots) {
+    const typePool = ["factory", "mine", "relay", "factory", "mine", "factory", "relay"];
+    const terrainPool = ["open", "asteroid", "open", "well", "open", "asteroid", "well"];
+    const nodes = [];
+    slots.forEach((s, i) => {
+      const p = fr.at(s.u, s.v), q = fr.at(-s.u, -s.v);
+      const type = i === 0 ? "command" : typePool[(i * 3 + seed) % typePool.length];
+      const terrain = FLAT_TYPES.indexOf(type) !== -1
+        ? "open" : terrainPool[(i * 5 + seed * 3) % terrainPool.length];
+      nodes.push({ id: nodes.length, x: p.x, y: p.y, type, terrain, owner: NEUTRAL, garrison: 0, level: 0 });
+      nodes.push({ id: nodes.length, x: q.x, y: q.y, type, terrain, owner: NEUTRAL, garrison: 0, level: 0 });
+    });
+    for (const n of nodes) {
+      if (n.type === "command") {
+        n.owner = (fr.vertical ? n.y < fr.H / 2 : n.x < fr.W / 2) ? PLAYER : ENEMY;
+        n.garrison = 30;
+      } else {
+        n.garrison = n.type === "factory" ? 20 : n.type === "mine" ? 16 : 11;
+      }
+    }
+    nodes.push({
+      id: nodes.length, x: fr.W / 2, y: fr.H / 2, type: "doomstar", terrain: "open",
+      owner: NEUTRAL, garrison: DOOM_GARRISON, level: 0
+    });
+    return nodes;
+  }
+
+  // Smallest centre-to-centre distance in the full symmetric set (slots,
+  // their twins and the Doomstar), in map units.
+  function minSeparation(slots) {
+    const all = [{ u: 0, v: 0 }];
+    for (const s of slots) { all.push(s, { u: -s.u, v: -s.v }); }
+    let m = Infinity;
+    for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+      m = Math.min(m, Math.hypot(all[i].u - all[j].u, all[i].v - all[j].v));
+    }
+    return m;
+  }
+
+  // Planar lane layer shared by the three styles. Same rules as buildLanes
+  // (lanes in mirror pairs, no crossings, a minimum angle at every node,
+  // clearance from foreign nodes, a gap between unrelated lanes) but fed an
+  // explicit, ordered candidate list instead of "nearest neighbours", with a
+  // degree cap and a minimum length so stations never crowd.
+  //   groups: [{ pairs: [[i, j], ...], cap? }]  in priority order; cap bounds
+  //           how many lanes that group may add
+  //   o:      { minLen, maxDeg, angle, clearance, gap }
+  function layLanes(nodes, groups, o) {
+    const n = nodes.length, P = nodes;
+    const minLen = o.minLen || 0, maxDeg = o.maxDeg || 6;
+    const ang = o.angle || LANE_MIN_ANGLE, clr = o.clearance === undefined ? LANE_CLEARANCE : o.clearance;
+    const gap = o.gap === undefined ? LANE_GAP : o.gap;
+    const twinOf = (i) => (i === n - 1 ? i : i ^ 1);
+    const radius = nodes.map((m) => NODE_TYPES[m.type].radius);
+    const lanes = [], deg = new Array(n).fill(0), have = new Set();
+    const key = (a, b) => (a < b ? a * n + b : b * n + a);
+
+    const segPt = (a, b, p) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const t = l2 ? clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, 0, 1) : 0;
+      return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+    };
+    const orient = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const crosses = (a, b, c, d) =>
+      orient(a, b, c) * orient(a, b, d) < 0 && orient(c, d, a) * orient(c, d, b) < 0;
+    const segGap = (a, b, c, d) => crosses(a, b, c, d) ? 0
+      : Math.min(segPt(a, b, c), segPt(a, b, d), segPt(c, d, a), segPt(c, d, b));
+    const angleAt = (v, a, b) => {
+      let d = Math.abs(Math.atan2(P[a].y - P[v].y, P[a].x - P[v].x) - Math.atan2(P[b].y - P[v].y, P[b].x - P[v].x));
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      return d;
+    };
+
+    // relax: 0 = every rule, 1 = half angle / clearance / gap and no degree
+    // cap or minimum length, 2 = only "do not cross", 3 = anything.
+    function fits(a, b, pending, relax) {
+      if (relax >= 3) return true;
+      const k = relax >= 1 ? 0.5 : 1;
+      if (relax === 0) {
+        if (deg[a] >= maxDeg || deg[b] >= maxDeg) return false;
+        if (dist(P[a], P[b]) < minLen) return false;
+      }
+      if (relax <= 1) {
+        for (let m = 0; m < n; m++) {
+          if (m === a || m === b) continue;
+          if (segPt(P[a], P[b], P[m]) < radius[m] + clr * k) return false;
+        }
+      }
+      for (const [c, d] of lanes.concat(pending)) {
+        const shared = c === a || c === b || d === a || d === b;
+        if (shared) {
+          if (relax >= 2) continue;
+          const v = (c === a || d === a) ? a : b;
+          const x = v === a ? b : a, y = c === v ? d : c;
+          if (x === y) return false;
+          if (angleAt(v, x, y) < ang * k) return false;
+        } else if (relax >= 2 ? crosses(P[a], P[b], P[c], P[d])
+                              : segGap(P[a], P[b], P[c], P[d]) < gap * k) return false;
+      }
+      return true;
+    }
+    function tryAdd(a, b, relax) {
+      const ma = twinOf(a), mb = twinOf(b);
+      const self = (ma === a && mb === b) || (ma === b && mb === a);
+      const mirror = self ? null : [ma, mb];
+      if (a === b || have.has(key(a, b))) return 0;
+      if (mirror && have.has(key(mirror[0], mirror[1]))) return 0;
+      if (!fits(a, b, [], relax)) return 0;
+      if (mirror && !fits(mirror[0], mirror[1], [[a, b]], relax)) return 0;
+      const pairs = mirror ? [[a, b], mirror] : [[a, b]];
+      for (const [p, q] of pairs) { lanes.push([p, q]); have.add(key(p, q)); deg[p]++; deg[q]++; }
+      return pairs.length;
+    }
+
+    for (const g of groups) {
+      let taken = 0;
+      for (const [a, b] of g.pairs) {
+        if (g.cap !== undefined && taken >= g.cap) break;
+        taken += tryAdd(a, b, 0);
+      }
+    }
+
+    // Connectivity, loosening one rule at a time only if nothing clean
+    // joins the pieces (the same ladder as buildLanes).
+    for (let guard = 0; guard < 200; guard++) {
+      const seen = componentFrom(nodes, lanes.map(([a, b]) => ({ a, b })), 0);
+      if (seen.size === n) break;
+      let done = false;
+      for (let relax = 0; relax <= 3 && !done; relax++) {
+        const pairs = [];
+        for (let i = 0; i < n; i++) {
+          if (!seen.has(i)) continue;
+          for (let j = 0; j < n; j++) if (!seen.has(j)) pairs.push([i, j, dist(P[i], P[j])]);
+        }
+        pairs.sort((p, q) => p[2] - q[2] || p[0] - q[0] || p[1] - q[1]);
+        for (const [a, b] of pairs) if (tryAdd(a, b, relax)) { done = true; break; }
+      }
+      if (!done) break;
+    }
+    return lanes.map(([a, b]) => ({
+      a: Math.min(a, b), b: Math.max(a, b), length: dist(nodes[a], nodes[b])
+    }));
+  }
+
+  function pairsByLength(nodes, test) {
+    const out = [];
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const d = dist(nodes[i], nodes[j]);
+      if (!test || test(i, j, d)) out.push([i, j, d]);
+    }
+    return out.sort((p, q) => p[2] - q[2] || p[0] - q[0] || p[1] - q[1]).map((p) => [p[0], p[1]]);
+  }
+
+  // Legibility score of a built layout in map units, bigger is better: the
+  // tightest of the node-to-node gap, the shortest lane and the closest a
+  // lane passes to a node that is not one of its ends (weighted 1.2, because
+  // a lane grazing a station is read as a link to it more readily than two
+  // stations are confused for one). It is the quantity the owner's
+  // "congestion" complaint is about, so each style searches for layouts that
+  // maximise it instead of hoping its construction happens to be roomy.
+  function layoutScore(nodes, lanes) {
+    let m = Infinity;
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) m = Math.min(m, dist(nodes[i], nodes[j]));
+    for (const l of lanes) {
+      const a = nodes[l.a], b = nodes[l.b];
+      m = Math.min(m, l.length);
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      for (const q of nodes) {
+        if (q.id === l.a || q.id === l.b) continue;
+        const t = l2 ? clamp(((q.x - a.x) * dx + (q.y - a.y) * dy) / l2, 0, 1) : 0;
+        m = Math.min(m, 1.2 * Math.hypot(a.x + t * dx - q.x, a.y + t * dy - q.y));
+      }
+    }
+    return m;
+  }
+
+  // A layout that came out with few lanes, or a station hanging off a single
+  // lane, is worse to play even when its spacing is good: every position
+  // should have at least two ways in. Searches multiply their score by this.
+  function shapeFactor(nodes, lanes) {
+    const deg = new Array(nodes.length).fill(0);
+    for (const l of lanes) { deg[l.a]++; deg[l.b]++; }
+    return (lanes.length >= 20 ? 1 : 0.7) * (Math.min(...deg) >= 2 ? 1 : 0.75);
+  }
+
+  // ---- A: spaced ---------------------------------------------------------
+  // Classic made roomier. Seven free points per half are pushed apart by
+  // repulsion against EVERY other point in the symmetric set (their own twins
+  // and the Doomstar included), which is what classic's half-board relaxation
+  // missed: it spaced a half against itself, so a point near the middle sat
+  // two or three lane-lengths from its own twin on one side and half of one
+  // on the other. The Command is pinned to the far end of the long axis.
+  // Lanes: no lane shorter than MIN_LEN_FRAC of the packing spacing, degree
+  // cap 4, wider angle / clearance / gap than classic, and a range cap so
+  // the lanes that survive are the short sensible ones rather than a web.
+  function spacedMap(seed, fr) {
+    const { Hu, Hv } = fr;
+    const area = 4 * Hu * Hv;
+    const hex = Math.sqrt(2 * area / (Math.sqrt(3) * 15));   // best possible spacing of 15 points
+    let best = null;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const rng = attemptRng(seed, 1, attempt);
+      const slots = [{ u: -Hu, v: (rng() - 0.5) * Hv * 0.6 }];
+      for (let i = 0; i < 6; i++) slots.push({ u: -(0.04 + rng() * 0.92) * Hu, v: (rng() * 2 - 1) * Hv });
+      const R = hex * 1.25;
+      for (let iter = 0; iter < 16; iter++) {
+        const step = 0.35 * (1 - iter / 24);
+        for (let i = 1; i < slots.length; i++) {
+          const p = slots[i];
+          let fu = 0, fv = 0;
+          const push = (qu, qv) => {
+            const du = p.u - qu, dv = p.v - qv, d = Math.hypot(du, dv);
+            if (d >= R || d < 1e-6) return;
+            const w = (R - d) / R;
+            fu += du / d * w * hex; fv += dv / d * w * hex;
+          };
+          push(0, 0);
+          for (let j = 0; j < slots.length; j++) {
+            if (j !== i) push(slots[j].u, slots[j].v);
+            push(-slots[j].u, -slots[j].v);
+          }
+          p.u = clamp(p.u + fu * step, -Hu * 0.98, -Hu * 0.03);
+          p.v = clamp(p.v + fv * step, -Hv, Hv);
+        }
+      }
+      const sep = minSeparation(slots);
+      const nodes = nodesFromSlots(seed, fr, slots);
+      const lanes = spacedLanes(nodes, sep);
+      const score = Math.min(sep, layoutScore(nodes, lanes)) * shapeFactor(nodes, lanes);
+      if (!best || score > best.score) best = { nodes, lanes, score };
+      if (score >= hex * 0.66) break;
+    }
+    return best;
+  }
+
+  function spacedLanes(nodes, sep) {
+    const minLen = sep * 0.95;
+    const range = sep * 1.75;
+    return layLanes(nodes, [{ pairs: pairsByLength(nodes, (i, j, d) => d >= minLen && d <= range) }], {
+      minLen, maxDeg: 4, angle: 34 * Math.PI / 180, clearance: 30, gap: 36
+    });
+  }
+
+  // ---- B: orbital --------------------------------------------------------
+  // Bands around the Doomstar that ARE the 3D floor's range rings. The floor
+  // draws three circles at 0.28 / 0.58 / 0.88 of the board's shorter side;
+  // on a 2:1 phone board a circle only spans the short side, so nodes laid
+  // on circles would huddle in a square in the middle and leave both ends
+  // of the board empty. The rings here keep the owner's proportions
+  // (0.32 / 0.66 / 1.0 of the outer one) but are ellipses fitted to the board,
+  // and the floor draws exactly these (game.rings) for an orbital map.
+  //   outer  : both Commands at the poles, plus two home positions per side
+  //   middle : three per side, the contested ground
+  //   inner  : one per side, beside the Doomstar
+  // Lanes run along a ring between neighbours; only a few cross between
+  // bands, which is what makes the rings readable as rings.
+  const ORBITAL_RHO = [1.0, 0.62, 0.30];
+  const ORBITAL_BAND = [0, 0, 0, 0, 1, 1, 2];     // band of each slot
+  function orbitalMap(seed, fr) {
+    const { Hu, Hv } = fr;
+    const place = (rho, t) => ({ u: rho * Hu * Math.cos(t), v: rho * Hv * Math.sin(t) });
+    const deg = Math.PI / 180;
+    // Each slot's angle may wander inside a window (degrees round the
+    // ellipse; the half is the arc 90..270 and its twins fill the other).
+    const win = [
+      [180 - 3, 180 + 3],      // Command, at the pole
+      [116, 158],              // outer: a home position beside the Command
+      [202, 244],              // outer: the other
+      [88, 106],               // outer: the equator, one side (its twin takes the other)
+      [108, 176], [184, 252],  // middle: one each side of the spine
+      [160, 200]               // inner, on the spine
+    ];
+    const rng = attemptRng(seed, 2, 0);
+    const build = (c) => c.ts.map((t, i) => place(ORBITAL_RHO[ORBITAL_BAND[i]] * (1 + c.js[i]), t * deg));
+    const sample = () => ({
+      ts: win.map(([a, b]) => a + rng() * (b - a)),
+      js: win.map((_, i) => (i === 0 ? 0 : (rng() - 0.5) * 0.05))
+    });
+    // The layout is searched, not constructed: draw angle sets, build the
+    // lanes each would get, keep the one with the best legibility score,
+    // then nudge it. Random draws keep every seed different; the score is
+    // what stops a lane cutting through a station of another band.
+    const evalc = (c) => {
+      const nodes = nodesFromSlots(seed, fr, build(c));
+      const lanes = orbitalLanes(nodes, c.ts, minSeparation(build(c)));
+      const sc = layoutScore(nodes, lanes) * shapeFactor(nodes, lanes);
+      return { c, nodes, lanes, score: sc };
+    };
+    let best = null;
+    for (let k = 0; k < 140; k++) {
+      const e = evalc(sample());
+      if (!best || e.score > best.score) best = e;
+    }
+    for (let k = 0; k < 110; k++) {
+      const c = {
+        ts: best.c.ts.map((t, i) => clamp(t + (rng() - 0.5) * 10, win[i][0], win[i][1])),
+        js: best.c.js.map((j, i) => (i === 0 ? 0 : clamp(j + (rng() - 0.5) * 0.02, -0.03, 0.03)))
+      };
+      const e = evalc(c);
+      if (e.score > best.score) best = e;
+    }
+    best.rings = ORBITAL_RHO.map((r) => (fr.vertical ? [r * Hv, r * Hu] : [r * Hu, r * Hv]));
+    return best;
+  }
+
+  function orbitalLanes(nodes, ts, sep) {
+    const n = nodes.length, D = n - 1;
+    // Angle of every node round the centre (a twin is half a turn on) and
+    // its band.
+    const ang = [], band = [];
+    for (let k = 0; k < ts.length; k++) {
+      ang[2 * k] = ts[k]; ang[2 * k + 1] = (ts[k] + 180) % 360;
+      band[2 * k] = band[2 * k + 1] = ORBITAL_BAND[k];
+    }
+    const ring = (b) => {
+      const ids = [];
+      for (let i = 0; i < D; i++) if (band[i] === b) ids.push(i);
+      ids.sort((p, q) => ang[p] - ang[q]);
+      const pairs = [];
+      for (let i = 0; i < ids.length; i++) {
+        const a = ids[i], c = ids[(i + 1) % ids.length];
+        if (ids.length > 2 || i === 0) pairs.push([a, c]);
+      }
+      return pairs;
+    };
+    const byLen = (arr) => arr.map(([a, b]) => [a, b, dist(nodes[a], nodes[b])])
+      .sort((p, q) => p[2] - q[2] || p[0] - q[0] || p[1] - q[1]).map((p) => [p[0], p[1]]);
+    // Between bands: each node's nearest two on the next band in.
+    const radial = (outer, inner) => {
+      const pairs = [];
+      for (let i = 0; i < D; i++) {
+        if (band[i] !== outer) continue;
+        const near = [];
+        for (let j = 0; j < D; j++) if (band[j] === inner) near.push([j, dist(nodes[i], nodes[j])]);
+        near.sort((p, q) => p[1] - q[1]);
+        for (const [j] of near.slice(0, 2)) pairs.push([i, j]);
+      }
+      return byLen(pairs);
+    };
+    const spokes = [];
+    for (let i = 0; i < D; i++) if (band[i] === 2) spokes.push([i, D]);
+    const groups = [
+      { pairs: byLen(ring(0).concat(ring(1))) },
+      { pairs: spokes },
+      { pairs: radial(0, 1), cap: 6 },
+      { pairs: radial(1, 2), cap: 4 },
+      { pairs: byLen(radial(1, 2).concat(radial(0, 1))), cap: 4 }
+    ];
+    return layLanes(nodes, groups, {
+      minLen: sep * 0.9, maxDeg: 4, angle: 34 * Math.PI / 180, clearance: 26, gap: 30
+    });
+  }
+
+  // ---- C: sectors --------------------------------------------------------
+  // A board that reads as places. Each end is a home cluster (the Command,
+  // one gate node dead ahead of it, two flank posts beside it); three
+  // corridors run base to base -- the left edge, the right edge, and the
+  // spine through the Doomstar's plaza -- with a handful of cross-links where
+  // a flank meets the plaza. Point symmetry makes the left corridor of one
+  // half the right corridor of the other, so each flank is one road from
+  // Command to Command, crossing the equator exactly once. Three crossings
+  // of the equator in all, which is what a chokepoint is.
+  //   slot: 0 Command, 1 gate, 2 plaza, 3/4 home flanks, 5/6 mid flanks
+  function sectorsMap(seed, fr) {
+    const { Hu, Hv } = fr;
+    let best = null;
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const rng = attemptRng(seed, 3, attempt);
+      const j = (a) => (rng() - 0.5) * 2 * a;
+      const flip = rng() < 0.5 ? -1 : 1;
+      // The spine is Command, gate, plaza, Doomstar: three equal gaps of a
+      // third of the half-length, the most room four stations in a line
+      // can have. The flank posts sit level with the gate and the plaza.
+      const slots = [
+        { u: -Hu, v: j(0.12) * Hv },
+        { u: -(0.66 + j(0.03)) * Hu, v: j(0.10) * Hv },
+        { u: -(0.33 + j(0.03)) * Hu, v: j(0.10) * Hv },
+        { u: -(0.66 + j(0.04)) * Hu, v: -(0.80 + j(0.05)) * Hv * flip },
+        { u: -(0.62 + j(0.04)) * Hu, v: (0.80 + j(0.05)) * Hv * flip },
+        { u: -(0.30 + j(0.04)) * Hu, v: -(0.84 + j(0.05)) * Hv * flip },
+        { u: -(0.36 + j(0.04)) * Hu, v: (0.84 + j(0.05)) * Hv * flip }
+      ];
+      const nodes = nodesFromSlots(seed, fr, slots);
+      // Node ids: slot k -> 2k, twin 2k+1; Doomstar last.
+      const C = 0, G = 2, PA = 4, TL1 = 6, TR1 = 8, TL2 = 10, TR2 = 12, D = 14;
+      const tw = (i) => i ^ 1;
+      // The skeleton: home fan, the spine, each flank post to post, and the
+      // two equator crossings along the edges (the left post of one half to
+      // the twin of the other half's right post, which lies on the same
+      // side of the board). Then ONE rung from a flank to the spine near
+      // home, ONE at the plaza, and half the time a plaza spoke from the
+      // Doomstar: few rungs is the point, since every extra rung turns a
+      // corridor into a ladder and the three roads stop being three.
+      const must = [[C, G], [C, TL1], [C, TR1], [G, PA], [PA, D], [TL1, TL2], [TR1, TR2],
+        [TL2, tw(TR2)], [TR2, tw(TL2)]];
+      const rungs = [rng() < 0.5 ? [TL1, G] : [TR1, G], rng() < 0.5 ? [TL2, PA] : [TR2, PA]];
+      if (rng() < 0.5) rungs.push(rng() < 0.5 ? [D, TL2] : [D, TR2]);
+      const lanes = layLanes(nodes, [
+        { pairs: must },
+        { pairs: rungs }
+      ], { minLen: 0, maxDeg: 5, angle: 32 * Math.PI / 180, clearance: 24, gap: 30 });
+      const score = layoutScore(nodes, lanes) * shapeFactor(nodes, lanes);
+      if (!best || score > best.score) best = { nodes, lanes, score };
+      if (score >= Math.min(Hu, Hv) * 0.62) break;
+    }
+    return best;
+  }
+
+  // One entry point for the three: returns { nodes, lanes, mapW, mapH, rings? }.
+  function generateLayout(layout, seed, mapW, mapH) {
+    const W = mapW || MAP_W, H = mapH || MAP_H;
+    const fr = boardFrame(W, H);
+    const built = layout === "spaced" ? spacedMap(seed, fr)
+      : layout === "orbital" ? orbitalMap(seed, fr) : sectorsMap(seed, fr);
+    const out = { nodes: built.nodes, lanes: built.lanes, mapW: W, mapH: H };
+    if (built.rings) out.rings = built.rings;
+    return out;
+  }
+
   // ---- game construction ---------------------------------------------
   // ---- opponent posture ------------------------------------------------
   // A mission can ask the opponent to hold ground rather than conquer.
@@ -997,9 +1469,15 @@
   function createGame(opts) {
     const o = opts || {};
     const seed = (o.seed === undefined ? 12345 : o.seed) >>> 0;
-    const { nodes, lanes, mapW, mapH } = o.map
+    // `layout` picks the skirmish generator: "classic" (the default and what
+    // every earlier build shipped) or one of the candidate styles. A mission
+    // brings its own board and ignores it.
+    const layout = o.map ? "classic" : validLayout(o.layout);
+    const { nodes, lanes, mapW, mapH, rings } = o.map
       ? buildMap(o.map)
-      : generateMap(seed, o.nodeCount || 14, o.mapW, o.mapH);
+      : layout === "classic"
+        ? generateMap(seed, o.nodeCount || 14, o.mapW, o.mapH)
+        : generateLayout(layout, seed, o.mapW, o.mapH);
 
     const adjacency = new Map(nodes.map((n) => [n.id, []]));
     for (const l of lanes) { adjacency.get(l.a).push(l.b); adjacency.get(l.b).push(l.a); }
@@ -1021,6 +1499,12 @@
       seed,
       rng,
       mapW, mapH,
+      // Which generator built the board. The online host sends it in the
+      // welcome so the guest rebuilds the same one from the seed.
+      layout,
+      // Ring ellipses [rx, ry] the 3D floor should draw for this board, or
+      // undefined for the stock circles.
+      rings,
       nodes, lanes, adjacency,
       fleets: [],
       credits: { [PLAYER]: 40, [ENEMY]: 40 },
@@ -1640,7 +2124,7 @@
     DOOM_GARRISON,
     TECH, TECH_MAX, TERRAIN, FLAT_TYPES,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
-    generateMap, buildLanes, buildMap, createGame,
+    generateMap, buildLanes, buildMap, createGame, LAYOUTS, validLayout,
     OBJECTIVES, stepObjective, objectiveProgress, objectiveNodes,
     neighbors, areLinked, nodesOf, incoming, income, findPath, aiProduction,
     canTransit, computeSupply, supplyMultiplier, OUT_OF_SUPPLY_RATE,

@@ -700,6 +700,16 @@
   // fixed-shape map. A fixed 1000x640 map squeezed into a portrait phone
   // left the playfield in a thin band with most of the screen empty and
   // the nodes too small to tap.
+  // Candidate map generators for the owner to try: ?layout=spaced|orbital|
+  // sectors. Anything else (or nothing) is the classic generator. The host
+  // sends the choice in the online welcome, so a guest never needs the URL.
+  const LAYOUT = (() => {
+    try {
+      const m = /[?&]layout=([a-z]+)/.exec(location.search);
+      return m && E.LAYOUTS.indexOf(m[1]) !== -1 ? m[1] : "classic";
+    } catch (e) { return "classic"; }
+  })();
+
   function boardShape() {
     const wrap = document.getElementById("boardWrap");
     const w = Math.max(240, wrap.clientWidth), h = Math.max(240, wrap.clientHeight);
@@ -831,6 +841,7 @@
       ? E.createGame(CAMPAIGN.optionsFor(mission))
       : E.createGame({
           seed: s, difficulty: difficulty, mapW: shape.mapW, mapH: shape.mapH,
+          layout: LAYOUT,
           doctrine: doctrine,
           // Ascension is a solo ladder; an online match is two people's
           // doctrines and nothing else.
@@ -1906,7 +1917,7 @@
       onWelcome: (msg) => {
         // Rebuild the identical board from the seed the host sent, then
         // take its state. No geometry crosses the wire.
-        game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
+        game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH, layout: msg.layout });
         game.humanFoe = true; game.ai.timer = Infinity;
         applyWelcomeDoctrines(msg);
         E.applySnapshot(game, msg.snapshot);
@@ -1970,7 +1981,7 @@
       session = window.OutpostOnline.createGuest({
         engine: E, transport: link.transport, doctrine: doctrine,
         onWelcome: (msg) => {
-          game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH });
+          game = E.createGame({ seed: msg.seed, mapW: msg.mapW, mapH: msg.mapH, layout: msg.layout });
           game.humanFoe = true; game.ai.timer = Infinity;
           applyWelcomeDoctrines(msg);
           E.applySnapshot(game, msg.snapshot);

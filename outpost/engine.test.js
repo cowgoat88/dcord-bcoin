@@ -1725,3 +1725,160 @@ test("a defender does not drain its own fortifications to shuffle units", () => 
   assert.ok(g.nodes[1].garrison >= wall, "the wall must not shrink, got " + g.nodes[1].garrison);
   assert.ok(g.nodes[2].garrison >= home, "nor the keep behind it");
 });
+
+// ---------------------------------------------------------------------
+// Candidate map layouts (spaced / orbital / sectors)
+// ---------------------------------------------------------------------
+// Shapes boardShape() produces: a 390x844 phone, a 1280x800 desktop, the
+// stock board, a squarer tablet and the flatter boards a toolbar leaves.
+const AREA = E.MAP_W * E.MAP_H;
+const SHAPES = [0.4625, 0.58, 1, 1.6, 1.9, 2.4].map((a) => [Math.sqrt(AREA * a), Math.sqrt(AREA / a)])
+  .concat([[1000, 640]]);
+
+function fnv(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16);
+}
+
+test("classic maps are byte-identical to the generator before layouts existed", () => {
+  // Hash of nodes + lanes for seeds 1-40 on three shapes, taken from the
+  // build before `layout` was added. Any drift here changes every ladder,
+  // doctrine and mission figure that was measured on classic boards.
+  let s = "";
+  for (const [W, H] of [[1000, 640], [544.4, 1175.5], [1012.0, 632.5]]) {
+    for (let seed = 1; seed <= 40; seed++) {
+      const g = E.createGame({ seed, mapW: W, mapH: H });
+      s += JSON.stringify([g.nodes, g.lanes, g.mapW, g.mapH]);
+    }
+  }
+  assert.equal(fnv(s), "99d3329c");
+  // Naming it, or naming something unknown, is the same board.
+  const a = E.createGame({ seed: 9, mapW: 700, mapH: 800 });
+  const b = E.createGame({ seed: 9, mapW: 700, mapH: 800, layout: "classic" });
+  const c = E.createGame({ seed: 9, mapW: 700, mapH: 800, layout: "nonsense" });
+  assert.deepEqual(b.nodes, a.nodes); assert.deepEqual(b.lanes, a.lanes);
+  assert.deepEqual(c.nodes, a.nodes); assert.equal(c.layout, "classic");
+});
+
+for (const layout of ["spaced", "orbital", "sectors"]) {
+  test(layout + " layout: planar, symmetric, connected, clear of crowding, fair (30 seeds x every shape)", () => {
+    const ang = (nodes, v, a, b) => {
+      let d = Math.abs(Math.atan2(nodes[a].y - nodes[v].y, nodes[a].x - nodes[v].x) -
+        Math.atan2(nodes[b].y - nodes[v].y, nodes[b].x - nodes[v].x));
+      return (d > Math.PI ? 2 * Math.PI - d : d) * 180 / Math.PI;
+    };
+    const orient = (a, b, c) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    const segPt = (a, b, p) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+      return Math.hypot(a.x + t * dx - p.x, a.y + t * dy - p.y);
+    };
+    const bfs = (n, lanes, s) => {
+      const d = new Array(n).fill(-1); d[s] = 0; const q = [s];
+      for (let i = 0; i < q.length; i++) for (const l of lanes) {
+        const o = l.a === q[i] ? l.b : l.b === q[i] ? l.a : -1;
+        if (o >= 0 && d[o] < 0) { d[o] = d[q[i]] + 1; q.push(o); }
+      }
+      return d;
+    };
+    for (const [W, H] of SHAPES) {
+      for (let seed = 1; seed <= 30; seed++) {
+        const tag = layout + " seed " + seed + " " + Math.round(W) + "x" + Math.round(H);
+        const g = E.createGame({ seed, mapW: W, mapH: H, layout });
+        const { nodes, lanes } = g, n = nodes.length;
+        assert.equal(g.layout, layout);
+        assert.equal(n, 15, tag + ": 14 nodes and the Doomstar");
+        assert.equal(nodes[n - 1].type, "doomstar", tag);
+        assert.ok(Math.abs(nodes[n - 1].x - W / 2) < 1e-9 && Math.abs(nodes[n - 1].y - H / 2) < 1e-9, tag + ": Doomstar dead centre");
+        // Point symmetry: 2k and 2k+1 are 180-degree twins with identical ground.
+        for (let i = 0; i < n - 1; i += 2) {
+          const a = nodes[i], b = nodes[i + 1];
+          assert.ok(Math.abs(a.x + b.x - W) < 1e-6 && Math.abs(a.y + b.y - H) < 1e-6, tag + ": twins mirror");
+          assert.equal(a.type, b.type, tag); assert.equal(a.terrain, b.terrain, tag);
+        }
+        for (const nd of nodes) {
+          assert.ok(nd.x >= 0 && nd.x <= W && nd.y >= 0 && nd.y <= H, tag + ": inside the board");
+        }
+        // Type mix: two Commands, the same pool classic draws from.
+        const count = (t) => nodes.filter((m) => m.type === t).length;
+        assert.equal(count("command"), 2, tag);
+        assert.equal(count("factory") + count("mine") + count("relay"), 12, tag);
+        // Commands: open ground, one each, as far apart as the long axis allows.
+        const cmds = nodes.filter((m) => m.type === "command");
+        assert.ok(cmds.every((m) => m.terrain === "open"), tag + ": Commands in the open");
+        assert.deepEqual(cmds.map((m) => m.owner).sort(), [PLAYER, ENEMY], tag);
+        const longAxis = Math.max(W, H), margin = Math.min(W, H) * 0.075 + 18;
+        assert.ok(E.dist(cmds[0], cmds[1]) >= longAxis - 2 * margin - 2, tag + ": Commands at the far ends");
+        // Lanes: planar...
+        for (let i = 0; i < lanes.length; i++) for (let j = i + 1; j < lanes.length; j++) {
+          const p = lanes[i], q = lanes[j];
+          if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
+          const A = nodes[p.a], B = nodes[p.b], C = nodes[q.a], D = nodes[q.b];
+          assert.ok(!(orient(A, B, C) * orient(A, B, D) < 0 && orient(C, D, A) * orient(C, D, B) < 0),
+            tag + ": lanes " + i + " and " + j + " cross");
+        }
+        // ...at least 28 degrees apart at every node...
+        for (let v = 0; v < n; v++) {
+          const nb = lanes.filter((l) => l.a === v || l.b === v).map((l) => (l.a === v ? l.b : l.a));
+          for (let i = 0; i < nb.length; i++) for (let j = i + 1; j < nb.length; j++) {
+            assert.ok(ang(nodes, v, nb[i], nb[j]) >= 28 - 1e-6, tag + ": angle at node " + v);
+          }
+        }
+        // ...clear of foreign nodes' bodies...
+        for (const l of lanes) for (const m of nodes) {
+          if (m.id === l.a || m.id === l.b) continue;
+          assert.ok(segPt(nodes[l.a], nodes[l.b], m) >= E.NODE_TYPES[m.type].radius + 9, tag + ": lane grazes node " + m.id);
+        }
+        // ...mirrored...
+        const keys = new Set(lanes.map((l) => Math.min(l.a, l.b) + ":" + Math.max(l.a, l.b)));
+        const mir = (id) => (id === n - 1 ? id : id ^ 1);
+        for (const l of lanes) {
+          const a = mir(l.a), b = mir(l.b);
+          assert.ok(keys.has(Math.min(a, b) + ":" + Math.max(a, b)), tag + ": lane has no mirror");
+        }
+        // ...and connected, with the Doomstar the same number of hops from both Commands.
+        const d0 = bfs(n, lanes, cmds[0].id), d1 = bfs(n, lanes, cmds[1].id);
+        assert.ok(d0.every((x) => x >= 0), tag + ": connected");
+        assert.equal(d0[n - 1], d1[n - 1], tag + ": Doomstar equidistant");
+      }
+    }
+  });
+
+  test(layout + " layout is deterministic from the seed and differs between seeds", () => {
+    const a = E.createGame({ seed: 77, mapW: 600, mapH: 900, layout });
+    const b = E.createGame({ seed: 77, mapW: 600, mapH: 900, layout });
+    assert.deepEqual(a.nodes, b.nodes); assert.deepEqual(a.lanes, b.lanes);
+    const c = E.createGame({ seed: 78, mapW: 600, mapH: 900, layout });
+    assert.notDeepEqual(c.nodes.map((m) => [m.x, m.y]), a.nodes.map((m) => [m.x, m.y]));
+  });
+
+  test(layout + " layout keeps no more lanes than classic and plays to a finish", () => {
+    let lanes = 0, classic = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      lanes += E.createGame({ seed, layout }).lanes.length;
+      classic += E.createGame({ seed }).lanes.length;
+    }
+    assert.ok(lanes <= classic, layout + " must not add connections: " + lanes + " vs " + classic);
+    const g = E.createGame({ seed: 5, layout, difficulty: 2 });
+    run(g, 60);
+    assert.ok(g.nodes.some((m) => m.owner === ENEMY), "the opponent must be able to act on this board");
+  });
+}
+
+test("only an orbital map carries rings for the 3D floor, and the stations sit on them", () => {
+  assert.equal(E.createGame({ seed: 3, layout: "spaced" }).rings, undefined);
+  assert.equal(E.createGame({ seed: 3 }).rings, undefined);
+  for (const [W, H] of SHAPES) {
+    const g = E.createGame({ seed: 4, mapW: W, mapH: H, layout: "orbital" });
+    assert.equal(g.rings.length, 3);
+    // Every station is within 6% of a ring (the middle ring may have none
+    // on it), so the rings on the floor are the bands the layout used.
+    for (const nd of g.nodes) {
+      if (nd.type === "doomstar") continue;
+      const best = Math.min(...g.rings.map(([rx, ry]) =>
+        Math.abs(Math.hypot((nd.x - W / 2) / rx, (nd.y - H / 2) / ry) - 1)));
+      assert.ok(best < 0.06, "station " + nd.id + " is " + best.toFixed(3) + " off the nearest ring");
+    }
+  }
+});

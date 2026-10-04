@@ -58,11 +58,14 @@
         type: "welcome",
         token: token,
         seat: GUEST_SEAT,
-        // The guest rebuilds the identical board from these three values
+        // The guest rebuilds the identical board from these values
         // rather than being shipped any geometry.
         seed: game.seed,
         mapW: game.mapW,
         mapH: game.mapH,
+        // Which generator built the board: seed + size alone would make
+        // the guest rebuild the classic map whenever the host chose another.
+        layout: game.layout || "classic",
         // Doctrines are fixed for the match, so they ride the welcome
         // rather than every snapshot twelve times a second.
         doctrine: { 1: E.doctrineOf(game, 1), 2: E.doctrineOf(game, 2) },
