@@ -268,6 +268,171 @@
     return p;
   })();
 
+
+  // ---- the Doomstar orb and its lock-on laser --------------------------
+  // The owner asked for the Doomstar to look like a battle station -- an
+  // orb with a superlaser dish, Death Star style -- and for its shot to
+  // hold a laser on the target for two seconds first, so the side being
+  // shot sees it coming. Both are painted in SCREEN space so every view
+  // (flat, this one, and the WebGL view's overlay) draws the same thing.
+  const LOCK_S = 2.0;      // engine.js DOOM_LOCK_S; read live when the engine is loaded
+  function lockSeconds() {
+    const E = (typeof self !== "undefined" && self.OutpostEngine) ||
+      (typeof globalThis !== "undefined" && globalThis.OutpostEngine);
+    return (E && E.DOOM_LOCK_S) || LOCK_S;
+  }
+  // 0..1 progress of the locked shot, or -1 when nothing is locked.
+  function lockProgress(game) {
+    const ds = game && game.doomShot;
+    if (!ds) return -1;
+    const L = lockSeconds();
+    return clamp(1 - ds.t / L, 0, 1);
+  }
+
+  // A metal sphere with an equatorial trench and a dish in the northern
+  // hemisphere. charge (0..1) warms the dish; lock (0..1) makes it blaze
+  // and draws the converging beams that feed the superlaser. Returns the
+  // focal point in front of the dish, where the main laser starts.
+  //
+  // The hull is baked once per size and rim colour into an offscreen
+  // canvas and the dish glow is one cached sprite, so painting the orb
+  // every frame creates no gradients (holo.test.js holds the renderer to
+  // that; on a phone, per-frame gradients are what software raster pays
+  // most for). make(w, h) supplies the canvas; without one it falls back
+  // to the DOM.
+  const orbCache = new Map();
+  function orbCanvas(w, h, make) {
+    if (make) return make(w, h);
+    if (typeof document === "undefined") return null;
+    const c = document.createElement("canvas"); c.width = w; c.height = h; return c;
+  }
+  const ORB_SS = 2;                        // bake at twice the drawn size
+  function orbHull(R, rim, make) {
+    const key = "hull|" + R + "|" + rim;
+    if (orbCache.has(key)) return orbCache.get(key);
+    const half = R + 3, S = Math.ceil(half * 2 * ORB_SS);
+    const cv = orbCanvas(S, S, make);
+    if (!cv) return null;
+    const c = cv.getContext("2d");
+    c.scale(ORB_SS, ORB_SS);
+    const x = half, y = half;
+    const body = c.createRadialGradient(x - R * 0.38, y - R * 0.42, R * 0.08, x, y, R);
+    body.addColorStop(0, "#c3ccd9"); body.addColorStop(0.5, "#5d687a"); body.addColorStop(1, "#121822");
+    c.fillStyle = body;
+    c.beginPath(); c.arc(x, y, R, 0, TAU); c.fill();
+    c.save();
+    c.beginPath(); c.arc(x, y, R, 0, TAU); c.clip();
+    c.strokeStyle = "rgba(8,12,20,.38)"; c.lineWidth = Math.max(0.6, R * 0.035);
+    for (const lat of [-0.62, -0.3, 0.32, 0.64]) {
+      const ry = Math.sqrt(1 - lat * lat) * R;
+      c.beginPath(); c.ellipse(x, y + lat * R, ry, ry * 0.16, 0, 0, Math.PI); c.stroke();
+    }
+    c.strokeStyle = "rgba(4,7,12,.85)"; c.lineWidth = Math.max(1, R * 0.11);
+    c.beginPath(); c.ellipse(x, y + R * 0.05, R, R * 0.16, 0, 0, Math.PI); c.stroke();
+    const dx = x - R * 0.36, dy = y - R * 0.34, dr = R * 0.28;
+    const dish = c.createRadialGradient(dx + dr * 0.35, dy + dr * 0.35, dr * 0.1, dx, dy, dr);
+    dish.addColorStop(0, "#7f8a9c"); dish.addColorStop(0.7, "#2a3240"); dish.addColorStop(1, "#0b1018");
+    c.fillStyle = dish; c.beginPath(); c.arc(dx, dy, dr, 0, TAU); c.fill();
+    c.strokeStyle = "rgba(0,0,0,.55)"; c.lineWidth = Math.max(0.6, R * 0.03); c.stroke();
+    c.restore();
+    c.strokeStyle = rim; c.lineWidth = Math.max(1.2, R * 0.08);
+    c.beginPath(); c.arc(x, y, R, 0, TAU); c.stroke();
+    orbCache.set(key, cv);
+    return cv;
+  }
+  function orbHeat(rim, make) {
+    const key = "heat|" + rim;
+    if (orbCache.has(key)) return orbCache.get(key);
+    const cv = orbCanvas(64, 64, make);
+    if (!cv) return null;
+    const c = cv.getContext("2d");
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)"); g.addColorStop(0.35, rim); g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g; c.fillRect(0, 0, 64, 64);
+    orbCache.set(key, cv);
+    return cv;
+  }
+  function paintOrb(c, x, y, R, rim, charge, lock, now, make) {
+    const t = (now || 0) * 0.001;
+    // Sizes snap to whole pixels so the hull cache stays small (one entry
+    // per pixel of radius the camera actually shows).
+    R = Math.max(4, Math.round(R));
+    const dx = x - R * 0.36, dy = y - R * 0.34, dr = R * 0.28;
+    const hull = orbHull(R, rim, make);
+    c.save();
+    c.globalAlpha = 1;                     // solid metal, whatever the caller left set
+    c.globalCompositeOperation = "source-over";
+    if (hull) {
+      const half = R + 3;
+      c.drawImage(hull, x - half, y - half, half * 2, half * 2);
+    } else {
+      c.fillStyle = "#5d687a"; c.beginPath(); c.arc(x, y, R, 0, TAU); c.fill();
+      c.strokeStyle = rim; c.lineWidth = Math.max(1.2, R * 0.08); c.stroke();
+    }
+    const heat = Math.max(clamp(charge, 0, 1) * 0.55, lock > 0 ? 0.55 + lock * 0.45 : 0);
+    const glow = heat > 0.02 ? orbHeat(rim, make) : null;
+    if (glow) {
+      const pulse = 0.7 + 0.3 * Math.sin(t * (lock > 0 ? 22 : 4));
+      c.globalAlpha = clamp(heat * pulse, 0, 1);
+      const gr = dr * 1.15;
+      c.drawImage(glow, dx - gr, dy - gr, gr * 2, gr * 2);
+      c.globalAlpha = 1;
+    }
+    // While locking: the tributary beams converging in front of the dish.
+    const fx = dx - dr * 1.15, fy = dy - dr * 1.15;
+    if (lock > 0) {
+      c.globalCompositeOperation = "lighter";
+      c.strokeStyle = rim; c.globalAlpha = 0.35 + 0.5 * lock;
+      c.lineWidth = Math.max(0.8, R * 0.04);
+      c.beginPath();
+      for (let k = 0; k < 8; k++) {
+        const a = k * Math.PI / 4 + t * 0.6;
+        c.moveTo(dx + Math.cos(a) * dr * 0.85, dy + Math.sin(a) * dr * 0.85); c.lineTo(fx, fy);
+      }
+      c.stroke();
+      c.globalAlpha = 0.9; c.fillStyle = "#ffffff";
+      c.beginPath(); c.arc(fx, fy, Math.max(1.5, R * (0.06 + 0.06 * lock)), 0, TAU); c.fill();
+      c.globalCompositeOperation = "source-over";
+    }
+    c.restore();
+    return { x: fx, y: fy };
+  }
+
+  // The lock-on: a laser from the dish to the target that thickens as the
+  // two seconds run out, a reticle closing in on the target, and the time
+  // left. tr is the target's on-screen radius.
+  function paintLock(c, from, to, tr, p, secondsLeft, color, now) {
+    const t = (now || 0) * 0.001;
+    const flick = 0.8 + 0.2 * Math.sin(t * 40);
+    c.save();
+    c.globalCompositeOperation = "lighter";
+    c.lineCap = "round";
+    c.strokeStyle = color; c.globalAlpha = (0.18 + 0.4 * p) * flick;
+    c.lineWidth = 3 + 9 * p;
+    c.beginPath(); c.moveTo(from.x, from.y); c.lineTo(to.x, to.y); c.stroke();
+    c.strokeStyle = "#ffffff"; c.globalAlpha = (0.45 + 0.5 * p) * flick;
+    c.lineWidth = 1 + 2 * p;
+    c.beginPath(); c.moveTo(from.x, from.y); c.lineTo(to.x, to.y); c.stroke();
+    c.globalCompositeOperation = "source-over";
+    // Reticle: four brackets closing from wide to tight as the shot nears.
+    const rr = tr + 8 + 36 * (1 - p);
+    c.globalAlpha = 0.95; c.strokeStyle = color; c.lineWidth = 2.5;
+    for (let k = 0; k < 4; k++) {
+      const a0 = t * 2.2 + k * Math.PI / 2;
+      c.beginPath(); c.arc(to.x, to.y, rr, a0, a0 + 0.7); c.stroke();
+    }
+    c.globalAlpha = 0.25 + 0.35 * p; c.fillStyle = color;
+    c.beginPath(); c.arc(to.x, to.y, tr + 4, 0, TAU); c.fill();
+    // Time left, above the reticle. Never under 11 px.
+    c.globalAlpha = 1;
+    c.font = "700 12px ui-monospace, SFMono-Regular, Menlo, monospace";
+    c.textAlign = "center"; c.textBaseline = "middle";
+    const label = "STRIKE " + Math.max(0, secondsLeft).toFixed(1) + "s";
+    c.lineWidth = 3; c.strokeStyle = "rgba(4,7,12,.9)"; c.strokeText(label, to.x, to.y - rr - 12);
+    c.fillStyle = "#ffffff"; c.fillText(label, to.x, to.y - rr - 12);
+    c.restore();
+  }
+
   // Same generator as engine.js makeRng, copied so holo.js stays
   // standalone. Render never touches Math.random: the sky is seeded.
   function makeRng(seed) {
@@ -712,7 +877,16 @@
       projInto(cam, n.x, n.y, h, Q);
       const gr = plateR * Q.scale * 2.1 + 6;
       blit(c, Q.x, Q.y, gr, n.owner === 0 ? 0.22 : 0.4);
-      plate(n, unit, c, h, plateR, rot, PLATE_THICK, 1);
+      if (doom) {
+        // The battle station: an orb riding its pylon, not a flat plate.
+        const own = n.owner, ch = own ? ((game.charge && game.charge[own]) || 0) / capDoom : 0;
+        const lp = lockProgress(game);
+        const lock = lp >= 0 && game.doomShot.owner === own ? lp : 0;
+        paintOrb(ctx, Q.x, Q.y - plateR * Q.scale * 0.35, plateR * Q.scale * 1.05,
+          own === 0 ? "#ffd166" : c, ch, lock, now, makeCanvas);
+      } else {
+        plate(n, unit, c, h, plateR, rot, PLATE_THICK, 1);
+      }
 
       // A Relay you hold shows whether it is feeding the Doomstar.
       if (n.type === "relay" && n.owner !== 0 && relayFn) {
@@ -914,6 +1088,7 @@
 
   return {
     createCamera, project, toBoard, pick, yawFacing, create,
+    paintOrb, paintLock, lockProgress,
     PICK, RADIUS, HEIGHT, SHAPE, ZOOM_MIN, ZOOM_MAX, DEFAULT_PITCH, defaultPitch, numberSpot
   };
 });

@@ -541,7 +541,7 @@
           <div><i>⛨ Fortify</i> +10%/lvl defending</div>
           <div><i>Relays</i> charge it while supplied</div>
           <div><i>Hold the centre</i> to fire it</div>
-          <div><i>FIRE then tap</i> to aim the strike</div>
+          <div><i>FIRE then tap</i> to aim: 2 s lock-on</div>
           <div><i>Routes</i> cross only ground you hold</div>
           <div><i>Cut off</i> = 30% output</div>
           <div><i>Asteroid Belt</i> ×1.25 defence</div>
@@ -553,7 +553,7 @@
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><rect x="-8" y="-8" width="16" height="16" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Factory · units</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 9,0 0,9 -9,0" fill="none" stroke="#fbbf24" stroke-width="2"/></svg> Mine · credits</span>
           <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8" fill="none" stroke="#94a3b8" stroke-width="2"/></svg> Relay · charges</span>
-          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><polygon points="0,-9 2.6,-2.8 9,-2.8 3.8,1.2 5.8,7.6 0,3.8 -5.8,7.6 -3.8,1.2 -9,-2.8 -2.6,-2.8" fill="none" stroke="#ff7a5c" stroke-width="1.6"/></svg> Doomstar · centre</span>
+          <span><svg width="17" height="17" viewBox="-10 -10 20 20"><circle r="8.5" fill="#4a5568" stroke="#ff7a5c" stroke-width="1.4"/><path d="M-8.4 0.8 Q0 2.6 8.4 0.8" fill="none" stroke="#0b1018" stroke-width="1.4"/><circle cx="-3" cy="-2.9" r="2.4" fill="#1a212c" stroke="#ff7a5c" stroke-width="0.8"/></svg> Doomstar · centre</span>
         </div>
         <div class="gfxrow">
           <span id="gfxLabel">Enhanced 3D graphics</span>
@@ -849,14 +849,24 @@
     syncViewBtn();
   }
 
-  // The button names what pressing it does, so it reads "3D" while the
-  // flat view is showing.
+  // The one view button cycles 2D -> 3D -> 3D+ (Enhanced) -> 2D and names
+  // the view a press goes to. Enhanced used to live only behind a switch
+  // in the help overlay, and the owner never found it: a view a player
+  // cannot see a way into does not exist. A device that has fallen back
+  // this session skips 3D+.
+  function viewStage() {
+    if (!is3D(renderer)) return 0;
+    return gfxPref === "on" && !glDead ? 2 : 1;
+  }
   function syncViewBtn() {
     const b = document.getElementById("btnView");
-    const toHolo = !is3D(renderer);
-    b.textContent = toHolo ? "3D" : "2D";
-    b.setAttribute("aria-label", toHolo ? "Switch to 3D view" : "Switch to 2D view");
-    b.title = toHolo ? "Switch to the 3D holotable (V)" : "Switch back to the flat map (V)";
+    const stage = viewStage();
+    const next = stage === 0 ? "3d" : stage === 1 && !glDead ? "3d+" : "2d";
+    b.textContent = next === "3d" ? "3D" : next === "3d+" ? "3D+" : "2D";
+    const label = next === "3d" ? "Switch to the 3D holotable"
+      : next === "3d+" ? "Switch to Enhanced 3D graphics" : "Switch back to the flat map";
+    b.setAttribute("aria-label", label);
+    b.title = label + " (V)";
   }
 
   // Switching only swaps who draws: selection, a pending target, the
@@ -872,8 +882,27 @@
     viewPref = is3D(renderer) ? "holo" : "flat";
     prefs.write({ view: viewPref });
   }
-  document.getElementById("btnView").addEventListener("click", () =>
-    setView(is3D(renderer) ? "flat" : "holo"));
+  document.getElementById("btnView").addEventListener("click", () => {
+    const stage = viewStage();
+    if (stage === 0) {
+      // A device that fell back keeps the player's stored choice: the
+      // cycle skips 3D+ this session, but a reload may work again.
+      if (!glDead) setGfx("off");
+      setView("holo");
+    } else if (stage === 1 && !glDead) {
+      setGfx("on");
+      show3D();
+    } else {
+      setView("flat");
+    }
+    syncViewBtn();
+  });
+  function setGfx(v) {
+    if (gfxPref === v) return;
+    gfxPref = v;
+    prefs.write({ gfx: gfxPref });
+    syncGfxSwitch();
+  }
 
   // ---------------------------------------------------------------
   // Enhanced 3D graphics ("holo-gl")
@@ -1009,6 +1038,7 @@
     dropGL();
     toast("Enhanced 3D off (" + reason + ") \u2014 " + (is3D(renderer) ? "standard 3D" : "flat map"));
     syncGfxSwitch();
+    syncViewBtn();           // 3D+ drops out of the button's cycle
   }
 
   // Frame pacing. The phones this is for get hot and slow long before
@@ -1053,6 +1083,7 @@
     syncGfxSwitch();
     if (gfxPref === "on" && glDead) toast("Enhanced 3D is unavailable until you reload");
     if (is3D(renderer)) show3D();
+    syncViewBtn();
   });
 
   const toWorld = (px, py) => ({ x: (px - view.ox) / view.scale, y: (py - view.oy) / view.scale });
@@ -2531,6 +2562,12 @@
         burst(ev.x, ev.y, "#94a3b8", 16, 110, 0.6);
         floatText(ev.x, ev.y, "HELD", "#cbd5e1");
         if (ev.attacker === mySeat || ev.owner === mySeat) { addShake(5); sfx.repulse(); }
+      } else if (ev.kind === "doomlock") {
+        // The two-second warning: the side being shot is told outright.
+        if (ev.owner === mySeat) toast("Laser locked \u2014 strike in " + ev.seconds + "s");
+        else { toast("\u26a0 Doomstar locked on your position \u2014 " + ev.seconds + "s"); addShake(4); sfx.lost(); }
+      } else if (ev.kind === "doomstar" && ev.fizzled) {
+        floatText(ev.x, ev.y, "FIZZLED", "#94a3b8");
       } else if (ev.kind === "doomstar") {
         fxFor(ev.nodeId).flash = 1;
         burst(ev.x, ev.y, "#ff7a5c", 60, 240, 1.2);
@@ -2570,7 +2607,7 @@
   // ---------------------------------------------------------------
   function shapePath(c, n, r, shape) {
     c.beginPath();
-    if (shape === "circle") { c.arc(0, 0, r, 0, Math.PI * 2); return; }
+    if (shape === "circle" || (n && n.type === "doomstar")) { c.arc(0, 0, r, 0, Math.PI * 2); return; }
     if (shape === "square") {
       const s = r * 0.88; c.rect(-s, -s, s * 2, s * 2); return;
     }
@@ -2854,6 +2891,15 @@
       ctx.strokeStyle = fx.flash > 0.01
         ? "rgba(255,255,255," + (0.4 + fx.flash * 0.6) + ")" : c;
       ctx.stroke();
+      // The Doomstar is a battle station, not a shape: an orb with a
+      // superlaser dish that warms as the holder's charge builds.
+      if (n.type === "doomstar" && window.OutpostHolo && window.OutpostHolo.paintOrb) {
+        const own = n.owner;
+        const lp = window.OutpostHolo.lockProgress(game);
+        window.OutpostHolo.paintOrb(ctx, 0, 0, r, own === NEUTRAL ? "#ffd166" : c,
+          own === NEUTRAL ? 0 : (game.charge[own] || 0) / E.DOOM_CHARGE_NEEDED,
+          lp >= 0 && game.doomShot.owner === own ? lp : 0, now);
+      }
 
       // Garrison
       ctx.fillStyle = "#f1f6ff";
@@ -3363,7 +3409,38 @@
     c.fillStyle = fill; c.fillText(str, x, y);
   }
 
+  // The Doomstar's two-second lock-on, drawn the same in every view: a
+  // laser from the orb's dish to the target, a reticle closing in, and the
+  // time left. It reads game.doomShot, which travels in the snapshot, so
+  // an online guest sees the lock on its own position exactly as the host
+  // does. Screen space, so the flat view draws it after its board pass.
+  function drawDoomLock(c, so) {
+    const ds = game && game.doomShot, H = window.OutpostHolo;
+    if (!ds || !H || !H.paintLock) return;
+    const d = E.doomstarNode(game), t = game.nodes[ds.targetId];
+    if (!d || !t) return;
+    let orb, to, tr;
+    if (is3D(renderer)) {
+      const pr = H.RADIUS.doomstar * 0.92, q = so(d.x, d.y, H.HEIGHT.doomstar);
+      orb = { x: q.x, y: q.y - pr * q.scale * 0.35, R: pr * q.scale * 1.05 };
+      to = so(t.x, t.y, H.HEIGHT[t.type] || 40);
+      tr = (H.RADIUS[t.type] || 24) * 0.92 * to.scale;
+    } else {
+      const q = so(d.x, d.y, 0);
+      orb = { x: q.x, y: q.y, R: E.nodeStats(d).radius * q.scale };
+      to = so(t.x, t.y, 0);
+      tr = E.nodeStats(t).radius * to.scale;
+    }
+    // The dish focal point, matching paintOrb's geometry.
+    const R = Math.max(4, Math.round(orb.R)), dr = R * 0.28;
+    // Enhanced draws a real dish that turns to aim; ask it where the laser starts.
+    const from = (renderer.doomFocus && renderer.doomFocus())
+      || { x: orb.x - R * 0.36 - dr * 1.15, y: orb.y - R * 0.34 - dr * 1.15 };
+    H.paintLock(c, from, to, tr, H.lockProgress(game), ds.t, colorOf(ds.owner), performance.now());
+  }
+
   function holoOverlay(c, so) {
+    drawDoomLock(c, so);
     const now = performance.now();
     const W = canvas.clientWidth, H = canvas.clientHeight;
     const cam = renderer.camera();
@@ -3722,6 +3799,8 @@
         watchFrames(now);
       } else {
         renderer.render(fr);
+        // The flat board draws in world space; the lock-on is screen space.
+        if (renderer === flat) drawDoomLock(ctx, screenOfFlat);
       }
     }
 

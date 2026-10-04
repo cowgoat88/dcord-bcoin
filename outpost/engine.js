@@ -54,6 +54,12 @@
   const DOOM_CHARGE_INTERVAL = 3.0;  // seconds between charge ticks
   const DOOM_CHARGE_NEEDED = 20;     // charge required to fire
   const DOOM_DAMAGE = 26;            // units removed from the target
+  // The laser holds on its target this long before the strike lands. The
+  // owner asked for it so the side being shot can see where it will hit:
+  // a two-second warning turns the weapon from a number vanishing into a
+  // moment both players watch, and gives a person the chance to pull units
+  // out. The charge is spent when the laser locks, not when it lands.
+  const DOOM_LOCK_S = 2.0;
   // The garrison sitting on the centre at kick-off.
   //
   // Worth knowing before touching this: the centre stayed neutral in 40
@@ -562,6 +568,7 @@
     const d = doomstarNode(game);
     if (!d) return "No Doomstar on this map.";
     if (d.owner !== owner) return "You must hold the Doomstar to fire it.";
+    if (game.doomShot) return "The Doomstar is already firing.";
     if ((game.charge[owner] || 0) < DOOM_CHARGE_NEEDED) {
       return "Charge " + Math.floor(game.charge[owner] || 0) + "/" + DOOM_CHARGE_NEEDED + ".";
     }
@@ -577,7 +584,37 @@
     }
     if (!target) return "Nothing left to fire at.";
 
+    // Lock on. The strike itself lands in stepDoomShot, DOOM_LOCK_S later.
     game.charge[owner] = 0;
+    game.stats[owner].fired += 1;
+    game.doomShot = { owner, targetId: target.id, t: DOOM_LOCK_S };
+    emit(game, {
+      kind: "doomlock", x: target.x, y: target.y, owner,
+      nodeId: target.id, seconds: DOOM_LOCK_S
+    });
+    return undefined;
+  }
+
+  // The locked shot counting down, and landing. It hits whatever the
+  // target is when the laser fires: if it has meanwhile stopped being the
+  // firer's enemy -- taken by the firer, or abandoned -- the shot fizzles
+  // rather than striking the firer's own ground or empty space.
+  function stepDoomShot(game, dt) {
+    const shot = game.doomShot;
+    if (!shot) return;
+    shot.t -= dt;
+    if (shot.t > 0) return;
+    game.doomShot = null;
+    const target = game.nodes[shot.targetId];
+    const owner = shot.owner;
+    const live = target && target.owner !== owner && target.owner !== NEUTRAL;
+    if (!live) {
+      emit(game, {
+        kind: "doomstar", x: target ? target.x : 0, y: target ? target.y : 0, owner,
+        nodeId: shot.targetId, damage: 0, wiped: false, fizzled: true
+      });
+      return;
+    }
     const before = target.garrison;
     target.garrison = Math.max(0, target.garrison - strikeDamage(game, owner));
     const killed = before - target.garrison;
@@ -587,13 +624,11 @@
     // Read the victim before a wipe hands the position back to nobody.
     const victim = target.owner;
     if (wiped) { target.owner = NEUTRAL; target.level = 0; target.garrison = 0; target.assault = null; }
-    game.stats[owner].fired += 1;
     if (victim !== NEUTRAL) game.stats[victim].taken += 1;
     emit(game, {
       kind: "doomstar", x: target.x, y: target.y, owner,
       nodeId: target.id, damage: Math.round(killed), wiped
     });
-    return undefined;
   }
 
   // What one strike from this side actually removes.
@@ -1522,6 +1557,7 @@
       },
       charge: { [PLAYER]: 0, [ENEMY]: 0 },
       chargeTimer: DOOM_CHARGE_INTERVAL,
+      doomShot: null,             // { owner, targetId, t } while the laser is locked
       time: 0,
       winner: null,
       objective: o.objective || { kind: "eliminate" },
@@ -1712,6 +1748,7 @@
     game.fleets = remaining;
 
     stepAssaults(game, dt);
+    stepDoomShot(game, dt);
     stepCharge(game, dt);
 
     if (!game.humanFoe && canFire(game, ENEMY)) fireDoomstar(game, ENEMY);
@@ -2059,6 +2096,9 @@
       cr: { 1: game.credits[PLAYER] || 0, 2: game.credits[ENEMY] || 0 },
       ch: { 1: game.charge[PLAYER] || 0, 2: game.charge[ENEMY] || 0 },
       ct: game.chargeTimer,
+      // A locked shot travels with the state, so the guest sees the laser
+      // on its own position for the whole two seconds, not just the hit.
+      ds: game.doomShot ? [game.doomShot.owner, game.doomShot.targetId, game.doomShot.t] : 0,
       tc: {
         1: { a: techLevel(game, PLAYER, "assault"), f: techLevel(game, PLAYER, "fortify") },
         2: { a: techLevel(game, ENEMY, "assault"), f: techLevel(game, ENEMY, "fortify") }
@@ -2079,6 +2119,14 @@
     game.credits[PLAYER] = snap.cr[1]; game.credits[ENEMY] = snap.cr[2];
     game.charge[PLAYER] = snap.ch[1]; game.charge[ENEMY] = snap.ch[2];
     game.chargeTimer = snap.ct;
+    // The guest gets no engine events, so the lock-on and the strike are
+    // re-told from the state: a new lock emits "doomlock" (the warning
+    // matters most to the side being shot), and a lock that ends emits
+    // "doomstar" with the garrison change seen across this snapshot.
+    const prevShot = game.doomShot;
+    const prevTarget = prevShot && game.nodes[prevShot.targetId];
+    const before = prevTarget ? prevTarget.garrison : 0;
+    game.doomShot = snap.ds ? { owner: snap.ds[0], targetId: snap.ds[1], t: snap.ds[2] } : null;
     game.tech[PLAYER] = { assault: snap.tc[1].a, fortify: snap.tc[1].f };
     game.tech[ENEMY] = { assault: snap.tc[2].a, fortify: snap.tc[2].f };
     for (let i = 0; i < game.nodes.length && i < snap.n.length; i++) {
@@ -2092,6 +2140,20 @@
     }));
     if (snap.st) game.stats = snap.st;
     computeSupply(game);
+    const shot = game.doomShot;
+    const changed = !shot || !prevShot || shot.owner !== prevShot.owner || shot.targetId !== prevShot.targetId;
+    if (prevShot && changed && prevTarget) {
+      const damage = Math.max(0, Math.round(before - prevTarget.garrison));
+      emit(game, {
+        kind: "doomstar", x: prevTarget.x, y: prevTarget.y, owner: prevShot.owner, nodeId: prevTarget.id,
+        damage, wiped: damage > 0 && prevTarget.owner === NEUTRAL, fizzled: damage === 0
+      });
+    }
+    if (shot && changed) {
+      const t = game.nodes[shot.targetId];
+      if (t) emit(game, { kind: "doomlock", x: t.x, y: t.y, owner: shot.owner, nodeId: t.id,
+        seconds: Math.max(1, Math.round(shot.t)) });
+    }
   }
 
   // Every order a networked peer can ask for, funnelled through one
@@ -2122,7 +2184,7 @@
   return {
     MAP_W, MAP_H, NEUTRAL, PLAYER, ENEMY, NODE_TYPES, MAX_LEVEL,
     DEFENDER_EDGE, FLEET_SPEED, MIN_SEND, DIFFICULTY, TOP_TIER, RATE_BONUS, CAP_BONUS, COALESCE_WINDOW,
-    DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE,
+    DOOM_CHARGE_NEEDED, DOOM_CHARGE_PER_RELAY, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE, DOOM_LOCK_S,
     DOOM_GARRISON,
     TECH, TECH_MAX, TERRAIN, FLAT_TYPES,
     makeRng, dist, clamp, upgradeCost, nodeStats, defenceOf,
@@ -2136,7 +2198,7 @@
     isDefensive, defends, isContested, chargingRelays, doomstarNode, canFire, doomstarTarget, resolveArrival, resolveAssault, drainEvents,
     techLevel, techCost, assaultMult, fortifyMult,
     DOCTRINES, DOCTRINE_KEYS, doctrineOf, docMod, setDoctrine, fleetSpeed,
-    relayCharge, strikeDamage,
+    relayCharge, strikeDamage, stepDoomShot,
     ASCENSION, ASCENSION_MAX, ascensionTech, ascensionProduce
   };
 });

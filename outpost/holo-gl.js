@@ -719,6 +719,7 @@
     // Per-game scene
     // =================================================================
     const tmpC = new T.Color(), tmpC2 = new T.Color();
+    const _v1 = new T.Vector3(), _v2 = new T.Vector3(), _v3 = new T.Vector3(), _zAxis = new T.Vector3(0, 0, 1), _white = new T.Color(1, 1, 1);
     const colorCache = new Map();
     function colorFor(str) {
       let c = colorCache.get(str);
@@ -749,24 +750,19 @@
         plate = new T.OctahedronGeometry(plateR * 1.05, 0);
         plate.scale(1, 0.55, 1);
       } else if (kind === "star") {
-        const sh = new T.Shape(), pts = unitShape("star");
-        for (let i = 0; i < pts.length; i++) {
-          const x = pts[i][0] * plateR * 1.02, y = -pts[i][1] * plateR * 1.02;
-          i ? sh.lineTo(x, y) : sh.moveTo(x, y);
-        }
-        sh.closePath();
-        plate = new T.ExtrudeGeometry(sh, { depth: PLATE_THICK + 3, bevelEnabled: false });
-        plate.rotateX(-Math.PI / 2);
+        // The Doomstar is a battle station, not a plate: a metal sphere on
+        // the pylon, with its trench and dish added per station.
+        out.orbR = plateR * 1.05;
+        plate = new T.SphereGeometry(out.orbR, 32, 20);
       } else plate = new T.CylinderGeometry(plateR, plateR, PLATE_THICK, 28);
       out.plate = keep(plate);
       out.edges = keep(new T.EdgesGeometry(plate, 25));
       // Where the plate sits: its centre height. (Diamond hangs from the top.)
       out.plateY = kind === "diamond" ? h - plateR * 1.05 * 0.55
-        : kind === "star" ? zPlate - 1.5
+        : kind === "star" ? h + plateR * 0.35
         : zPlate + PLATE_THICK / 2;
-      if (kind === "star") out.plateY = zPlate - 1.5;
       // Footprint of the plate on the ground, for the cast shadow.
-      const fp = new T.Shape(), up = unitShape(kind);
+      const fp = new T.Shape(), up = unitShape(kind === "star" ? "circle" : kind);
       for (let i = 0; i < up.length; i++) {
         const x = up[i][0] * plateR, y = -up[i][1] * plateR;
         i ? fp.lineTo(x, y) : fp.moveTo(x, y);
@@ -1020,11 +1016,49 @@
           grp.add(dot);
           nr.relay = { dot, mat: dm };
         } else if (g.kind === "star") {
-          nr.spin.push(plateGrp);
+          // Death Star: a dark equatorial trench with a thin lit seam in the
+          // owner's colour above it, and a dish in the northern hemisphere.
+          // The dish turns to face the viewer (so it is always seen) and, during
+          // the lock-on, swings toward the target; eight tributary beams then
+          // converge in front of it, where the superlaser starts.
+          const R = g.orbR;
+          const trM = own(new T.MeshStandardMaterial({ color: 0x0b1018, roughness: 0.9, metalness: 0.2, fog: false }));
+          const trench = new T.Mesh(SG.relayTorus, trM);
+          trench.scale.set(R * 1.005, R * 1.005, R * 0.5); trench.rotation.x = Math.PI / 2;
+          plateGrp.add(trench);
+          const seam = new T.Mesh(SG.relayTorus, acc);
+          seam.scale.set(R * 1.0, R * 1.0, R * 0.16); seam.rotation.x = Math.PI / 2; seam.position.y = R * 0.13;
+          plateGrp.add(seam);
+          for (const lat of [-0.5, 0.52]) {           // panel lines, for scale
+            const pr = R * Math.sqrt(1 - lat * lat);
+            const pl = new T.Mesh(SG.relayTorus, trM);
+            pl.scale.set(pr * 1.004, pr * 1.004, R * 0.12); pl.rotation.x = Math.PI / 2; pl.position.y = lat * R;
+            plateGrp.add(pl);
+          }
+          const dishG = new T.Group();
+          plateGrp.add(dishG);
+          const dr = R * 0.3, dz = Math.sqrt(R * R - dr * dr);
+          const dm = own(new T.MeshStandardMaterial({ color: 0x1a212c, roughness: 0.6, metalness: 0.6, emissive: 0x000000, fog: false, side: T.DoubleSide }));
+          const dish = new T.Mesh(own(new T.CircleGeometry(dr, 28)), dm);
+          dish.position.z = dz + 0.4; dishG.add(dish);
+          const dishRim = new T.Mesh(SG.relayTorus, acc);
+          dishRim.scale.set(dr, dr, dr * 0.6); dishRim.position.z = dz + 0.4; dishG.add(dishRim);
           const cm = own(new T.MeshBasicMaterial({ color: 0xffd166, fog: false }));
           const core = new T.Mesh(SG.core, cm);
-          core.scale.setScalar(7); core.position.y = h + 9;
-          grp.add(core);
+          core.position.z = dz + 0.8; dishG.add(core);
+          const focalZ = dz + dr * 1.7;
+          const bp = new Float32Array(8 * 6);
+          for (let k = 0; k < 8; k++) {
+            const a = k * Math.PI / 4;
+            bp.set([Math.cos(a) * dr * 0.85, Math.sin(a) * dr * 0.85, dz + 0.6, 0, 0, focalZ], k * 6);
+          }
+          const bg = own(new T.BufferGeometry());
+          bg.setAttribute("position", new T.BufferAttribute(bp, 3));
+          const beamM = own(new T.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, fog: false }));
+          const beams = new T.LineSegments(bg, beamM);
+          beams.visible = false; beams.renderOrder = 15; dishG.add(beams);
+          const spark = new T.Mesh(SG.dot, beamM);
+          spark.position.z = focalZ; spark.visible = false; dishG.add(spark);
           const haloM = own(new T.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.4, depthWrite: false }));
           const halo = new T.Mesh(own(arcGeometry(T, r + 17, 2.6, 1.6)), haloM);
           halo.renderOrder = 13; grp.add(halo);
@@ -1036,7 +1070,8 @@
             mesh.renderOrder = 14; mesh.visible = false; grp.add(mesh);
             return { mesh, mat: m, seat: s };
           });
-          nr.doom = { core, cm, halo, haloM, arcs };
+          nr.doom = { core, cm, halo, haloM, arcs, dishG, dm, beams, beamM, spark, R, dr, focalZ,
+            dir: new T.Vector3(0, 0.5, 1).normalize(), focus: new T.Vector3(n.x, g.plateY, n.y) };
           rec.doom = nr;
         }
 
@@ -1047,12 +1082,15 @@
         // number, so it hid both the level and the digits. Lamps on the rim
         // stay apart at any yaw and clear of the number.
         nr.levels = [];
-        const lampY = g.kind === "diamond" ? g.plateY : g.plateY + PLATE_THICK / 2 + 1.2;
+        // On the Doomstar's sphere the lamps sit on a ring below the trench.
+        const orb = g.kind === "star";
+        const lampY = g.kind === "diamond" ? g.plateY : orb ? g.plateY - g.orbR * 0.58 : g.plateY + PLATE_THICK / 2 + 1.2;
+        const lampR = orb ? g.orbR * 0.86 : g.plateR * 1.02;
         for (let k = 0; k < MAX_LEVEL; k++) {
           const a = -Math.PI / 2 + k * TAU / MAX_LEVEL;
           const lamp = new T.Mesh(SG.dot, lampDim);
           lamp.scale.setScalar(3.3);
-          lamp.position.set(Math.cos(a) * g.plateR * 1.02, lampY, Math.sin(a) * g.plateR * 1.02);
+          lamp.position.set(Math.cos(a) * lampR, lampY, Math.sin(a) * lampR);
           grp.add(lamp);
           nr.levels.push(lamp);
         }
@@ -1092,8 +1130,15 @@
       const c = colorFor(str);
       const m = nr.mats, neutral = owner === 0, b = boost || 0;
       hot(nr.hot, c, neutral ? 0.3 : 1.5);
-      m.plate.color.copy(c).multiplyScalar(neutral ? 0.7 : 0.6);
-      m.plate.emissive.copy(c); m.plate.emissiveIntensity = (neutral ? 0.25 : 0.45) + b * 3.2;
+      if (nr.g.kind === "star") {
+        // The Doomstar's hull stays grey metal (a glowing sphere blooms into
+        // a blob); ownership shows on its seam, dish rim and pad.
+        m.plate.color.set(0x8a95a6).lerp(c, 0.18);
+        m.plate.emissive.copy(c); m.plate.emissiveIntensity = (neutral ? 0.03 : 0.07) + b * 1.2;
+      } else {
+        m.plate.color.copy(c).multiplyScalar(neutral ? 0.7 : 0.6);
+        m.plate.emissive.copy(c); m.plate.emissiveIntensity = (neutral ? 0.25 : 0.45) + b * 3.2;
+      }
       m.pylon.color.copy(c).multiplyScalar(0.45);
       m.pylon.emissive.copy(c); m.pylon.emissiveIntensity = (neutral ? 0.12 : 0.3) + b * 1.6;
       if (m.tier) { m.tier.color.copy(c).multiplyScalar(0.55); m.tier.emissive.copy(c); m.tier.emissiveIntensity = (neutral ? 0.2 : 0.9) + b * 3; }
@@ -1251,7 +1296,8 @@
       const src = B.doom, tn = B.nodes[ev.nodeId];
       const st = strikes[nextStrike++ % STRIKES];
       const tg = tn ? tn.g : { plateY: 30 };
-      const sx = src.n.x, sy = src.g.h + 9, sz = src.n.y;
+      const f = src.doom && src.doom.focus;
+      const sx = f ? f.x : src.n.x, sy = f ? f.y : src.g.h + 9, sz = f ? f.z : src.n.y;
       const tx = ev.x, ty = tg.plateY + 4, tz = ev.y;
       st.t0 = now; st.active = true; st.impacted = false; st.tid = tn ? ev.nodeId : -1;
       st.sx = sx; st.sy = sy; st.sz = sz; st.tx = tx; st.ty = ty; st.tz = tz;
@@ -1437,11 +1483,37 @@
           D.haloM.color.copy(base).multiplyScalar(1.3);
           D.haloM.opacity = 0.22 + pulse * 0.3 + best * 0.3;
           D.halo.scale.setScalar(1 + pulse * 0.05 + best * 0.04);
-          // The core brightens and throbs faster as the weapon charges.
-          const throb = 0.5 + 0.5 * Math.sin(now * (0.004 + best * 0.012));
+          // Aim the dish: toward the viewer, up and to the left (where the
+          // flat and standard 3D views draw it); during the lock-on it swings
+          // most of the way toward the target.
+          const ds = game.doomShot, lp = ds && H.lockProgress ? H.lockProgress(game) : -1;
+          const locking = lp >= 0 && ds.owner === n.owner;
+          const cx = n.x, cy = g.plateY, cz = n.y;
+          _v1.set(camera3.position.x - cx, camera3.position.y - cy, camera3.position.z - cz).normalize();
+          _v2.set(-_v1.z, 0, _v1.x).normalize();                  // the viewer's left, on the board
+          _v3.copy(_v1).multiplyScalar(0.8).addScaledVector(_v2, 0.42); _v3.y += 0.38; _v3.normalize();
+          const tn = locking ? game.nodes[ds.targetId] : null;
+          if (tn) {
+            _v1.set(tn.x - cx, (HEIGHT[tn.type] || 40) - cy, tn.y - cz).normalize();
+            _v3.lerp(_v1, 0.7 * Math.min(1, lp * 4)).normalize();
+          }
+          D.dir.lerp(_v3, 0.25).normalize();
+          D.dishG.quaternion.setFromUnitVectors(_zAxis, D.dir);
+          D.focus.set(cx, cy, cz).addScaledVector(D.dir, D.focalZ);
+          // The lens warms with the charge and blazes during the lock.
+          const throb = 0.5 + 0.5 * Math.sin(now * (locking ? 0.022 : 0.004 + best * 0.012));
           const kick = clamp(1 - (now - nr.kickT) / 500, 0, 1);
-          D.core.scale.setScalar(6.5 + best * 4 + throb * (1 + best * 2.5) + kick * 9);
-          D.cm.color.set(best >= 1 ? 0xff7a5c : 0xffd166).multiplyScalar(2.3 + best * 1.8 + throb * 0.8);   // > 1 on purpose: the core is the Doomstar's bloom source
+          const heat = Math.max(best * 0.6, locking ? 0.6 + 0.4 * lp : 0, kick);
+          D.core.scale.setScalar(D.dr * (0.22 + heat * 0.35 + throb * 0.1 * (0.3 + heat)));
+          const lensC = locking ? tmpC.copy(colorFor(colorOf(ds.owner))).lerp(_white, 0.35) : tmpC.set(best >= 1 ? 0xff7a5c : 0xffd166);
+          D.cm.color.copy(lensC).multiplyScalar(1.2 + heat * 2.6 + throb * 0.6);   // > 1 on purpose: the lens is the Doomstar's bloom source
+          D.dm.emissive.copy(lensC); D.dm.emissiveIntensity = heat * 0.5;
+          D.beams.visible = locking; D.spark.visible = locking;
+          if (locking) {
+            D.beamM.color.copy(lensC).multiplyScalar(1.5 + 1.5 * lp);
+            D.beamM.opacity = 0.45 + 0.5 * lp;
+            D.spark.scale.setScalar(D.dr * (0.12 + 0.14 * lp) * (0.85 + 0.15 * throb));
+          }
         }
 
         // Small animated parts.
@@ -1449,7 +1521,7 @@
         if (nr.caps) for (const cp of nr.caps) cp.scale.y = 0.75 + 0.55 * (0.5 + 0.5 * Math.sin(now * 0.004 + i * 2));
 
         // Station glow sprite, above the plate.
-        glowAdd(n.x, g.plateY, n.y, c, (n.owner === 0 ? 0.16 : 0.34) + bq * 0.6, g.plateR * 2.3 + 8 + bq * 40);
+        glowAdd(n.x, g.plateY, n.y, c, ((n.owner === 0 ? 0.16 : 0.34) + bq * 0.6) * (g.kind === "star" ? 0.45 : 1), g.plateR * 2.3 + 8 + bq * 40);
       }
       updateFleets(game, colorOf);
       updateEffects(game);
@@ -1603,6 +1675,14 @@
         return p && { x: p.x, y: p.y, scale: p.scale, depth: p.depth };
       },
       toBoard(px, py) { return H.toBoard(ensureCamera(lastGame), px, py); },
+      // Screen point where the Doomstar's superlaser starts (in front of its
+      // dish), so the lock-on overlay leaves from the dish actually drawn.
+      doomFocus() {
+        const D = built && built.doom && built.doom.doom;
+        if (!D || !lastGame) return null;
+        const p = H.project(ensureCamera(lastGame), D.focus.x, D.focus.z, D.focus.y);
+        return p && { x: p.x, y: p.y };
+      },
       camera() { return ensureCamera(lastGame); },
       // Anything that moves the camera by hand ends the fly-in on the spot:
       // a player who starts turning the board is not waiting for the intro.

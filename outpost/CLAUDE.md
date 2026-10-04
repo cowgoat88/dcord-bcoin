@@ -316,9 +316,13 @@ weaker at Captain and Commander (79/28/23 against classic's 88/44/31,
 
 `holo-gl.js` draws the 3D view on WebGL with a vendored three.js subset
 (`vendor/three.subset.min.js`, 0.186.1, rebuilt with the command in its
-header from `vendor/three.subset.entry.js`). It is loaded only when the
-"Enhanced 3D graphics" switch (in the help overlay, `prefs.gfx`, default
-off) is on and the 3D view is showing. Its camera is built from
+header from `vendor/three.subset.entry.js`). It is loaded only when
+Enhanced is on (`prefs.gfx`, default off) and the 3D view is showing.
+The view button in the top bar cycles 2D -> 3D -> 3D+ (Enhanced) -> 2D;
+the switch in the help overlay sets the same pref. It started out only
+in the help overlay and the owner could not find it -- a mode that only
+exists behind a menu is a mode nobody uses. After a fallback the cycle
+skips 3D+ for the rest of the session. Its camera is built from
 `OutpostHolo.createCamera`, so pick, screenOf and every overlay are
 holo.js's own; the overlays are drawn on the 2D `#board` canvas on top,
 which keeps all pointer input.
@@ -345,6 +349,24 @@ Testing it:
   smoothness is the owner's call on a device.
 - `scratchpad/gl1/life.js` checks the real renderer's context loss,
   restore, throw and dispose behaviour.
+
+### The Doomstar locks on before it fires
+
+`fireDoomstar` no longer applies damage: it spends the charge and starts
+`game.doomShot = { owner, targetId, t }`, and `stepDoomShot` lands the
+strike `DOOM_LOCK_S` (2 s) later inside `step()`. Events: `doomlock` at
+the start, `doomstar` at impact (`fizzled: true` if the target changed
+hands meanwhile). The lock is in the snapshot (`ds`), so the guest sees
+it too; renderers draw it from state. The guest gets no engine events,
+so `applySnapshot` re-tells the lock (`doomlock`) and the strike
+(`doomstar`, damage from the garrison change it saw) when `ds` starts
+and ends -- without that the side being shot online got the laser but
+no warning toast, sound or impact. Tests that fire the weapon must call
+`E.stepDoomShot(g, E.DOOM_LOCK_S)` (or step the game) before asserting
+damage. The station is drawn as an orb in every view: `paintOrb` /
+`paintLock` in holo.js serve the flat and standard 3D views, and holo-gl
+builds a sphere with trench and a dish that turns toward the target;
+its `doomFocus()` tells the overlay where the laser starts.
 
 ## Branch
 

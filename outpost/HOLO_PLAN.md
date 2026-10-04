@@ -178,7 +178,7 @@ https://raw.githack.com/cowgoat88/dcord-bcoin/af3b853be821e66724209406a3b21824bf
 
 In the game itself the fallback is automatic: `holo-gl` -> `holo` ->
 `flat`, on a failed script load, no WebGL, a lost context not restored
-within 3 s, or a median frame interval over 24 ms for 3 s. A fallback
+within 3 s, or a median frame interval over 42 ms for 3 s. A fallback
 never pauses, resets or desyncs the match and keeps the selection.
 
 ## Decisions
@@ -194,7 +194,8 @@ never pauses, resets or desyncs the match and keeps the selection.
   `pick`, `screenOf` and every overlay line up with the standard 3D
   view; `pick` is `OutpostHolo.pick`.
 - An "Enhanced 3D graphics" switch outside the HUD, stored as
-  `prefs.gfx`, default off. The HUD 2D/3D button is unchanged.
+  `prefs.gfx`, default off. (Changed after GL3: the owner could not find
+  it, so the HUD view button now cycles 2D -> 3D -> 3D+ as well.)
 
 ## Checkpoints
 
@@ -233,3 +234,7 @@ never pauses, resets or desyncs the match and keeps the selection.
   standing gate passes in 2D, standard 3D and Enhanced; glfallback,
   hologlplay and the context/dispose checks pass. Awaiting the iPhone
   human gate.
+- **After GL3**: the view button cycles 2D -> 3D -> 3D+; the Doomstar is
+  a Death Star sphere (trench, panel lines, a dish that turns to aim,
+  tributary beams converging during the 2 s lock-on), and the superlaser
+  arc starts from the dish.

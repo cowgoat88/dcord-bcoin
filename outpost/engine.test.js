@@ -814,6 +814,7 @@ test("the strike hits the enemy's largest position and spends the charge", () =>
 
   assert.equal(E.fireDoomstar(g, PLAYER), undefined);
   assert.equal(g.charge[PLAYER], 0, "firing must spend the whole charge");
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
   assert.equal(Math.round(foes[1].garrison), 60 - E.DOOM_DAMAGE);
   assert.equal(foes[0].garrison, 20, "other positions must be untouched");
 });
@@ -828,8 +829,58 @@ test("an aimed strike hits the position you picked, not the biggest", () => {
   foes[2].owner = NEUTRAL;
 
   assert.equal(E.fireDoomstar(g, PLAYER, foes[0].id), undefined);
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
   assert.equal(Math.round(foes[0].garrison), 30 - E.DOOM_DAMAGE);
   assert.equal(foes[1].garrison, 60, "the automatic target must be spared");
+});
+
+test("the laser locks on for two seconds before the strike lands", () => {
+  // The owner asked for this so the side being shot can see it coming.
+  // The charge goes when the laser locks; the damage only when it fires.
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const t = g.nodes.find((n) => n.type === "factory");
+  t.owner = ENEMY; t.garrison = 60;
+  E.drainEvents(g);
+  assert.equal(E.fireDoomstar(g, PLAYER, t.id), undefined);
+  assert.equal(g.charge[PLAYER], 0, "locking spends the charge");
+  assert.deepEqual([g.doomShot.owner, g.doomShot.targetId], [PLAYER, t.id], "the lock is public state");
+  assert.ok(E.drainEvents(g).some((e) => e.kind === "doomlock" && e.nodeId === t.id), "and announced");
+  E.stepDoomShot(g, E.DOOM_LOCK_S - 0.1);
+  assert.equal(t.garrison, 60, "nothing lands while the laser is still locking");
+  assert.match(E.fireDoomstar(g, PLAYER, t.id), /already firing/, "one shot at a time");
+  E.stepDoomShot(g, 0.2);
+  assert.equal(Math.round(t.garrison), 60 - E.DOOM_DAMAGE, "then it lands");
+  assert.equal(g.doomShot, null);
+  assert.ok(E.drainEvents(g).some((e) => e.kind === "doomstar" && e.nodeId === t.id));
+});
+
+test("a shot whose target changed hands during the lock fizzles", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const t = g.nodes.find((n) => n.type === "factory");
+  t.owner = ENEMY; t.garrison = 40;
+  E.fireDoomstar(g, PLAYER, t.id);
+  t.owner = PLAYER; t.garrison = 12;                 // taken by the firer mid-lock
+  E.drainEvents(g);
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
+  assert.equal(t.garrison, 12, "never strike your own ground");
+  assert.ok(E.drainEvents(g).some((e) => e.kind === "doomstar" && e.fizzled));
+});
+
+test("the whole lock happens inside the normal step loop", () => {
+  const g = quiet();
+  E.doomstarNode(g).owner = PLAYER;
+  g.charge[PLAYER] = E.DOOM_CHARGE_NEEDED;
+  const t = g.nodes.find((n) => n.type === "factory");
+  t.owner = ENEMY; t.garrison = 60;
+  E.fireDoomstar(g, PLAYER, t.id);
+  run(g, 1.0);
+  assert.ok(t.garrison > 60 - 1, "a second in, the target is untouched (it has even grown)");
+  run(g, 1.2);
+  assert.ok(t.garrison < 60 - E.DOOM_DAMAGE + 3, "past two seconds it has been struck");
 });
 
 test("aiming refuses your own ground, neutral ground and nonsense", () => {
@@ -856,6 +907,7 @@ test("a strike that empties a position abandons it rather than capturing it", ()
   for (const n of g.nodes) if (n !== victim && n.type !== "doomstar") n.owner = NEUTRAL;
   victim.owner = ENEMY; victim.garrison = 5; victim.level = 2;
   E.fireDoomstar(g, PLAYER);
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
   assert.equal(victim.owner, NEUTRAL, "a wiped position goes neutral, not to the attacker");
   assert.equal(victim.garrison, 0);
   assert.equal(victim.level, 0);
@@ -1393,6 +1445,7 @@ test("a strike is recorded for both the side firing and the side hit", () => {
 
   assert.equal(g.stats[PLAYER].fired, 0);
   assert.equal(E.fireDoomstar(g, PLAYER, victim.id), undefined);
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
   assert.equal(g.stats[PLAYER].fired, 1, "the firing side counts a strike dealt");
   assert.equal(g.stats[ENEMY].taken, 1, "the side hit counts one received");
   assert.equal(g.stats[PLAYER].taken, 0);
@@ -1404,6 +1457,7 @@ test("a strike is recorded for both the side firing and the side hit", () => {
   const doomed = g.nodes.find((n) => n.type === "mine");
   doomed.owner = ENEMY; doomed.garrison = 2;
   E.fireDoomstar(g, PLAYER, doomed.id);
+  E.stepDoomShot(g, E.DOOM_LOCK_S);
   assert.equal(doomed.owner, NEUTRAL, "setup: it must have been wiped");
   assert.equal(g.stats[ENEMY].taken, 2);
 });

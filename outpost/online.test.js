@@ -226,6 +226,24 @@ test("the guest's Doomstar is theirs to fire, not the host's to spend", () => {
 
   s.guest.sendOrder({ kind: "fire", target: victim.id });
   assert.ok(s.hostGame.charge[2] < E.DOOM_CHARGE_NEEDED, "firing spends the charge");
+  // The guest must see the laser locked on for the whole wait, which
+  // means the pending shot travels in the snapshot.
+  assert.equal(s.guestGame.doomShot && s.guestGame.doomShot.targetId, victim.id,
+    "the guest's copy shows the lock");
+  // The guest gets no engine events; the snapshot re-tells the lock so
+  // its warning toast and sound play there too.
+  const lockEv = E.drainEvents(s.guestGame).filter((e) => e.kind === "doomlock");
+  assert.equal(lockEv.length, 1, "one lock event on the guest");
+  assert.equal(lockEv[0].nodeId, victim.id);
+  E.stepDoomShot(s.hostGame, E.DOOM_LOCK_S);
+  // The host throttles snapshots to 12 Hz and has just answered the fire
+  // order, so a tick now is skipped; any order (even a refused one) makes
+  // it answer at once with the current state.
+  s.guest.sendOrder({ kind: "research", track: "none" });
+  assert.equal(s.guestGame.doomShot, null, "and its end");
+  const hit = E.drainEvents(s.guestGame).filter((e) => e.kind === "doomstar");
+  assert.equal(hit.length, 1, "one strike event on the guest");
+  assert.ok(hit[0].damage > 0 && !hit[0].fizzled, "carrying the damage seen in the snapshot");
   assert.ok(victim.garrison < before, "and the strike lands on what they aimed at");
   assert.equal(s.hostGame.stats[2].fired, 1, "it counts as theirs");
 });

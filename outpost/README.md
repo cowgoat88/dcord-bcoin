@@ -293,6 +293,15 @@ are for:
   want hit, or press FIRE a second time to take the default — their
   single largest position. A position emptied by the strike is abandoned,
   not captured — you still have to go and take it.
+- The shot is not instant. The station locks its laser on the target for
+  **two seconds** first: a beam from the Doomstar's dish to the target, a
+  reticle closing in, and a countdown, visible to both players (online
+  too — the lock rides in the snapshot). The defender cannot dodge it,
+  but they know what is about to break and can react: pull units out, or
+  have reinforcements already in the air. The charge is spent when the
+  lock starts. If the target changes hands during the lock, the shot
+  fizzles harmlessly, so a strike on a position you capture in that
+  window never hits your own units. Only one shot can be in flight.
 
   Aiming matters because the biggest stack is often not the one worth
   breaking. Cracking a fortified Relay to stop their charge, or softening
