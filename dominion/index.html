@@ -132,6 +132,7 @@
 <div id="app">
   <div id="top">
     <span class="brand">DOMINION</span>
+    <span id="tSeasonW" hidden><span class="k">Season</span><span class="v" id="tSeason">1/4</span></span>
     <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted">/12</span></span>
     <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
     <span id="tRole" class="v" style="color:var(--gold)"></span>
@@ -153,6 +154,11 @@
         <h1>DOOMSTAR</h1>
         <p style="margin-top:0;color:var(--text)">DOMINION &middot; a season of the galactic war</p>
         <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 10, or the most points after 12 rounds, rules.</p>
+        <h2>Play</h2>
+        <div class="seg" id="modeSeg">
+          <button data-m="season" class="on">One season</button><button data-m="campaign">Campaign &middot; 4 seasons</button>
+        </div>
+        <p id="modeNote" class="muted" style="font-size:11px"></p>
         <h2>Rivals</h2>
         <div class="seg" id="rivalSeg">
           <button data-n="2" class="on">2</button><button data-n="3">3</button><button data-n="4">4</button><button data-n="5">5</button>
@@ -161,6 +167,7 @@
         <div class="grid" id="facGrid"></div>
         <div id="facUp"></div>
         <div class="row" style="margin-top:16px;justify-content:flex-end">
+          <button id="btnContinue" hidden>Continue</button>
           <button class="primary" id="btnBegin">Begin the season</button>
         </div>
       </div>
@@ -185,6 +192,15 @@
         <div id="objSecret"></div>
         <p id="objMore" class="muted"></p>
         <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnObjClose">Close</button></div>
+      </div>
+    </div>
+
+    <div class="overlay" id="legacyOv" hidden>
+      <div class="card">
+        <h1 style="font-size:16px;letter-spacing:2px" id="legacyTitle">LEGACY</h1>
+        <p id="legacyOrder"></p>
+        <div class="roles" id="legacyGrid"></div>
+        <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="btnNextSeason" class="primary" hidden>Begin the season</button></div>
       </div>
     </div>
 
@@ -227,8 +243,10 @@
         <h1 id="endTitle">Season over</h1>
         <p id="endText"></p>
         <table class="scores" id="endScores"></table>
+        <div id="endCampaign"></div>
         <div class="row" style="justify-content:flex-end">
-          <button id="btnAgain" class="primary">New season</button>
+          <button id="btnAgain">New game</button>
+          <button id="btnLegacy" class="primary" hidden>Legacy draft</button>
         </div>
       </div>
     </div>
@@ -264,6 +282,7 @@
 
 <script src="sim.js"></script>
 <script src="ai.js"></script>
+<script src="campaign.js"></script>
 <script src="holo.js"></script>
 <script>
 (function () {
@@ -274,7 +293,19 @@
   const canvas = $("board"), ctx = canvas.getContext("2d");
 
   let game = null;
-  let rivals = 2, faction = "standard";
+  let rivals = 2, faction = "standard", playMode = "season";
+  let campaign = null;          // the campaign record, when playing one
+  const C = window.DominionCampaign;
+  // Saved in this browser only, so a season or campaign can be continued
+  // after closing the page. Everything works without it.
+  const SAVE_KEY = "dominion.save.v1";
+  function save() {
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify({ campaign, game: game && game.phase !== "over" ? game : null, at: Date.now() })); } catch (e) { /* no storage */ }
+  }
+  function loadSave() {
+    try { const r = JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); return r && (r.game || (r.campaign && r.campaign.phase !== "over")) ? r : null; } catch (e) { return null; }
+  }
+  function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* no storage */ } }
   let selected = null;          // node id
   let mode = "send";            // send | support | fire
   let frac = 0.5;
@@ -307,6 +338,30 @@
     const b = e.target.closest("button"); if (!b) return;
     faction = b.dataset.k; buildFactions();
   });
+  function showMode() {
+    $("modeNote").textContent = playMode === "campaign"
+      ? "Four seasons against the same rivals on new galaxies. Places earn campaign points (5, 3, 2, 1); between seasons everyone drafts a lasting legacy, the trailing seat first."
+      : "One season: first to 10 points, or the most after 12 rounds.";
+    $("btnBegin").textContent = playMode === "campaign" ? "Begin the campaign" : "Begin the season";
+    const sv = loadSave();
+    $("btnContinue").hidden = !sv;
+    if (sv) $("btnContinue").textContent = "Continue " + (sv.campaign ? "campaign, season " + sv.campaign.season : "season") + (sv.game ? ", round " + sv.game.round : "");
+  }
+  $("modeSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    playMode = b.dataset.m;
+    [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+    showMode();
+  });
+  $("btnContinue").addEventListener("click", () => {
+    const sv = loadSave();
+    if (!sv) { showMode(); return; }
+    campaign = sv.campaign || null;
+    if (sv.game) { beginGame(S.cloneGame(sv.game)); return; }
+    $("startOv").hidden = true;
+    if (campaign && campaign.phase === "legacy") showLegacy();
+    else if (campaign) beginGame(C.seasonGame(campaign));
+  });
   $("rivalSeg").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
     rivals = +b.dataset.n;
@@ -317,15 +372,27 @@
     const others = S.FACTION_KEYS.filter((k) => k !== faction);
     const seats = [{ faction, name: "You" }];
     for (let i = 0; i < rivals; i++) seats.push({ ai: true, faction: others[(seed + i) % others.length] });
-    game = S.createGame({ seed, seats, draft: true, council: true });
-    for (const s of game.seats) if (s.ai) s.name = S.FACTIONS[s.faction].label;
+    for (const s of seats) if (!s.name) s.name = S.FACTIONS[s.faction].label;
+    if (playMode === "campaign") {
+      campaign = C.createCampaign({ seed, seats });
+      beginGame(C.seasonGame(campaign));
+    } else {
+      campaign = null;
+      beginGame(S.createGame({ seed, seats, draft: true, council: true }));
+    }
+  });
+  function beginGame(g) {
+    game = g;
     selected = null; replay = null; lastRoundStart = null; fx.length = 0;
-    $("startOv").hidden = true; $("endOv").hidden = true;
+    $("startOv").hidden = true; $("endOv").hidden = true; $("legacyOv").hidden = true;
+    $("tSeasonW").hidden = !campaign;
+    if (campaign) $("tSeason").textContent = campaign.season + "/" + campaign.seasons;
     fitCamera();
     startPlot();
-  });
-  $("btnAgain").addEventListener("click", () => { $("endOv").hidden = true; $("startOv").hidden = false; });
-  $("btnMenu").addEventListener("click", () => { $("startOv").hidden = false; });
+  }
+  $("btnAgain").addEventListener("click", () => { $("endOv").hidden = true; showMode(); $("startOv").hidden = false; });
+  $("btnMenu").addEventListener("click", () => { showMode(); $("startOv").hidden = false; });
+  $("btnLegacy").addEventListener("click", () => { $("endOv").hidden = true; showLegacy(); });
 
   // ---------------------------------------------------------------
   // Camera: pan and zoom over the galaxy
@@ -514,6 +581,7 @@
   // The round
   // ---------------------------------------------------------------
   function startPlot() {
+    save();
     mode = "send"; selected = null; fcAt = 0; $("fc").value = 0;
     showResolveUI(false);
     // The draft first: rivals behind you on points pick before you.
@@ -863,13 +931,68 @@
     const w = game.winner;
     $("endTitle").textContent = w === ME ? "You rule the galaxy" : "The season is lost";
     const s = w && game.seatById[w];
-    $("endText").textContent = s ? s.name + " wins after " + game.round + " rounds with " + game.points[w] + " points." : "Nobody is left standing.";
+    $("endText").textContent = s ? (w === ME ? "You win" : s.name + " wins") + " after " + game.round + " round" + (game.round === 1 ? "" : "s") + " with " + game.points[w] + " points." : "Nobody is left standing.";
     const rows = game.seats.slice().sort((a, b) => S.standing(game, b.id) - S.standing(game, a.id))
-      .map((x) => "<tr><td><span style='color:" + x.color + "'>●</span> " + x.name + " · " + S.FACTIONS[x.faction].label +
+      .map((x) => "<tr><td><span style='color:" + x.color + "'>●</span> " + x.name + (x.name !== S.FACTIONS[x.faction].label ? " · " + S.FACTIONS[x.faction].label : "") +
         "</td><td class='muted'>" + S.nodesOf(game, x.id).length + " positions</td><td>" + game.points[x.id] + "</td></tr>");
     $("endScores").innerHTML = rows.join("");
+    // The campaign: count the season once, then the table and what next.
+    $("btnLegacy").hidden = true;
+    $("endCampaign").innerHTML = "";
+    if (campaign) {
+      if (campaign.phase === "season" && campaign.results.length < campaign.season) C.endSeason(campaign, game);
+      const last = campaign.results[campaign.results.length - 1];
+      const nm = (id) => id === ME ? "You" : campaign.seats[id - 1].name;
+      const table = C.standings(campaign).map((id) => "<tr><td><span style='color:" + S.SEAT_COLORS[id - 1] + "'>\u25cf</span> " + nm(id) +
+        (campaign.legacies[id].length ? " <span class='muted'>\u00b7 " + campaign.legacies[id].map((k) => C.LEGACIES[k].label).join(", ") + "</span>" : "") +
+        "</td><td class='muted'>+" + last.earned[id] + "</td><td>" + campaign.points[id] + "</td></tr>").join("");
+      const over = campaign.phase === "over";
+      $("endCampaign").innerHTML = "<h2 style='font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)'>Campaign \u00b7 after season " + last.season + " of " + campaign.seasons + "</h2>" +
+        "<table class='scores'>" + table + "</table>" +
+        (over ? "<p><b style='color:var(--gold)'>" + (campaign.winner === ME ? "You win the campaign." : nm(campaign.winner) + " wins the campaign.") + "</b></p>" : "");
+      if (over) $("endTitle").textContent = campaign.winner === ME ? "The galaxy is yours" : "The campaign is lost";
+      $("btnLegacy").hidden = over;
+      if (over) { campaign = null; clearSave(); } else save();
+    } else clearSave();
     $("endOv").hidden = false;
   }
+
+  // ---- the legacy draft between seasons ----
+  function showLegacy() {
+    C.runLegacyDraft(campaign);
+    save();
+    const nm = (id) => id === ME ? "You" : campaign.seats[id - 1].name;
+    const d = campaign.draft;
+    $("legacyTitle").textContent = "Season " + campaign.season + " \u00b7 choose a legacy";
+    $("legacyOrder").innerHTML = d ? "A legacy lasts the rest of the campaign. Furthest behind picks first: " + d.order.map((id) =>
+      "<span class='seat" + (id === ME ? " me" : "") + "'><i style='background:" + S.SEAT_COLORS[id - 1] + "'></i>" + nm(id) +
+      (d.picks[id] ? " \u00b7 " + C.LEGACIES[d.picks[id]].label : id === C.legacyTurn(campaign) ? " \u00b7 picking" : "") + "</span>").join(" ")
+      : "Everyone has chosen. Your legacies: " + (campaign.legacies[ME].map((k) => C.LEGACIES[k].label).join(", ") || "none") + ".";
+    const grid = $("legacyGrid");
+    grid.innerHTML = "";
+    if (d) {
+      const left = C.legacyChoices(campaign, ME), mine = campaign.legacies[ME];
+      for (const k of C.LEGACY_KEYS) {
+        const L = C.LEGACIES[k], owner = Object.keys(d.picks).find((id) => d.picks[id] === k);
+        const b = document.createElement("button");
+        b.dataset.leg = k;
+        b.disabled = left.indexOf(k) === -1 || C.legacyTurn(campaign) !== ME;
+        b.innerHTML = "<b>" + L.label + "</b><span>" + L.text + "</span>" +
+          (owner ? "<em style='color:" + S.SEAT_COLORS[owner - 1] + "'>" + nm(+owner) + "</em>" : mine.indexOf(k) !== -1 ? "<em class='muted'>yours already</em>" : "");
+        grid.appendChild(b);
+      }
+    }
+    $("btnNextSeason").hidden = campaign.phase !== "season";
+    $("btnNextSeason").textContent = "Begin season " + campaign.season;
+    $("legacyOv").hidden = false;
+  }
+  $("legacyGrid").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-leg]"); if (!b || b.disabled) return;
+    const why = C.pickLegacy(campaign, ME, b.dataset.leg);
+    if (why) say(why);
+    showLegacy();
+  });
+  $("btnNextSeason").addEventListener("click", () => beginGame(C.seasonGame(campaign)));
 
   // ---------------------------------------------------------------
   // Events into effects
@@ -1121,6 +1244,7 @@
   }
   resize();
   buildFactions();
+  showMode();
   requestAnimationFrame(loop);
 })();
 </script>

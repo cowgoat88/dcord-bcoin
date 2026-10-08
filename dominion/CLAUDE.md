@@ -20,7 +20,7 @@ https://raw.githack.com/cowgoat88/dcord-bcoin/<commit-sha>/dominion/index.html
 
 ## Before committing
 
-- `node --test dominion/sim.test.js` green, run twice.
+- `node --test dominion/sim.test.js dominion/campaign.test.js` green, run twice.
 - `node --test outpost/*.test.js` still green: nothing in `outpost/` should
   have changed.
 - Look at the page at desktop and phone width.
@@ -31,6 +31,11 @@ The design document is the plan:
 https://claude.ai/code/artifact/5cfa5de5-1840-4c79-9bfa-21bf4f59e9d6
 Three pillars, and a feature that serves none of them waits: orders are
 plans, not reflexes; points, not annihilation; politics is a second board.
+
+## Files
+
+- `sim.js` the rules, `ai.js` the rival commanders, `campaign.js` seasons
+  and legacies, `index.html` the page. All UMD, no build step.
 
 ## Engine notes
 
@@ -57,6 +62,9 @@ plans, not reflexes; points, not annihilation; politics is a second board.
   forecast skips it (`skipCouncil`): nobody knows the vote. Laws in force
   live in `game.laws` as `{ id, seat?, from, to }`; permanent ones use
   `to: 9999`, never Infinity, which JSON turns into null.
+- `game.tech[seat][id]` holds the round a technology was researched, and 0
+  for one that came with a campaign legacy: test with `hasTech`, never
+  truthiness.
 - Rivals plot only in the plot step, with the same command points and
   orders as a person, and lock. They never act during a resolve.
 

@@ -170,7 +170,8 @@
       radius: base.radius
     };
   }
-  function hasTech(game, seat, id) { return !!(game.tech[seat] && game.tech[seat][id]); }
+  // The value is the round it was researched; 0 means it came with a legacy.
+  function hasTech(game, seat, id) { return !!game.tech[seat] && game.tech[seat][id] !== undefined; }
   function techCount(game, seat) { return game.tech[seat] ? Object.keys(game.tech[seat]).length : 0; }
   function techPrereq(id) {
     const t = TECHS[id];

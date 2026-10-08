@@ -179,7 +179,31 @@ over any amount of unclaimed ground won 47% of seasons; limiting it to one
 position, at a quarter of the fleet, and cutting Kestrel's speed bonus
 brought it to 29%.
 
-Not built yet (phase 6 in the design doc): the campaign, and online play.
+## The campaign (phase 6)
+
+Choose **Campaign** on the start screen: four seasons against the same
+rivals (same factions, same personalities) on a new galaxy each season.
+Places earn campaign points, 5/3/2/1. Between seasons every seat drafts a
+legacy it keeps for the rest of the campaign, furthest behind first:
+
+| Legacy | Effect, every season |
+|---|---|
+| Veterans | start with Assault Doctrine |
+| Ramparts | start with Hardpoints |
+| Couriers | start with Ion Drives |
+| Old Friends | start with Envoys |
+| War Chest | 80 more starting credits |
+| Machine of State | 3 more starting influence |
+| Standing Army | Command starts with 25 more ships |
+| Throne Claim | Doomstar starts half charged |
+
+Grudges carry into the next season at half strength; pacts do not. The
+campaign and the season in progress are saved in this browser at the
+start of every round, so **Continue** on the start screen picks up where
+you left off (a single season too). The game works without storage.
+
+Not built yet: online play (Neon, once a Data API URL is provided) and
+sound.
 
 ## Measured
 
@@ -197,7 +221,7 @@ points and nobody was eliminated. Objectives were built to change that.
 ## Tests
 
 ```
-node --test dominion/sim.test.js
+node --test dominion/sim.test.js dominion/campaign.test.js
 ```
 
 39 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
@@ -214,4 +238,6 @@ rival plans keeping what is out of sight as last seen, intel refreshed
 each round; the council's agenda, votes, tally and every law's effect;
 grudges; rivals voting legally; pacts sharing sight and running out,
 betrayal making an Oathbreaker, rivals keeping their word; the tech tree's prerequisites and effects;
-each faction's rule.
+each faction's rule. `campaign.test.js`, 4 cases: a full campaign
+(places, legacy draft order, one legacy each, a winner), legacies applied,
+a person's legacy pick, grudges carried over.
