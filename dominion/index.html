@@ -282,16 +282,26 @@
     resize();
     if (!game) return;
     const pad = 56;
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const n of game.nodes) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
-    cam.s = Math.min((cssW - pad * 2) / (x1 - x0), (cssH - pad * 2) / (y1 - y0));
-    cam.x = (x0 + x1) / 2 - cssW / 2 / cam.s;
-    cam.y = (y0 + y1) / 2 - cssH / 2 / cam.s;
-    camMin = cam.s * 0.8;
+    const box = (list) => {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const n of list) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
+      return { x0, y0, x1, y1, s: Math.min((cssW - pad * 2) / Math.max(1, x1 - x0), (cssH - pad * 2) / Math.max(1, y1 - y0)) };
+    };
+    const all = box(game.nodes);
+    // On a narrow screen the whole galaxy is too small to tap, so start on
+    // what you can see and the Throne; pinch out for the rest.
+    const sight = S.sightOf(game, ME);
+    const b = cssW < 600 ? box(game.nodes.filter((n) => sight.has(n.id))) : all;
+    cam.s = b.s;
+    cam.x = (b.x0 + b.x1) / 2 - cssW / 2 / cam.s;
+    cam.y = (b.y0 + b.y1) / 2 - cssH / 2 / cam.s;
+    camMin = all.s * 0.8;
   }
   let camMin = 0.1;
   const toScreen = (x, y) => ({ x: (x - cam.x) * cam.s, y: (y - cam.y) * cam.s });
   const toWorld = (px, py) => ({ x: px / cam.s + cam.x, y: py / cam.s + cam.y });
+  // Where a position is on the page, for the pointer tests.
+  window.DominionUI = { screenOf: (id) => { const r = canvas.getBoundingClientRect(), q = toScreen(game.nodes[id].x, game.nodes[id].y); return { x: r.left + q.x, y: r.top + q.y }; } };
   function zoomAt(px, py, f) {
     const w = toWorld(px, py);
     cam.s = S.clamp(cam.s * f, camMin, camMin * 6);
@@ -521,10 +531,22 @@
   // ---------------------------------------------------------------
   const label = (n) => n.name || S.NODE_TYPES[n.type].label;
   const seatName = (id) => id === S.NEUTRAL ? "Unclaimed" : game.seatById[id].name;
+  // Fog of war: what you know about a position. In sight, the truth; out
+  // of sight, what you saw last and when. The season's end lifts the fog.
+  function fogOf(g) {
+    if (!g || g.phase === "over" || !g.intel || !g.intel[ME]) return null;
+    return { sight: S.sightOf(g, ME), mem: g.intel[ME] };
+  }
+  function known(n, fog) {
+    if (!fog || fog.sight.has(n.id)) return { owner: n.owner, garrison: n.garrison, level: n.level, seen: true };
+    const m = fog.mem[n.id];
+    return { owner: m[0], garrison: m[1], level: m[2], seen: false, round: m[3] };
+  }
   function describe(n) {
-    const st = S.nodeStats(n, game);
-    return label(n) + " · " + seatName(n.owner) + " · " + Math.floor(n.garrison) + "/" + st.cap +
-      (n.terrain !== "open" ? " · " + S.TERRAIN[n.terrain].label : "");
+    const st = S.nodeStats(n, game), k = known(n, fogOf(game));
+    return label(n) + " · " + seatName(k.owner) + " · " + Math.floor(k.garrison) + "/" + st.cap +
+      (n.terrain !== "open" ? " · " + S.TERRAIN[n.terrain].label : "") +
+      (k.seen ? "" : " · out of sight, " + (k.round ? "seen round " + k.round : "not seen since the start"));
   }
   function orderText(o) {
     const N = (id) => label(game.nodes[id]);
@@ -654,6 +676,10 @@
   function handleEvents(evs, quiet) {
     // A skipped round draws no effects, but its scoring is still reported.
     if (quiet) evs = evs.filter((e) => e.kind === "score" || e.kind === "reveal");
+    // Fights out of sight happen out of sight. The Doomstar is seen by all.
+    const fog = fogOf(replay ? replay.game : game);
+    if (fog) evs = evs.filter((e) => !((e.kind === "capture" || e.kind === "repulsed") && !fog.sight.has(e.nodeId) && e.owner !== ME && e.from !== ME && e.attacker !== ME) &&
+      !(e.kind === "clash" && e.lane && !fog.sight.has(e.lane[0]) && !fog.sight.has(e.lane[1]) && e.sides.every((sd) => sd.owner !== ME)));
     for (const e of evs) {
       if (e.kind === "capture") { burst(e.x, e.y, colorOf(e.owner), 22, 160, 0.8); floatText(e.x, e.y, "TAKEN", colorOf(e.owner)); }
       else if (e.kind === "repulsed") { burst(e.x, e.y, "#94a3b8", 12, 110, 0.6); floatText(e.x, e.y, "HELD", "#cbd5e1"); }
@@ -716,8 +742,11 @@
     ctx.globalAlpha = 1;
     if (!game) return;
     const { g, frame } = view();
-    const ownerOf = (n) => frame ? frame.nodes[n.id].owner : n.owner;
-    const garrOf = (n) => frame ? frame.nodes[n.id].garrison : n.garrison;
+    const fog = fogOf(g);
+    const K = g.nodes.map((n) => known(n, fog));
+    // Forecast frames are already made from what you know (viewFor).
+    const ownerOf = (n) => frame ? frame.nodes[n.id].owner : K[n.id].owner;
+    const garrOf = (n) => frame ? frame.nodes[n.id].garrison : K[n.id].garrison;
     const P = (n) => toScreen(n.x, n.y);
     const scale = cam.s;
 
@@ -727,7 +756,7 @@
       if (n.type !== "command" || !n.name) continue;
       // Outward from the Throne, past the home, so the name sits in open space.
       const t = S.throneNode(g), dx = n.x - t.x, dy = n.y - t.y, d = Math.hypot(dx, dy) || 1;
-      const p = toScreen(n.x + dx / d * 120, n.y + dy / d * 120);
+      const p = toScreen(n.x + dx / d * 290, n.y + dy / d * 290);
       ctx.font = "600 " + Math.max(10, Math.min(13, 26 * scale)) + "px ui-monospace, monospace";
       ctx.fillStyle = "rgba(160,180,210,.32)";
       ctx.fillText(n.name.toUpperCase(), p.x, p.y);
@@ -772,7 +801,7 @@
     }
 
     // Fleets.
-    const fleets = frame ? frame.fleets : g.fleets;
+    const fleets = frame ? frame.fleets : fog ? g.fleets.filter((f) => S.fleetSeen(f, ME, fog.sight)) : g.fleets;
     for (const f of fleets) {
       const a = g.nodes[f.path[f.leg]], b = g.nodes[f.path[f.leg + 1]];
       const t = Math.min(1, f.t);
@@ -789,17 +818,20 @@
 
     // Positions.
     for (const n of g.nodes) {
-      const p = P(n), own = ownerOf(n), col = colorOf(own);
+      const p = P(n), own = ownerOf(n), col = colorOf(own), dark = !K[n.id].seen;
       const r = Math.max(9, S.NODE_TYPES[n.type].radius * scale * 1.6);
       ctx.save(); ctx.translate(p.x, p.y);
+      ctx.globalAlpha = 1;
+      if (dark) { ctx.globalAlpha = 0.4; }
       if (n.type === "doomstar" && H && H.paintOrb) {
         const lp = g.doomShot ? 1 - g.doomShot.t / S.DOOM_LOCK_S : 0;
         H.paintOrb(ctx, 0, 0, r * 1.1, own ? col : "#ffd166", own ? (g.charge[own] || 0) / S.DOOM_CHARGE_NEEDED : 0, g.doomShot && g.doomShot.owner === own ? lp : 0, now);
       } else {
+        const base = dark ? 0.4 : 1;
         shapePath(ctx, n.type, r);
-        ctx.fillStyle = own ? col : "#1e293b"; ctx.globalAlpha = own ? 0.22 : 0.9; ctx.fill();
-        ctx.globalAlpha = 1; ctx.lineWidth = selected === n.id ? 3.5 : 2; ctx.strokeStyle = selected === n.id ? "#ffffff" : own ? col : "#64748b";
-        ctx.stroke();
+        ctx.fillStyle = own ? col : "#1e293b"; ctx.globalAlpha = (own ? 0.22 : 0.9) * base; ctx.fill();
+        ctx.globalAlpha = base; if (dark) ctx.setLineDash([3, 3]); ctx.lineWidth = selected === n.id ? 3.5 : 2; ctx.strokeStyle = selected === n.id ? "#ffffff" : own ? col : "#64748b";
+        ctx.stroke(); ctx.setLineDash([]);
       }
       if (n.terrain === "asteroid" || n.terrain === "well") {
         ctx.strokeStyle = n.terrain === "asteroid" ? "rgba(176,137,95,.6)" : "rgba(155,127,212,.6)";
@@ -810,29 +842,29 @@
         ctx.strokeStyle = "#ff7a5c"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
         ctx.beginPath(); ctx.arc(0, 0, r + 10, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
       }
-      if (frame && frame.nodes[n.id].owner !== n.owner) {
+      if (frame && frame.nodes[n.id].owner !== K[n.id].owner) {
         ctx.strokeStyle = col; ctx.lineWidth = 2.5;
         ctx.beginPath(); ctx.arc(0, 0, r + 12 + 3 * Math.sin(now / 160), 0, Math.PI * 2); ctx.stroke();
       }
-      if (g.held && g.held[n.id]) {
+      if (g.held && g.held[n.id] && !dark) {
         ctx.strokeStyle = "#86efac"; ctx.lineWidth = 2;
         ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, Math.PI * 2); ctx.stroke();
       }
-      for (let k = 0; k < n.level; k++) {
+      for (let k = 0; k < K[n.id].level; k++) {
         ctx.fillStyle = "#fbbf24";
         ctx.beginPath(); ctx.arc(-r + 4 + k * 7, r + 6, 2.5, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
       ctx.font = "700 " + Math.max(11, Math.min(15, r * 0.8)) + "px ui-monospace, monospace";
-      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,9,18,.85)"; ctx.fillStyle = "#f1f6ff";
-      const txt = String(Math.floor(garrOf(n)));
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,9,18,.85)"; ctx.fillStyle = dark && !frame ? "#7c8aa3" : "#f1f6ff";
+      const txt = (dark && !frame ? "~" : "") + String(Math.floor(garrOf(n)));
       ctx.strokeText(txt, p.x, p.y); ctx.fillText(txt, p.x, p.y);
     }
 
     // Support links live during the round.
     if (g.phase === "resolve") {
       for (const sp of g.support) {
-        if (sp.cut) continue;
+        if (sp.cut || (fog && sp.seat !== ME && !fog.sight.has(sp.from) && !fog.sight.has(sp.to))) continue;
         arrowAlong(ctx, [P(g.nodes[sp.from]), P(g.nodes[sp.to])], colorOf(sp.seat), [2, 5], 1.5);
       }
     }

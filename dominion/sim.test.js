@@ -423,3 +423,61 @@ test("all-AI seasons with the draft run, every seat holding a different role eac
   }
   assert.equal(g.phase, "over");
 });
+
+// ---------------------------------------------------------------------
+// Fog of war
+// ---------------------------------------------------------------------
+test("a seat sees its own ground and one lane out, two from Relays, and always the Throne", () => {
+  const g = S.createGame({ seed: 3, seats: seats(4) });
+  const sight = S.sightOf(g, 1);
+  for (const n of S.nodesOf(g, 1)) {
+    assert.ok(sight.has(n.id));
+    for (const x of S.neighbors(g, n.id)) assert.ok(sight.has(x), "neighbours are seen");
+  }
+  assert.ok(sight.has(S.throneNode(g).id));
+  const rivalHome = g.nodes.find((n) => n.type === "command" && n.owner === 3);
+  assert.ok(!sight.has(rivalHome.id), "the far side of the galaxy is dark");
+  assert.ok(sight.size < g.nodes.length / 2);
+  const relay = g.nodes.find((n) => n.type === "relay" && n.owner === NEUTRAL && !sight.has(n.id) &&
+    S.neighbors(g, n.id).some((x) => sight.has(x)));
+  relay.owner = 1;
+  const wider = S.sightOf(g, 1);
+  assert.ok(S.neighbors(g, relay.id).every((x) => wider.has(x)));
+  assert.ok([...wider].some((id) => !S.areLinked(g, id, relay.id) && id !== relay.id && !sight.has(id) &&
+    S.neighbors(g, id).some((x) => S.areLinked(g, x, relay.id))), "a Relay sees two lanes out");
+  g.roles = { 2: "spymaster" };
+  assert.equal(S.sightOf(g, 2).size, g.nodes.length, "the Spymaster sees everything");
+});
+
+test("what is out of sight stays as last seen, in the view, the forecast and the rivals' plans", () => {
+  const g = S.createGame({ seed: 3, seats: seats(4) });
+  const sight = S.sightOf(g, 1);
+  const far = g.nodes.find((n) => n.type === "command" && n.owner === 3);
+  const before = far.garrison;
+  far.garrison = 400;
+  g.fleets.push({ owner: 3, count: 50, path: [far.id, S.neighbors(g, far.id)[0]], leg: 0, t: 0.5, duration: 5 });
+  const v = S.viewFor(g, 1);
+  assert.equal(v.nodes[far.id].garrison, before, "the view shows what was seen");
+  assert.equal(v.fleets.length, 0, "fleets out of sight are not in the view");
+  assert.equal(v.intel[2], undefined, "nobody else's memory travels with the view");
+  const fc = S.forecast(g, 1, 30);
+  assert.ok(fc.every((f) => f.nodes[far.id].garrison < 200), "the forecast does not leak it");
+  // A rival planning with the true board changed out of its sight gives the
+  // same orders as one planning without the change.
+  const a = S.createGame({ seed: 3, seats: seats(4) }), b = S.createGame({ seed: 3, seats: seats(4) });
+  const hidden = b.nodes.filter((n) => !S.sightOf(b, 2).has(n.id));
+  for (const n of hidden) { n.garrison += 77; if (n.owner === NEUTRAL) n.owner = 4; }
+  assert.deepEqual(A.plan(a, 2), A.plan(b, 2), "rivals do not see through the fog");
+  assert.ok(!sight.has(far.id));
+});
+
+test("intel is refreshed at the end of every round with what was seen", () => {
+  const g = S.createGame({ seed: 3, seats: seats(4) });
+  const near = g.nodes.find((n) => n.owner === NEUTRAL && S.sightOf(g, 1).has(n.id) && n.type !== "doomstar");
+  const far = g.nodes.find((n) => n.owner === NEUTRAL && !S.sightOf(g, 1).has(n.id));
+  near.garrison = 3; far.garrison = 3;
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(g.intel[1][near.id][1], 3);
+  assert.equal(g.intel[1][near.id][3], 1, "stamped with the round it was seen");
+  assert.notEqual(g.intel[1][far.id][1], 3, "not what it could not see");
+});

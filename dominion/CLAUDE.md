@@ -48,6 +48,10 @@ plans, not reflexes; points, not annihilation; politics is a second board.
 - The AI walks every list starting from its own sector (`ring` in
   `ai.js`). Walking by node id made every rival break ties toward the same
   low-numbered sectors. Any new AI loop must do the same.
+- Fog of war: rivals plan on `viewFor(game, seat)` and the forecast runs
+  on it too. Anything new that reads the board on a seat's behalf (AI,
+  forecast, UI hints) must read the view, not `game`, or it leaks what the
+  seat cannot see. The UI draws through `known(n, fog)`.
 - Rivals plot only in the plot step, with the same command points and
   orders as a person, and lock. They never act during a resolve.
 

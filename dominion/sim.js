@@ -89,7 +89,7 @@
     warden:    { label: "Warden",    icon: "\u26e8", text: "Every position you hold is dug in this round, without spending orders." },
     engineer:  { label: "Engineer",  icon: "\u2692", text: "Your first upgrade this round is free and research costs a quarter less." },
     merchant:  { label: "Merchant",  icon: "\u25c8", text: "Your positions pay double credits this round." },
-    spymaster: { label: "Spymaster", icon: "\u25c9", text: "Your forecast shows every rival's locked orders this round." }
+    spymaster: { label: "Spymaster", icon: "\u25c9", text: "You see the whole galaxy, and your forecast shows every rival's locked orders, this round." }
   };
   const ROLE_KEYS = Object.keys(ROLES);
   const MARSHAL_BONUS = 1.2;
@@ -184,27 +184,40 @@
   // Gabriel graph of the points: planar (lanes never cross), connected, and
   // symmetric because the points are.
   const GALAXY_R = 1000;
+  // Fifteen positions a wedge: 61 in a four-seat galaxy, 91 with six. The
+  // radius grows with the seat count so every galaxy has the same density
+  // and the same distance between neighbours.
   const WEDGE = [
     // r (fraction of radius), angle (fraction of the wedge, 0..1), type, garrison
     { r: 0.86, a: 0.50, type: "command", g: 30, home: true },
-    { r: 0.70, a: 0.32, type: "factory", g: 14, homeSide: true },
-    { r: 0.70, a: 0.68, type: "mine", g: 8 },
-    { r: 0.97, a: 0.22, type: "relay", g: 8 },
-    { r: 0.97, a: 0.78, type: "factory", g: 12 },
-    { r: 0.52, a: 0.50, type: "relay", g: 12 },
-    { r: 0.58, a: 0.10, type: "factory", g: 16 },
-    { r: 0.36, a: 0.30, type: "mine", g: 14 },
-    { r: 0.80, a: 0.02, type: "relay", g: 14 }
+    { r: 0.74, a: 0.34, type: "factory", g: 14, homeSide: true },
+    { r: 1.00, a: 0.50, type: "factory", g: 8 },
+    { r: 0.74, a: 0.68, type: "mine", g: 8 },
+    { r: 0.97, a: 0.20, type: "relay", g: 8 },
+    { r: 0.97, a: 0.80, type: "factory", g: 12 },
+    { r: 0.62, a: 0.52, type: "relay", g: 12 },
+    { r: 0.62, a: 0.12, type: "factory", g: 16 },
+    { r: 0.84, a: 0.04, type: "relay", g: 14 },
+    { r: 0.80, a: 0.90, type: "mine", g: 12 },
+    { r: 0.48, a: 0.30, type: "mine", g: 14 },
+    { r: 0.48, a: 0.76, type: "factory", g: 16 },
+    { r: 0.34, a: 0.52, type: "relay", g: 18 },
+    { r: 0.24, a: 0.10, type: "mine", g: 20 },
+    { r: 0.60, a: 0.90, type: "relay", g: 16 }
   ];
+  function galaxyRadius(seatCount) {
+    return Math.round(GALAXY_R * Math.sqrt((WEDGE.length * seatCount) / 36));
+  }
 
   function generateGalaxy(seed, seatCount) {
     const rng = makeRng(seed ^ 0x51ed27);
     const N = clamp(seatCount | 0, 2, 6);
-    const W = GALAXY_R * 2.3, H = GALAXY_R * 2.3, cx = W / 2, cy = H / 2;
+    const R = galaxyRadius(N);
+    const W = 2 * Math.round(R * 1.15), H = W, cx = W / 2, cy = H / 2;
     // Jitter one wedge, then copy it round.
     const jit = WEDGE.map((p) => ({
-      r: p.r + (rng() - 0.5) * 0.06,
-      a: clamp(p.a + (rng() - 0.5) * 0.08, 0.02, 0.98),
+      r: p.r + (rng() - 0.5) * 0.05,
+      a: clamp(p.a + (rng() - 0.5) * 0.06, 0.02, 0.98),
       terrain: p.type === "command" ? "open" : (rng() < 0.18 ? "asteroid" : rng() < 0.12 ? "well" : "open"),
       p
     }));
@@ -216,7 +229,7 @@
       // as it is in OUTPOST, and the other seats follow clockwise.
       const a0 = Math.PI / 2 - span / 2 + s * span;
       for (const j of jit) {
-        const ang = a0 + j.a * span, rr = j.r * GALAXY_R;
+        const ang = a0 + j.a * span, rr = j.r * R;
         nodes.push({
           // Whole-unit coordinates: cos and sin may differ in the last bit
           // between browsers, and a rounded position does not.
@@ -228,8 +241,22 @@
         });
       }
     }
-    const lanes = gabrielLanes(nodes, GALAXY_R * 0.62);
+    const lanes = symmetricLanes(gabrielLanes(nodes, GALAXY_R * 0.62), N, WEDGE.length);
     return { nodes, lanes, mapW: W, mapH: H };
+  }
+
+  // Rounded positions are not exactly rotations of each other, so a near
+  // tie can keep a lane in one wedge and drop its copy in another. Keep a
+  // lane only if every turned copy of it is there too: every seat gets the
+  // same lanes, and a subset of a planar graph is still planar.
+  function symmetricLanes(lanes, N, K) {
+    const key = (a, b) => (a < b ? a + "-" + b : b + "-" + a);
+    const have = new Set(lanes.map((l) => key(l.a, l.b)));
+    const turn = (id, t) => (id === 0 ? 0 : 1 + (((Math.floor((id - 1) / K) + t) % N) * K) + ((id - 1) % K));
+    return lanes.filter((l) => {
+      for (let t = 1; t < N; t++) if (!have.has(key(turn(l.a, t), turn(l.b, t)))) return false;
+      return true;
+    });
   }
 
   function gabrielLanes(nodes, maxLen) {
@@ -398,6 +425,9 @@
     game.flags = perSeat(blankFlags);
     dealObjectives(game, makeRng(seed ^ 0x0b1ec7));
     computeSupply(game);
+    // The opening board is public, as a board game's is; after that each
+    // seat only knows what it has seen.
+    game.intel = perSeat(() => nodes.map((n) => [n.owner, n.garrison, n.level, 0]));
     if (game.useDraft) openDraft(game);
     return game;
   }
@@ -831,6 +861,7 @@
           if (winCount < loserCount) fw.underdog = true;
         }
         emit(game, { kind: "clash", x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2, owner: winner, count: Math.round(left),
+          lane: [a.path[a.leg], a.path[a.leg + 1]],
           sides: [{ owner: a.owner, count: Math.round(cA) }, { owner: b.owner, count: Math.round(cB) }] });
       }
     }
@@ -898,6 +929,7 @@
       emit(game, { kind: "score", owner: throne.owner, points: THRONE_POINTS, why: "Held the Throne" });
     }
     scoreObjectives(game);
+    refreshIntel(game);
     game.history[game.history.length - 1].points = Object.assign({}, game.points);
     const live = liveSeats(game);
     const leader = game.seats.slice().sort((a, b) => standing(game, b.id) - standing(game, a.id))[0];
@@ -961,17 +993,75 @@
     return game.points[seat] * 1e6 + own.length * 1e3 + own.reduce((s, n) => s + n.garrison, 0) / 1e3;
   }
 
+  // ---- fog of war ------------------------------------------------------
+  // A seat sees its own positions and everything one lane from them, two
+  // lanes from its Relays, the lanes its fleets are on, and the Throne,
+  // which everyone can always see. The Spymaster sees the whole galaxy for
+  // its round. Everywhere else a seat knows only what it saw last.
+  const SIGHT_RELAY = 2;
+  function sightOf(game, seat) {
+    const seen = new Set();
+    if (roleOf(game, seat) === "spymaster") { for (const n of game.nodes) seen.add(n.id); return seen; }
+    const t = throneNode(game);
+    if (t) seen.add(t.id);
+    for (const n of game.nodes) {
+      if (n.owner !== seat) continue;
+      let ring = [n.id];
+      seen.add(n.id);
+      for (let hop = 0; hop < (n.type === "relay" ? SIGHT_RELAY : 1); hop++) {
+        const nextRing = [];
+        for (const id of ring) for (const nx of neighbors(game, id)) { if (!seen.has(nx)) nextRing.push(nx); seen.add(nx); }
+        ring = nextRing;
+      }
+    }
+    for (const f of game.fleets) {
+      if (f.owner !== seat) continue;
+      seen.add(f.path[f.leg]);
+      if (f.leg + 1 < f.path.length) seen.add(f.path[f.leg + 1]);
+    }
+    return seen;
+  }
+  function fleetSeen(f, seat, sight) {
+    return f.owner === seat || sight.has(f.path[f.leg]) || (f.leg + 1 < f.path.length && sight.has(f.path[f.leg + 1]));
+  }
+  function refreshIntel(game) {
+    for (const s of game.seats) {
+      const mem = game.intel[s.id];
+      if (!mem) continue;            // a seat's view holds only its own memory
+      const sight = sightOf(game, s.id);
+      for (const id of sight) { const n = game.nodes[id]; mem[id] = [n.owner, n.garrison, n.level, game.round]; }
+    }
+  }
+  // The galaxy as one seat knows it: positions out of sight as last seen,
+  // fleets out of sight gone, nobody else's orders. The forecast and the
+  // rival commanders both plan from this, never from the real board.
+  function viewFor(game, seat) {
+    const c = cloneGame(game);
+    const sight = sightOf(game, seat), mem = game.intel[seat];
+    for (const n of c.nodes) {
+      if (sight.has(n.id)) continue;
+      const m = mem[n.id];
+      n.owner = m[0]; n.garrison = m[1]; n.level = m[2]; n.assault = null;
+    }
+    c.fleets = c.fleets.filter((f) => fleetSeen(f, seat, sight));
+    for (const s of c.seats) if (s.id !== seat) { c.orders[s.id] = []; c.locked[s.id] = false; }
+    c.intel = { [seat]: mem.map((m) => m.slice()) };
+    c.viewOf = seat;
+    computeSupply(c);
+    return c;
+  }
+
   // ---- the forecast ------------------------------------------------------
   // What the round will do if every other seat gives no orders at all: a
   // copy of the board with only this seat's plotted orders, run to the end
   // of the round. Returns a frame every `every` seconds for the slider.
   function forecast(game, seat, every) {
     const step0 = every || 1;
-    const c = cloneGame(game);
+    const c = viewFor(game, seat);
     // The Spymaster sees rivals' orders once they are locked; everyone
     // else sees a galaxy where rivals do nothing.
     const spy = roleOf(game, seat) === "spymaster";
-    for (const s of c.seats) if (s.id !== seat && !(spy && game.locked[s.id])) c.orders[s.id] = [];
+    for (const s of c.seats) if (s.id !== seat && spy && game.locked[s.id]) c.orders[s.id] = game.orders[s.id].map((o) => Object.assign({}, o));
     c.events = [];
     beginResolve(c);
     const frames = [snapshotFrame(c)];
@@ -1004,6 +1094,7 @@
     beginResolve, step, runRound, endRound, standing, forecast, snapshotFrame,
     ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
+    sightOf, fleetSeen, refreshIntel, viewFor, SIGHT_RELAY,
     defenceOf, supportFor, resolveArrival, resolveAssault, stepLaneCombat, lanePoint, drainEvents
   };
 });

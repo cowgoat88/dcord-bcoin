@@ -81,7 +81,16 @@
     return t;
   }
 
+  // Rivals plan from what they can see, as a person does: the plan is made
+  // on viewFor's copy and then given on the real board.
   function plan(game, seat) {
+    const view = S.viewFor(game, seat);
+    planOn(view, seat);
+    for (const o of view.orders[seat]) S.addOrder(game, seat, o);
+    S.lockOrders(game, seat);
+    return game.orders[seat];
+  }
+  function planOn(game, seat) {
     const P = personalityOf(game, seat);
     const W = wants(game, seat);
     const N = (id) => game.nodes[id];
@@ -197,8 +206,6 @@
         .sort((a, b) => threatTo(game, seat, b) - threatTo(game, seat, a) || S.dist(r, a) - S.dist(r, b))[0];
       if (dest) add({ kind: "send", from: r.id, to: dest.id, frac: 0.6 });
     }
-    S.lockOrders(game, seat);
-    return game.orders[seat];
   }
 
   // The draft: which role is worth most to this seat this round.
@@ -214,7 +221,7 @@
       case "warden": return 0.6 + 0.5 * endangered * (P === PERSONALITIES.turtle ? 1.5 : 1);
       case "engineer": return (credits >= 120 ? 1.3 : 0.7) + (W.upgrade || W.research ? 0.5 : 0);
       case "merchant": return P === PERSONALITIES.trader ? 1.5 : credits < 60 ? 1.05 : 0.9;
-      case "spymaster": return 0.4;          // it does not read the forecast
+      case "spymaster": return 0.8;          // full sight, though it does not read the forecast
       default: return 0;
     }
   }

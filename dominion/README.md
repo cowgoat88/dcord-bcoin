@@ -85,9 +85,30 @@ Rivals pick by what their situation asks for. With the draft, all-AI
 seasons ending on points: 24 of 30 with three seats, 18 of 30 with four,
 17 of 30 with five, wins by seat within noise.
 
-Not built yet (phases 3 to 6 in the design doc): the galaxy at 60 to 90
-nodes with fog of war, the council, laws and promises, the tech tree and
-faction rules, the campaign, and online play.
+## The galaxy and fog of war (phase 3)
+
+Fifteen positions a wedge: 31 with two seats, 61 with four, 91 with six.
+The radius grows with the seat count, so neighbours are the same distance
+apart in every galaxy. Lanes are kept only when every turned copy of them
+exists, so rounding a position never gives one seat a lane another lacks.
+
+Each seat sees its own positions and everything one lane out, two lanes
+out from its Relays, the lanes its fleets are on, and the Throne. The
+opening board is public; after that, positions out of sight show what you
+saw last (dimmed, garrison marked `~`), fleets out of sight are not shown,
+and fights out of sight are not reported. The forecast and the rival
+commanders both work from that same knowledge (`viewFor`), never from the
+real board: a test changes everything a rival cannot see and checks its
+orders do not change. The Spymaster sees the whole galaxy for its round.
+The season's end lifts the fog. On a phone the camera opens on what you
+can see; pinch out for the rest.
+
+Measured, 100 four-seat all-AI seasons: wins by seat 28/28/23/21; about a
+third of the galaxy is in sight of a seat at any time. Seasons ending on
+points: 25 of 30 with three seats, 51 of 100 with four, 12 of 30 with five.
+
+Not built yet (phases 4 to 6 in the design doc): the council, laws and
+promises, the tech tree and faction rules, the campaign, and online play.
 
 ## Measured
 
@@ -108,7 +129,7 @@ points and nobody was eliminated. Objectives were built to change that.
 node --test dominion/sim.test.js
 ```
 
-26 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+29 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
@@ -117,4 +138,6 @@ plans; copies being independent; determinism; AI seasons finishing, fighting
 and only ever giving legal orders; objectives dealt, revealed and scored
 once each; in-round events counted and reset; rivals following
 objectives; seasons ending on points; the roles draft (order, each role
-once, effects) and AI seasons drafting every round.
+once, effects) and AI seasons drafting every round; what a seat sees, the view, forecast and
+rival plans keeping what is out of sight as last seen, intel refreshed
+each round.
