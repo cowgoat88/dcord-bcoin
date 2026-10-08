@@ -77,6 +77,11 @@
   .grid button { text-align: left; padding: 8px; font-size: 11px; }
   .grid button b { display: block; font-size: 12px; }
   #facUp { min-height: 34px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .roles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px; }
+  .roles button { text-align: left; padding: 10px; display: flex; flex-direction: column; gap: 4px; min-height: 86px; }
+  .roles button b { font-size: 13px; color: var(--gold); }
+  .roles button span { font-size: 11px; color: var(--muted); line-height: 1.45; }
+  .roles button em { font-style: normal; font-size: 11px; }
   .obj { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
   .obj .pts { min-width: 26px; text-align: center; font-weight: 700; color: var(--gold); }
   .obj .txt { flex: 1 1 auto; }
@@ -93,7 +98,7 @@
     #top .brand, #top .k { display: none; }
     .seat { padding: 2px 6px; }
     .seat span.n { display: none; }
-    #btnObj .lbl { display: none; }
+    #btnObj .lbl, #tRole .lbl { display: none; }
     button { padding: 7px 8px; font-size: 11px; }
     .seg button { padding: 7px 7px; }
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -106,6 +111,7 @@
     <span class="brand">DOMINION</span>
     <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted">/12</span></span>
     <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
+    <span id="tRole" class="v" style="color:var(--gold)"></span>
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
     <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
     <div id="standings"></div>
@@ -133,6 +139,14 @@
         <div class="row" style="margin-top:16px;justify-content:flex-end">
           <button class="primary" id="btnBegin">Begin the season</button>
         </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="draftOv" hidden>
+      <div class="card">
+        <h1 style="font-size:16px;letter-spacing:2px" id="draftTitle">CHOOSE YOUR ROLE</h1>
+        <p id="draftOrder"></p>
+        <div class="roles" id="draftGrid"></div>
       </div>
     </div>
 
@@ -244,7 +258,7 @@
     const others = S.FACTION_KEYS.filter((k) => k !== faction);
     const seats = [{ faction, name: "You" }];
     for (let i = 0; i < rivals; i++) seats.push({ ai: true, faction: others[(seed + i) % others.length] });
-    game = S.createGame({ seed, seats });
+    game = S.createGame({ seed, seats, draft: true });
     for (const s of game.seats) if (s.ai) s.name = S.FACTIONS[s.faction].label;
     selected = null; replay = null; lastRoundStart = null; fx.length = 0;
     $("startOv").hidden = true; $("endOv").hidden = true;
@@ -432,9 +446,39 @@
   function startPlot() {
     mode = "send"; selected = null; fcAt = 0; $("fc").value = 0;
     showResolveUI(false);
+    // The draft first: rivals behind you on points pick before you.
+    if (game.phase === "draft") {
+      A.runDraft(game);
+      if (game.phase === "draft") { showDraft(); return; }
+    }
+    $("draftOv").hidden = true;
     A.planAll(game);                       // the rivals plot at the same moment you do
     replot();
     $("btnReplay").disabled = !lastRoundStart;
+    const r = S.roleOf(game, ME);
+    if (r) say(S.ROLES[r].icon + " " + S.ROLES[r].label + ": " + S.ROLES[r].text);
+  }
+  function showDraft() {
+    $("draftTitle").textContent = "Round " + game.round + " \u00b7 choose your role";
+    const order = game.draft.order.map((id) => {
+      const s = game.seatById[id], pick = game.draft.picks[id];
+      return "<span class='seat" + (id === ME ? " me" : "") + "'><i style='background:" + s.color + "'></i>" +
+        (id === ME ? "You" : s.name) + (pick ? " \u00b7 " + S.ROLES[pick].icon + " " + S.ROLES[pick].label : id === S.draftTurn(game) ? " \u00b7 picking" : "") + "</span>";
+    }).join(" ");
+    $("draftOrder").innerHTML = "Pick order, fewest points first: " + order;
+    const left = S.rolesLeft(game);
+    const grid = $("draftGrid");
+    grid.innerHTML = "";
+    for (const k of S.ROLE_KEYS) {
+      const r = S.ROLES[k], taken = left.indexOf(k) === -1;
+      const owner = taken ? Object.keys(game.draft.picks).find((id) => game.draft.picks[id] === k) : null;
+      const b = document.createElement("button");
+      b.dataset.role = k; b.disabled = taken;
+      b.innerHTML = "<b>" + r.icon + " " + r.label + "</b><span>" + r.text + "</span>" +
+        (owner ? "<em style='color:" + game.seatById[owner].color + "'>" + game.seatById[owner].name + "</em>" : "");
+      grid.appendChild(b);
+    }
+    $("draftOv").hidden = false;
   }
   function lockIn() {
     if (!game || game.phase !== "plot") return;
@@ -495,6 +539,9 @@
   function refresh() {
     if (!game) return;
     $("tRound").textContent = game.round;
+    const myRole = S.roleOf(game, ME);
+    $("tRole").innerHTML = myRole ? S.ROLES[myRole].icon + "<span class='lbl'> " + S.ROLES[myRole].label + "</span>" : "";
+    $("tRole").title = myRole ? S.ROLES[myRole].text : "";
     $("tCp").textContent = S.cpUsed(game, ME) + "/" + S.commandPoints(game, ME);
     $("tCr").textContent = Math.floor(game.credits[ME]) + (game.phase === "plot" && S.spendable(game, ME) < game.credits[ME] ? " (" + Math.floor(S.spendable(game, ME)) + ")" : "");
     $("tCh").textContent = Math.floor(game.charge[ME]) + "/" + S.DOOM_CHARGE_NEEDED;
@@ -542,7 +589,7 @@
     if (!game.orders[ME].length) ol.innerHTML = "<span class='muted'>No orders yet. Every position you leave alone keeps building.</span>";
     $("fcLabel").textContent = fcAt ? "Forecast +" + fcAt + "s" : "Now";
     $("forecastTag").style.display = fcAt && game.phase === "plot" && !replay ? "block" : "none";
-    $("forecastTag").textContent = "FORECAST +" + fcAt + "s · rivals' orders unknown";
+    $("forecastTag").textContent = "FORECAST +" + fcAt + "s \u00b7 " + (S.roleOf(game, ME) === "spymaster" ? "rivals' orders shown" : "rivals' orders unknown");
     $("btnLock").textContent = "Lock orders (" + S.cpUsed(game, ME) + ")";
     const metNow = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(ME) && o.test(game, ME)).length;
     $("btnObj").innerHTML = "&#9678;<span class='lbl'> Objectives</span>" + (metNow ? " <b style='color:var(--good)'>" + metNow + "</b>" : "");
@@ -571,6 +618,12 @@
     const hidden = game.deck.length - game.revealed;
     $("objMore").textContent = hidden ? hidden + " more to be revealed, one at the end of each round." : "All objectives are revealed.";
   }
+  $("draftGrid").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-role]"); if (!b || b.disabled) return;
+    const why = S.pickRole(game, ME, b.dataset.role);
+    if (why) { say(why); return; }
+    startPlot();
+  });
   $("btnObj").addEventListener("click", () => { buildObjectives(); $("objOv").hidden = false; });
   $("btnObjClose").addEventListener("click", () => { $("objOv").hidden = true; });
   $("objOv").addEventListener("click", (e) => { if (e.target.id === "objOv") $("objOv").hidden = true; });

@@ -201,6 +201,39 @@
     return game.orders[seat];
   }
 
+  // The draft: which role is worth most to this seat this round.
+  function roleValue(game, seat, role) {
+    const P = personalityOf(game, seat);
+    const W = wants(game, seat);
+    const mine = S.nodesOf(game, seat);
+    const endangered = mine.filter((n) => threatTo(game, seat, n) > S.defenceOf(game, n)).length;
+    const credits = game.credits[seat];
+    switch (role) {
+      case "admiral": return 1.1 + 0.05 * mine.length;
+      case "marshal": return (P === PERSONALITIES.hawk ? 1.6 : P === PERSONALITIES.zealot ? 1.4 : 1.1);
+      case "warden": return 0.6 + 0.5 * endangered * (P === PERSONALITIES.turtle ? 1.5 : 1);
+      case "engineer": return (credits >= 120 ? 1.3 : 0.7) + (W.upgrade || W.research ? 0.5 : 0);
+      case "merchant": return P === PERSONALITIES.trader ? 1.5 : credits < 60 ? 1.05 : 0.9;
+      case "spymaster": return 0.4;          // it does not read the forecast
+      default: return 0;
+    }
+  }
+  function draftPick(game, seat) {
+    const left = S.rolesLeft(game);
+    let best = left[0], bv = -Infinity;
+    for (const r of left) { const v = roleValue(game, seat, r); if (v > bv) { bv = v; best = r; } }
+    return S.pickRole(game, seat, best);
+  }
+  // Let AI seats pick until it is a person's turn or the draft is over.
+  function runDraft(game) {
+    let guard = 0;
+    while (game.phase === "draft" && guard++ < 10) {
+      const seat = S.draftTurn(game);
+      if (!seat || !game.seatById[seat].ai) return;
+      draftPick(game, seat);
+    }
+  }
+
   // Plot every AI seat that has not locked.
   function planAll(game) {
     for (const s of game.seats) {
@@ -208,5 +241,5 @@
     }
   }
 
-  return { plan, planAll, wants, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { plan, planAll, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });

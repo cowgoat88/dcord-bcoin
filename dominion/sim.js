@@ -79,6 +79,22 @@
   const SUPPORT_SHARE = 0.5;      // a supporting position lends this share of its garrison
   const HOLD_BONUS = 1.25;        // a held (dug-in) position defends at this multiple
 
+  // ---- roles: the initiative draft ------------------------------------------
+  // At the start of every round each seat drafts one role, fewest points
+  // first, so the seat behind picks before the leader. A role is one
+  // strong ability for that round only.
+  const ROLES = {
+    admiral:   { label: "Admiral",   icon: "\u2693", text: "Two extra orders this round." },
+    marshal:   { label: "Marshal",   icon: "\u2694", text: "Your fleets strike 20% harder this round, in assaults and in lanes." },
+    warden:    { label: "Warden",    icon: "\u26e8", text: "Every position you hold is dug in this round, without spending orders." },
+    engineer:  { label: "Engineer",  icon: "\u2692", text: "Your first upgrade this round is free and research costs a quarter less." },
+    merchant:  { label: "Merchant",  icon: "\u25c8", text: "Your positions pay double credits this round." },
+    spymaster: { label: "Spymaster", icon: "\u25c9", text: "Your forecast shows every rival's locked orders this round." }
+  };
+  const ROLE_KEYS = Object.keys(ROLES);
+  const MARSHAL_BONUS = 1.2;
+  function roleOf(game, seat) { return (game.roles && game.roles[seat]) || null; }
+
   // ---- helpers -------------------------------------------------------------
   function makeRng(seed) {
     let a = (seed >>> 0) || 1;
@@ -128,10 +144,16 @@
   function techCost(game, seat, track) {
     const lv = techLevel(game, seat, track);
     if (!TECH[track] || lv >= TECH_MAX) return null;
-    return Math.round(TECH[track].costs[lv] * mod(game, seat, "research"));
+    return Math.round(TECH[track].costs[lv] * mod(game, seat, "research") * (roleOf(game, seat) === "engineer" ? 0.75 : 1));
   }
   function assaultMult(game, seat) {
-    return (1 + TECH.assault.perLevel * techLevel(game, seat, "assault")) * mod(game, seat, "attack");
+    return (1 + TECH.assault.perLevel * techLevel(game, seat, "assault")) * mod(game, seat, "attack") *
+      (roleOf(game, seat) === "marshal" ? MARSHAL_BONUS : 1);
+  }
+  // What the n-th upgrade a seat makes this round costs (n from 0): the
+  // Engineer's first is free.
+  function upgradePrice(game, seat, level, nth) {
+    return roleOf(game, seat) === "engineer" && nth === 0 ? 0 : upgradeCost(level);
   }
   function fortifyMult(game, seat) {
     return (1 + TECH.fortify.perLevel * techLevel(game, seat, "fortify")) * mod(game, seat, "defence");
@@ -278,7 +300,7 @@
   const STAGE_ONE_SHOWN = 5, STAGE_TWO_SHOWN = 5;
   function objectiveById(id) { return OBJECTIVES.find((o) => o.id === id) || SECRETS.find((o) => o.id === id) || null; }
   function blankFlags() {
-    return { captures: 0, lost: 0, laneKills: 0, underdog: false, doomOnLeader: false, tookCommand: false, supportDecisive: false };
+    return { upgrades: 0, captures: 0, lost: 0, laneKills: 0, underdog: false, doomOnLeader: false, tookCommand: false, supportDecisive: false };
   }
   // A shuffled deck from the seed: five stage I objectives, then five stage
   // II, two showing at the start and one more revealed at every status.
@@ -355,7 +377,10 @@
       doomShot: null,
       time: 0,
       round: 1,
-      phase: "plot",          // plot | resolve | over
+      phase: o.draft ? "draft" : "plot",   // draft | plot | resolve | over
+      useDraft: !!o.draft,
+      draft: null,            // { order: [seat...], picks: { seat: role } } while drafting
+      roles: {},              // this round's roles, seat -> role
       clock: 0,               // seconds into the current resolve
       orders: perSeat(() => []),
       locked: perSeat(false),
@@ -373,6 +398,7 @@
     game.flags = perSeat(blankFlags);
     dealObjectives(game, makeRng(seed ^ 0x0b1ec7));
     computeSupply(game);
+    if (game.useDraft) openDraft(game);
     return game;
   }
 
@@ -455,7 +481,8 @@
   // Plotting is free of side effects: an order is checked against the
   // frozen board and stored. Nothing moves until the round resolves.
   function commandPoints(game, seat) {
-    return Math.min(CP_MAX, CP_BASE + Math.floor(nodesOf(game, seat).length / CP_PER));
+    return Math.min(CP_MAX, CP_BASE + Math.floor(nodesOf(game, seat).length / CP_PER)) +
+      (roleOf(game, seat) === "admiral" ? 2 : 0);
   }
   function cpUsed(game, seat) { return game.orders[seat].length; }
 
@@ -500,7 +527,8 @@
       if (!at || at.owner !== seat) return "You don't hold that position.";
       const planned = mine.filter((o) => o.kind === "upgrade" && o.at === order.at).length;
       if (at.level + planned >= MAX_LEVEL) return "Already at maximum level.";
-      const cost = upgradeCost(at.level + planned);
+      const nth = mine.filter((o) => o.kind === "upgrade").length;
+      const cost = upgradePrice(game, seat, at.level + planned, nth);
       if (spendable(game, seat) < cost) return "Need " + cost + " credits.";
       return undefined;
     }
@@ -525,11 +553,12 @@
   // Credits not already promised to this round's upgrades and research.
   function spendable(game, seat) {
     let c = game.credits[seat] || 0;
+    const ups = game.orders[seat].filter((x) => x.kind === "upgrade");
     for (const o of game.orders[seat]) {
       if (o.kind === "upgrade") {
         const at = game.nodes[o.at];
         const before = game.orders[seat].filter((x) => x.kind === "upgrade" && x.at === o.at);
-        c -= upgradeCost(at.level + before.indexOf(o));
+        c -= upgradePrice(game, seat, at.level + before.indexOf(o), ups.indexOf(o));
       } else if (o.kind === "research") {
         c -= techCost(game, seat, o.track) || 0;
       }
@@ -604,9 +633,10 @@
   function applyUpgrade(game, seat, id) {
     const n = game.nodes[id];
     if (!n || n.owner !== seat || n.level >= MAX_LEVEL) return;
-    const cost = upgradeCost(n.level);
+    const cost = upgradePrice(game, seat, n.level, game.flags[seat].upgrades);
     if (game.credits[seat] < cost) return;
     game.credits[seat] -= cost;
+    game.flags[seat].upgrades += 1;
     n.level += 1;
     emit(game, { kind: "upgrade", x: n.x, y: n.y, owner: seat, level: n.level });
   }
@@ -695,7 +725,7 @@
   }
   function defenceOf(game, node) {
     if (node.owner === NEUTRAL) return node.garrison * terrainDefence(node);
-    const hold = game.held[node.id] === node.owner ? HOLD_BONUS : 1;
+    const hold = game.held[node.id] === node.owner || (game.phase === "resolve" && roleOf(game, node.owner) === "warden") ? HOLD_BONUS : 1;
     return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner) * terrainDefence(node) * hold;
   }
 
@@ -819,7 +849,7 @@
       if (n.owner === NEUTRAL) continue;
       const s = nodeStats(n, game), m = supplyMult(n, game);
       if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * m * dt);
-      game.credits[n.owner] += s.creditRate * m * dt;
+      game.credits[n.owner] += s.creditRate * m * dt * (roleOf(game, n.owner) === "merchant" ? 2 : 1);
     }
     for (const f of game.fleets) {
       const L0 = laneOf(f);
@@ -885,8 +915,44 @@
     game.clock = 0;
     game.support = [];
     game.held = {};
+    game.roles = {};
     for (const s of game.seats) { game.orders[s.id] = []; game.locked[s.id] = !alive(game, s.id); }
+    if (game.useDraft) openDraft(game);
     emit(game, { kind: "round", round: game.round });
+  }
+
+  // ---- the draft -----------------------------------------------------------
+  function draftOrder(game) {
+    const rank = {};
+    seatOrder(game).forEach((id, i) => { rank[id] = i; });
+    return liveSeats(game).sort((a, b) => game.points[a] - game.points[b] || rank[a] - rank[b]);
+  }
+  function openDraft(game) {
+    game.phase = "draft";
+    game.roles = {};
+    game.draft = { order: draftOrder(game), picks: {} };
+  }
+  function draftTurn(game) {
+    if (game.phase !== "draft") return null;
+    return game.draft.order.find((id) => !game.draft.picks[id]) || null;
+  }
+  function rolesLeft(game) {
+    if (!game.draft) return ROLE_KEYS.slice();
+    const taken = Object.values(game.draft.picks);
+    return ROLE_KEYS.filter((k) => taken.indexOf(k) === -1);
+  }
+  function pickRole(game, seat, role) {
+    if (game.phase !== "draft") return "The draft is over.";
+    if (draftTurn(game) !== seat) return "It is not your pick.";
+    if (!ROLES[role]) return "No such role.";
+    if (rolesLeft(game).indexOf(role) === -1) return "That role is taken.";
+    game.draft.picks[seat] = role;
+    emit(game, { kind: "role", owner: seat, role });
+    if (!draftTurn(game)) {
+      game.roles = Object.assign({}, game.draft.picks);
+      game.phase = "plot";
+    }
+    return undefined;
   }
   // Points first, then positions, then garrison: the order the season's
   // standings are read in.
@@ -902,7 +968,10 @@
   function forecast(game, seat, every) {
     const step0 = every || 1;
     const c = cloneGame(game);
-    for (const s of c.seats) if (s.id !== seat) c.orders[s.id] = [];
+    // The Spymaster sees rivals' orders once they are locked; everyone
+    // else sees a galaxy where rivals do nothing.
+    const spy = roleOf(game, seat) === "spymaster";
+    for (const s of c.seats) if (s.id !== seat && !(spy && game.locked[s.id])) c.orders[s.id] = [];
     c.events = [];
     beginResolve(c);
     const frames = [snapshotFrame(c)];
@@ -933,6 +1002,7 @@
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,
     commandPoints, cpUsed, checkOrder, addOrder, removeOrder, lockOrders, allLocked, spendable,
     beginResolve, step, runRound, endRound, standing, forecast, snapshotFrame,
+    ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     defenceOf, supportFor, resolveArrival, resolveAssault, stepLaneCombat, lanePoint, drainEvents
   };

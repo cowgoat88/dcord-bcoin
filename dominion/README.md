@@ -67,6 +67,24 @@ Measured, all-AI seasons ending on points rather than the round limit:
 16 of 30 with three seats, 8 of 30 with four, 13 of 30 with five, with
 wins by seat within noise (9/11/10, 6/7/7/10, 8/7/6/6/3).
 
+## Roles
+
+Every round opens with a draft of six roles, fewest points picking first,
+so the leader gets what is left. Each lasts one round:
+
+| Role | Effect |
+|---|---|
+| Admiral | two more command points |
+| Marshal | assaults 20% stronger |
+| Warden | every position dug in (Hold's defence) through the resolve |
+| Engineer | first upgrade free, research 25% cheaper |
+| Merchant | credits come in twice as fast |
+| Spymaster | the forecast shows rivals' locked orders |
+
+Rivals pick by what their situation asks for. With the draft, all-AI
+seasons ending on points: 24 of 30 with three seats, 18 of 30 with four,
+17 of 30 with five, wins by seat within noise.
+
 Not built yet (phases 3 to 6 in the design doc): the galaxy at 60 to 90
 nodes with fog of war, the council, laws and promises, the tech tree and
 faction rules, the campaign, and online play.
@@ -90,7 +108,7 @@ points and nobody was eliminated. Objectives were built to change that.
 node --test dominion/sim.test.js
 ```
 
-24 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+26 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
@@ -98,4 +116,5 @@ the forecast matching reality to the unit when rivals pass and hiding their
 plans; copies being independent; determinism; AI seasons finishing, fighting
 and only ever giving legal orders; objectives dealt, revealed and scored
 once each; in-round events counted and reset; rivals following
-objectives; seasons ending on points.
+objectives; seasons ending on points; the roles draft (order, each role
+once, effects) and AI seasons drafting every round.

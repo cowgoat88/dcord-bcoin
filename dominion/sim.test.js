@@ -384,3 +384,42 @@ test("seasons end on points, not only on the round limit", () => {
   }
   assert.ok(onPoints >= 3, "objectives decide some seasons: " + onPoints + "/12");
 });
+
+test("the roles draft: fewest points picks first, each role once, and roles take effect", () => {
+  const g = S.createGame({ seed: 5, seats: seats(4), draft: true });
+  assert.equal(g.phase, "draft");
+  g.points[3] = 2; g.points[1] = 1;
+  S.openDraft(g);
+  assert.equal(S.draftTurn(g), g.draft.order[0]);
+  assert.equal(g.draft.order[g.draft.order.length - 1], 3, "the leader picks last");
+  assert.ok(g.points[g.draft.order[0]] === 0);
+  const first = S.draftTurn(g);
+  assert.ok(S.pickRole(g, 3, "admiral"), "out of turn is refused");
+  assert.equal(S.pickRole(g, first, "admiral"), undefined);
+  const second = S.draftTurn(g);
+  assert.ok(S.pickRole(g, second, "admiral"), "a taken role is refused");
+  assert.equal(S.addOrder(g, first, { type: "hold", node: S.nodesOf(g, first)[0].id }) !== undefined, true,
+    "no orders during the draft");
+  ["merchant", "engineer", "spymaster"].forEach((r) => assert.equal(S.pickRole(g, S.draftTurn(g), r), undefined));
+  assert.equal(g.phase, "plot");
+  assert.equal(S.rolesLeft(g).length, 2);
+  const base = Math.min(S.CP_MAX, S.CP_BASE + Math.floor(S.nodesOf(g, first).length / S.CP_PER));
+  assert.equal(S.commandPoints(g, first), base + 2, "the Admiral plots two more orders");
+  const eng = Object.keys(g.roles).map(Number).find((s) => g.roles[s] === "engineer");
+  assert.equal(S.upgradePrice(g, eng, 0, 0), 0, "the Engineer's first upgrade is free");
+  assert.ok(S.upgradePrice(g, eng, 0, 1) > 0);
+});
+
+test("all-AI seasons with the draft run, every seat holding a different role each round", () => {
+  const g = S.createGame({ seed: 9, seats: seats(4), draft: true });
+  let rounds = 0;
+  while (g.phase !== "over" && rounds < 20) {
+    A.runDraft(g);
+    assert.equal(g.phase, "plot");
+    const taken = Object.values(g.roles);
+    assert.equal(new Set(taken).size, taken.length);
+    assert.equal(taken.length, S.liveSeats(g).length);
+    A.planAll(g); S.beginResolve(g); S.runRound(g); S.drainEvents(g); rounds++;
+  }
+  assert.equal(g.phase, "over");
+});
