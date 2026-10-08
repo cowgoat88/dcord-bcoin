@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Doomstar: Dominion</title>
+<style>
+  :root {
+    --bg: #070b14; --panel: #0e1524; --panel2: #121b2e; --line: rgba(120,150,190,.18);
+    --text: #dbe6f5; --muted: #7d8ca3; --gold: #ffd166; --doom: #ff7a5c; --good: #86efac;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow: hidden;
+    -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
+  button { font: inherit; color: var(--text); background: rgba(255,255,255,.05); border: 1px solid var(--line);
+    padding: 7px 11px; border-radius: 7px; cursor: pointer; touch-action: manipulation; }
+  button:disabled { opacity: .35; cursor: default; }
+  button.on { background: rgba(34,211,238,.16); border-color: #22d3ee; color: #a5f3fc; }
+  button.primary { background: rgba(255,209,102,.16); border-color: var(--gold); color: #fde68a; font-weight: 700; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* top bar: round, phase, your numbers, the standings, Menu */
+  #top { display: flex; align-items: center; gap: 12px; padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
+    background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+  #top .brand { color: var(--gold); font-weight: 700; letter-spacing: 2px; font-size: 12px; }
+  #top .k { color: var(--muted); font-size: 10px; text-transform: uppercase; margin-right: 4px; }
+  #top .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #standings { display: flex; gap: 6px; flex: 1 1 auto; overflow: hidden; }
+  .seat { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px;
+    border: 1px solid var(--line); font-size: 11px; }
+  .seat i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .seat.out { opacity: .35; text-decoration: line-through; }
+  .seat.me { border-color: rgba(255,255,255,.4); }
+
+  #boardWrap { position: relative; flex: 1 1 auto; min-height: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #toast { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
+    padding: 7px 14px; border-radius: 8px; background: rgba(10,15,26,.92); border: 1px solid var(--line);
+    text-align: center; pointer-events: none; opacity: 0; transition: opacity .25s; z-index: 5; }
+  #toast.show { opacity: 1; }
+  #forecastTag { position: absolute; right: 10px; bottom: 10px; padding: 3px 9px; border-radius: 6px; font-size: 11px;
+    background: rgba(255,209,102,.15); border: 1px solid var(--gold); color: #fde68a; display: none; }
+
+  /* bottom: what you have selected, what you can order, your order list,
+     the forecast, and the button that ends your plotting */
+  #panel { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 10px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 7px; }
+  .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #selInfo { color: var(--muted); min-height: 16px; }
+  #selInfo b { color: var(--text); }
+  .seg { display: inline-flex; }
+  .seg button { border-radius: 0; padding: 7px 9px; }
+  .seg button:first-child { border-radius: 7px 0 0 7px; }
+  .seg button:last-child { border-radius: 0 7px 7px 0; }
+  #orders { display: flex; gap: 5px; flex-wrap: wrap; min-height: 26px; }
+  .ord { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; border-radius: 12px;
+    background: var(--panel2); border: 1px solid var(--line); font-size: 11px; }
+  .ord button { padding: 0 6px; border: none; background: none; color: var(--muted); font-size: 13px; }
+  #fcRow input { flex: 1 1 140px; accent-color: #ffd166; }
+  #fcLabel { min-width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #resolveRow { display: none; }
+  #bar { flex: 1 1 auto; height: 6px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: var(--gold); }
+  .muted { color: var(--muted); }
+
+  /* start and end */
+  .overlay { position: absolute; inset: 0; background: rgba(4,7,14,.86); display: flex; align-items: center;
+    justify-content: center; z-index: 10; padding: 16px; }
+  .overlay[hidden] { display: none; }
+  .card { width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px; }
+  .card h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: 4px; color: var(--gold); }
+  .card h2 { margin: 16px 0 8px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  .card p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .grid button { text-align: left; padding: 8px; font-size: 11px; }
+  .grid button b { display: block; font-size: 12px; }
+  #facUp { min-height: 34px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
+  .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
+  .scores td:last-child { text-align: right; font-weight: 700; }
+
+  @media (max-width: 620px) {
+    #top { gap: 8px; padding: 6px 8px; }
+    #top .brand, #top .k { display: none; }
+    .seat { padding: 2px 6px; }
+    .seat span.n { display: none; }
+    button { padding: 7px 8px; font-size: 11px; }
+    .seg button { padding: 7px 7px; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span class="brand">DOMINION</span>
+    <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted">/12</span></span>
+    <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
+    <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
+    <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
+    <div id="standings"></div>
+    <button id="btnMenu">Menu</button>
+  </div>
+
+  <div id="boardWrap">
+    <canvas id="board"></canvas>
+    <div id="toast"></div>
+    <div id="forecastTag">FORECAST</div>
+
+    <div class="overlay" id="startOv">
+      <div class="card">
+        <h1>DOOMSTAR</h1>
+        <p style="margin-top:0;color:var(--text)">DOMINION &middot; a season of the galactic war</p>
+        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 10, or the most points after 12 rounds, rules.</p>
+        <h2>Rivals</h2>
+        <div class="seg" id="rivalSeg">
+          <button data-n="2" class="on">2</button><button data-n="3">3</button><button data-n="4">4</button><button data-n="5">5</button>
+        </div>
+        <h2>Your faction</h2>
+        <div class="grid" id="facGrid"></div>
+        <div id="facUp"></div>
+        <div class="row" style="margin-top:16px;justify-content:flex-end">
+          <button class="primary" id="btnBegin">Begin the season</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="endOv" hidden>
+      <div class="card">
+        <h1 id="endTitle">Season over</h1>
+        <p id="endText"></p>
+        <table class="scores" id="endScores"></table>
+        <div class="row" style="justify-content:flex-end">
+          <button id="btnAgain" class="primary">New season</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div id="selInfo">Tap one of your positions.</div>
+    <div class="row" id="actRow">
+      <span class="seg" id="fracSeg">
+        <button data-f="0.25">25%</button><button data-f="0.5" class="on">50%</button><button data-f="0.75">75%</button><button data-f="1">All</button>
+      </span>
+      <button id="btnSupport" title="Lend half this position's strength to a neighbour this round">Support</button>
+      <button id="btnHold" title="Dig in: defend 25% harder this round, but send nothing">Hold</button>
+      <button id="btnUp">Upgrade</button>
+      <button id="btnAssault">&#9876; Assault</button>
+      <button id="btnFortify">&#9960; Fortify</button>
+      <button id="btnFire">&#9728; Fire</button>
+    </div>
+    <div id="orders"></div>
+    <div class="row" id="fcRow">
+      <span id="fcLabel">Now</span>
+      <input id="fc" type="range" min="0" max="30" step="1" value="0" aria-label="Forecast">
+      <button id="btnReplay" disabled>Replay</button>
+      <button id="btnLock" class="primary">Lock orders</button>
+    </div>
+    <div class="row" id="resolveRow">
+      <span id="rLabel" class="muted">Round 1 · 0s</span>
+      <div id="bar"><i></i></div>
+      <span class="seg" id="speedSeg"><button data-s="1">1&times;</button><button data-s="2" class="on">2&times;</button><button data-s="4">4&times;</button></span>
+      <button id="btnSkip">Skip</button>
+    </div>
+  </div>
+</div>
+
+<script src="sim.js"></script>
+<script src="ai.js"></script>
+<script src="holo.js"></script>
+<script>
+(function () {
+  "use strict";
+  const S = window.DominionSim, A = window.DominionAI, H = window.OutpostHolo;
+  const ME = 1;
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("board"), ctx = canvas.getContext("2d");
+
+  let game = null;
+  let rivals = 2, faction = "standard";
+  let selected = null;          // node id
+  let mode = "send";            // send | support | fire
+  let frac = 0.5;
+  let speed = 2;
+  let frames = null;            // forecast frames for the slider
+  let fcAt = 0;
+  let replay = null;            // { game, frames } while watching last round again
+  let lastRoundStart = null;    // copy of the board as the last round began
+  const fx = [];                // particles and floating words
+
+  // ---------------------------------------------------------------
+  // Start screen
+  // ---------------------------------------------------------------
+  function buildFactions() {
+    const grid = $("facGrid");
+    grid.innerHTML = "";
+    for (const k of S.FACTION_KEYS) {
+      const f = S.FACTIONS[k];
+      const b = document.createElement("button");
+      b.dataset.k = k;
+      b.innerHTML = "<b>" + f.icon + " " + f.label + "</b>";
+      b.classList.toggle("on", k === faction);
+      grid.appendChild(b);
+    }
+    $("facUp").textContent = S.FACTIONS[faction].up;
+  }
+  $("facGrid").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    faction = b.dataset.k; buildFactions();
+  });
+  $("rivalSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    rivals = +b.dataset.n;
+    [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+  $("btnBegin").addEventListener("click", () => {
+    const seed = (Date.now() % 100000) + 1;
+    const others = S.FACTION_KEYS.filter((k) => k !== faction);
+    const seats = [{ faction, name: "You" }];
+    for (let i = 0; i < rivals; i++) seats.push({ ai: true, faction: others[(seed + i) % others.length] });
+    game = S.createGame({ seed, seats });
+    for (const s of game.seats) if (s.ai) s.name = S.FACTIONS[s.faction].label;
+    selected = null; replay = null; lastRoundStart = null; fx.length = 0;
+    $("startOv").hidden = true; $("endOv").hidden = true;
+    fitCamera();
+    startPlot();
+  });
+  $("btnAgain").addEventListener("click", () => { $("endOv").hidden = true; $("startOv").hidden = false; });
+  $("btnMenu").addEventListener("click", () => { $("startOv").hidden = false; });
+
+  // ---------------------------------------------------------------
+  // Camera: pan and zoom over the galaxy
+  // ---------------------------------------------------------------
+  const cam = { x: 0, y: 0, s: 1 };     // screen = (world - cam) * s
+  let cssW = 0, cssH = 0, dpr = 1;
+  function resize() {
+    const r = $("boardWrap").getBoundingClientRect();
+    cssW = r.width; cssH = r.height; dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.floor(cssW * dpr); canvas.height = Math.floor(cssH * dpr);
+  }
+  function fitCamera() {
+    resize();
+    if (!game) return;
+    const pad = 56;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of game.nodes) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x); y1 = Math.max(y1, n.y); }
+    cam.s = Math.min((cssW - pad * 2) / (x1 - x0), (cssH - pad * 2) / (y1 - y0));
+    cam.x = (x0 + x1) / 2 - cssW / 2 / cam.s;
+    cam.y = (y0 + y1) / 2 - cssH / 2 / cam.s;
+    camMin = cam.s * 0.8;
+  }
+  let camMin = 0.1;
+  const toScreen = (x, y) => ({ x: (x - cam.x) * cam.s, y: (y - cam.y) * cam.s });
+  const toWorld = (px, py) => ({ x: px / cam.s + cam.x, y: py / cam.s + cam.y });
+  function zoomAt(px, py, f) {
+    const w = toWorld(px, py);
+    cam.s = S.clamp(cam.s * f, camMin, camMin * 6);
+    cam.x = w.x - px / cam.s; cam.y = w.y - py / cam.s;
+  }
+  window.addEventListener("resize", () => { const s = cam.s; resize(); if (!s) fitCamera(); });
+
+  // ---------------------------------------------------------------
+  // Input: tap to select and order, drag to pan, pinch or wheel to zoom
+  // ---------------------------------------------------------------
+  const pointers = new Map();
+  let dragFrom = null, moved = false, pinch = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    if (pointers.size === 1) { dragFrom = { x: e.offsetX, y: e.offsetY, cx: cam.x, cy: cam.y }; moved = false; }
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: cam.s, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+      moved = true;
+    }
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    if (pinch && pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      const w = toWorld(pinch.mx, pinch.my);
+      cam.s = S.clamp(pinch.s * d / pinch.d, camMin, camMin * 6);
+      cam.x = w.x - pinch.mx / cam.s; cam.y = w.y - pinch.my / cam.s;
+      return;
+    }
+    if (dragFrom) {
+      const dx = e.offsetX - dragFrom.x, dy = e.offsetY - dragFrom.y;
+      if (Math.hypot(dx, dy) > 8) moved = true;
+      if (moved) { cam.x = dragFrom.cx - dx / cam.s; cam.y = dragFrom.cy - dy / cam.s; }
+    }
+  });
+  const endPointer = (e) => {
+    const wasTap = pointers.size === 1 && !moved;
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0) { if (wasTap) tap(e.offsetX, e.offsetY, e.pointerType === "touch"); dragFrom = null; }
+  };
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", (e) => { pointers.delete(e.pointerId); pinch = null; dragFrom = null; });
+  canvas.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, e.deltaY < 0 ? 1.12 : 1 / 1.12); }, { passive: false });
+
+  function nodeAt(px, py, touch) {
+    if (!game) return null;
+    let best = null, bd = Infinity;
+    for (const n of game.nodes) {
+      const p = toScreen(n.x, n.y);
+      const r = Math.max(14, S.NODE_TYPES[n.type].radius * cam.s) + (touch ? 12 : 4);
+      const d = Math.hypot(p.x - px, p.y - py);
+      if (d < r && d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+
+  function tap(px, py, touch) {
+    if (!game || game.phase !== "plot" || replay) return;
+    const n = nodeAt(px, py, touch);
+    if (!n) { selected = null; mode = "send"; refresh(); return; }
+    if (mode === "fire") {
+      say(S.addOrder(game, ME, { kind: "fire", target: n.id }) || "Strike plotted on " + label(n) + ".");
+      mode = "send"; replot(); return;
+    }
+    if (selected === null) {
+      if (n.owner === ME) { selected = n.id; refresh(); }
+      else say(describe(n));
+      return;
+    }
+    if (n.id === selected) { selected = null; mode = "send"; refresh(); return; }
+    if (mode === "support") {
+      const why = S.addOrder(game, ME, { kind: "support", from: selected, to: n.id });
+      say(why || label(game.nodes[selected]) + " supports " + label(n) + " this round.");
+      mode = "send"; if (!why) selected = null; replot(); return;
+    }
+    // Default: send. Tapping another of your own positions with nothing
+    // planned switches the selection instead, which is what people expect.
+    if (n.owner === ME && !game.orders[ME].length && false) { selected = n.id; refresh(); return; }
+    const why = S.addOrder(game, ME, { kind: "send", from: selected, to: n.id, frac });
+    if (why) {
+      if (n.owner === ME) { selected = n.id; refresh(); return; }
+      say(why); return;
+    }
+    say("Sending " + Math.floor(game.nodes[selected].garrison * frac) + " to " + label(n) + ".");
+    selected = null; replot();
+  }
+
+  // ---------------------------------------------------------------
+  // Panel actions
+  // ---------------------------------------------------------------
+  $("fracSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    frac = +b.dataset.f;
+    [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+    refresh();
+  });
+  $("btnSupport").addEventListener("click", () => {
+    if (selected === null) { say("Select the position that will give support."); return; }
+    mode = mode === "support" ? "send" : "support";
+    if (mode === "support") say("Tap the neighbour to support.");
+    refresh();
+  });
+  $("btnHold").addEventListener("click", () => {
+    if (selected === null) return;
+    say(S.addOrder(game, ME, { kind: "hold", at: selected }) || label(game.nodes[selected]) + " digs in.");
+    selected = null; replot();
+  });
+  $("btnUp").addEventListener("click", () => {
+    if (selected === null) return;
+    say(S.addOrder(game, ME, { kind: "upgrade", at: selected }) || "Upgrade plotted.");
+    replot();
+  });
+  $("btnAssault").addEventListener("click", () => { say(S.addOrder(game, ME, { kind: "research", track: "assault" }) || "Assault research plotted."); replot(); });
+  $("btnFortify").addEventListener("click", () => { say(S.addOrder(game, ME, { kind: "research", track: "fortify" }) || "Fortify research plotted."); replot(); });
+  $("btnFire").addEventListener("click", () => {
+    if (!S.canFire(game, ME)) { say("Hold the Throne with a full charge to fire."); return; }
+    mode = mode === "fire" ? "send" : "fire";
+    if (mode === "fire") say("Tap a rival's position to strike.");
+    refresh();
+  });
+  $("orders").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-i]"); if (!b) return;
+    S.removeOrder(game, ME, +b.dataset.i); replot();
+  });
+  $("fc").addEventListener("input", (e) => { fcAt = +e.target.value; refresh(); });
+  $("btnLock").addEventListener("click", lockIn);
+  $("speedSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    speed = +b.dataset.s;
+    [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+  });
+  $("btnSkip").addEventListener("click", () => {
+    if (replay) { replay = null; startPlot(); return; }
+    if (game && game.phase === "resolve") { S.runRound(game, 1 / 20); handleEvents(S.drainEvents(game), true); afterRound(); }
+  });
+  $("btnReplay").addEventListener("click", () => {
+    if (!lastRoundStart) return;
+    const g = S.cloneGame(lastRoundStart);
+    S.beginResolve(g);
+    replay = { game: g };
+    showResolveUI(true);
+  });
+
+  // ---------------------------------------------------------------
+  // The round
+  // ---------------------------------------------------------------
+  function startPlot() {
+    mode = "send"; selected = null; fcAt = 0; $("fc").value = 0;
+    showResolveUI(false);
+    A.planAll(game);                       // the rivals plot at the same moment you do
+    replot();
+    $("btnReplay").disabled = !lastRoundStart;
+  }
+  function lockIn() {
+    if (!game || game.phase !== "plot") return;
+    S.lockOrders(game, ME);
+    lastRoundStart = S.cloneGame(game);    // replay starts from here, with everyone's orders
+    S.beginResolve(game);
+    handleEvents(S.drainEvents(game));
+    selected = null; frames = null; fcAt = 0;
+    showResolveUI(true);
+  }
+  function afterRound() {
+    if (game.phase === "over") { showEnd(); return; }
+    say("Round " + game.round + " — plot your orders.");
+    startPlot();
+  }
+  function showResolveUI(on) {
+    $("actRow").style.display = on ? "none" : "";
+    $("orders").style.display = on ? "none" : "";
+    $("fcRow").style.display = on ? "none" : "";
+    $("resolveRow").style.display = on ? "flex" : "none";
+    $("selInfo").style.display = on ? "none" : "";
+    refresh();
+  }
+  function replot() {
+    frames = S.forecast(game, ME, 1);
+    refresh();
+  }
+
+  // ---------------------------------------------------------------
+  // HUD
+  // ---------------------------------------------------------------
+  const label = (n) => n.name || S.NODE_TYPES[n.type].label;
+  const seatName = (id) => id === S.NEUTRAL ? "Unclaimed" : game.seatById[id].name;
+  function describe(n) {
+    const st = S.nodeStats(n, game);
+    return label(n) + " · " + seatName(n.owner) + " · " + Math.floor(n.garrison) + "/" + st.cap +
+      (n.terrain !== "open" ? " · " + S.TERRAIN[n.terrain].label : "");
+  }
+  function orderText(o) {
+    const N = (id) => label(game.nodes[id]);
+    if (o.kind === "send") return N(o.from) + " → " + N(o.to) + " " + Math.round(o.frac * 100) + "%";
+    if (o.kind === "support") return N(o.from) + " supports " + N(o.to);
+    if (o.kind === "hold") return N(o.at) + " holds";
+    if (o.kind === "upgrade") return "Upgrade " + N(o.at);
+    if (o.kind === "research") return "Research " + S.TECH[o.track].label;
+    if (o.kind === "fire") return "Doomstar → " + N(o.target);
+    return o.kind;
+  }
+  function refresh() {
+    if (!game) return;
+    $("tRound").textContent = game.round;
+    $("tCp").textContent = S.cpUsed(game, ME) + "/" + S.commandPoints(game, ME);
+    $("tCr").textContent = Math.floor(game.credits[ME]) + (game.phase === "plot" && S.spendable(game, ME) < game.credits[ME] ? " (" + Math.floor(S.spendable(game, ME)) + ")" : "");
+    $("tCh").textContent = Math.floor(game.charge[ME]) + "/" + S.DOOM_CHARGE_NEEDED;
+    const st = $("standings");
+    st.innerHTML = "";
+    for (const s of game.seats.slice().sort((a, b) => S.standing(game, b.id) - S.standing(game, a.id))) {
+      const el = document.createElement("span");
+      el.className = "seat" + (S.alive(game, s.id) ? "" : " out") + (s.id === ME ? " me" : "");
+      el.title = s.name + " · " + S.FACTIONS[s.faction].label;
+      el.innerHTML = "<i style='background:" + s.color + "'></i><span class='n'>" + (s.id === ME ? "You" : S.FACTIONS[s.faction].icon + " " + s.name) +
+        "</span> <b>" + game.points[s.id] + "</b>";
+      st.appendChild(el);
+    }
+    // Selection line.
+    const sel = selected !== null ? game.nodes[selected] : null;
+    $("selInfo").innerHTML = mode === "fire" ? "<b>Doomstar armed</b> · tap a rival's position"
+      : mode === "support" && sel ? "<b>" + label(sel) + "</b> supports… tap a neighbour"
+      : sel ? "<b>" + label(sel) + "</b> · " + Math.floor(sel.garrison) + " · tap a target to send " + Math.floor(sel.garrison * frac) +
+        " · or Support, Hold, Upgrade"
+      : "Tap one of your positions · drag to pan, pinch or scroll to zoom";
+    $("btnSupport").classList.toggle("on", mode === "support");
+    $("btnFire").classList.toggle("on", mode === "fire");
+    $("btnSupport").disabled = $("btnHold").disabled = $("btnUp").disabled = sel === null;
+    $("btnFire").disabled = !S.canFire(game, ME);
+    for (const tr of ["assault", "fortify"]) {
+      const b = $(tr === "assault" ? "btnAssault" : "btnFortify");
+      const c = S.techCost(game, ME, tr), lv = S.techLevel(game, ME, tr);
+      b.textContent = (tr === "assault" ? "⚔ " : "⛨ ") + "●".repeat(lv) + "○".repeat(S.TECH_MAX - lv) + (c === null ? "" : " " + c + "c");
+      b.disabled = c === null || S.spendable(game, ME) < c;
+    }
+    if (sel) {
+      const c = S.upgradeCost(sel.level);
+      $("btnUp").textContent = sel.level >= S.MAX_LEVEL ? "Max" : "↑ L" + (sel.level + 1) + " " + c + "c";
+    } else $("btnUp").textContent = "Upgrade";
+    // Order list.
+    const ol = $("orders");
+    ol.innerHTML = "";
+    game.orders[ME].forEach((o, i) => {
+      const el = document.createElement("span");
+      el.className = "ord";
+      el.innerHTML = "<span></span><button data-i='" + i + "' aria-label='Remove'>×</button>";
+      el.firstChild.textContent = orderText(o);
+      ol.appendChild(el);
+    });
+    if (!game.orders[ME].length) ol.innerHTML = "<span class='muted'>No orders yet. Every position you leave alone keeps building.</span>";
+    $("fcLabel").textContent = fcAt ? "Forecast +" + fcAt + "s" : "Now";
+    $("forecastTag").style.display = fcAt && game.phase === "plot" && !replay ? "block" : "none";
+    $("forecastTag").textContent = "FORECAST +" + fcAt + "s · rivals' orders unknown";
+    $("btnLock").textContent = "Lock orders (" + S.cpUsed(game, ME) + ")";
+  }
+
+  let toastT = 0;
+  function say(msg) {
+    if (!msg) return;
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600);
+  }
+
+  function showEnd() {
+    const w = game.winner;
+    $("endTitle").textContent = w === ME ? "You rule the galaxy" : "The season is lost";
+    const s = w && game.seatById[w];
+    $("endText").textContent = s ? s.name + " wins after " + game.round + " rounds with " + game.points[w] + " points." : "Nobody is left standing.";
+    const rows = game.seats.slice().sort((a, b) => S.standing(game, b.id) - S.standing(game, a.id))
+      .map((x) => "<tr><td><span style='color:" + x.color + "'>●</span> " + x.name + " · " + S.FACTIONS[x.faction].label +
+        "</td><td class='muted'>" + S.nodesOf(game, x.id).length + " positions</td><td>" + game.points[x.id] + "</td></tr>");
+    $("endScores").innerHTML = rows.join("");
+    $("endOv").hidden = false;
+  }
+
+  // ---------------------------------------------------------------
+  // Events into effects
+  // ---------------------------------------------------------------
+  function colorOf(owner) { return owner && game.seatById[owner] ? game.seatById[owner].color : "#64748b"; }
+  function burst(x, y, color, n, speedPx, life) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, v = speedPx * (0.4 + Math.random() * 0.6);
+      fx.push({ kind: "p", x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life, max: life, color });
+    }
+  }
+  function floatText(x, y, text, color) { fx.push({ kind: "t", x, y, text, color, life: 1.3, max: 1.3 }); }
+  function handleEvents(evs, quiet) {
+    if (quiet) return;
+    for (const e of evs) {
+      if (e.kind === "capture") { burst(e.x, e.y, colorOf(e.owner), 22, 160, 0.8); floatText(e.x, e.y, "TAKEN", colorOf(e.owner)); }
+      else if (e.kind === "repulsed") { burst(e.x, e.y, "#94a3b8", 12, 110, 0.6); floatText(e.x, e.y, "HELD", "#cbd5e1"); }
+      else if (e.kind === "clash") { burst(e.x, e.y, colorOf(e.owner), 14, 110, 0.5); floatText(e.x, e.y, e.owner ? String(e.count) : "✕", colorOf(e.owner)); }
+      else if (e.kind === "doomstar") { burst(e.x, e.y, "#ff7a5c", 50, 260, 1.1); floatText(e.x, e.y, e.fizzled ? "FIZZLED" : "-" + e.damage, "#ff7a5c"); }
+      else if (e.kind === "score") { const t = S.throneNode(game); floatText(t.x, t.y - 40, "+" + e.points + " " + seatName(e.owner), colorOf(e.owner)); }
+      else if (e.kind === "doomlock" && game.nodes[e.nodeId].owner === ME) say("⚠ Doomstar locked on " + label(game.nodes[e.nodeId]));
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Drawing
+  // ---------------------------------------------------------------
+  const stars = Array.from({ length: 220 }, (_, i) => { const r = S.makeRng(i * 977 + 3); return { x: r(), y: r(), z: r() * 0.8 + 0.2 }; });
+  function shapePath(c, type, r) {
+    c.beginPath();
+    if (type === "factory") { const s = r * 0.88; c.rect(-s, -s, s * 2, s * 2); return; }
+    if (type === "mine") { c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath(); return; }
+    if (type === "command") { for (let i = 0; i < 6; i++) { const a = Math.PI / 6 + i * Math.PI / 3; i ? c.lineTo(Math.cos(a) * r, Math.sin(a) * r) : c.moveTo(Math.cos(a) * r, Math.sin(a) * r); } c.closePath(); return; }
+    c.arc(0, 0, r, 0, Math.PI * 2);
+  }
+  function arrowAlong(c, pts, color, dash, width) {
+    if (pts.length < 2) return;
+    c.save();
+    c.strokeStyle = color; c.lineWidth = width || 2; c.setLineDash(dash || []);
+    c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) c.lineTo(pts[i].x, pts[i].y);
+    c.stroke(); c.setLineDash([]);
+    const a = pts[pts.length - 2], b = pts[pts.length - 1];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    c.fillStyle = color; c.beginPath();
+    c.moveTo(b.x, b.y);
+    c.lineTo(b.x - Math.cos(ang - 0.45) * 10, b.y - Math.sin(ang - 0.45) * 10);
+    c.lineTo(b.x - Math.cos(ang + 0.45) * 10, b.y - Math.sin(ang + 0.45) * 10);
+    c.closePath(); c.fill();
+    c.restore();
+  }
+
+  function view() {
+    // What to draw: the live game, the replay, or a forecast frame on top of
+    // the live board's geometry.
+    if (replay) return { g: replay.game, frame: null };
+    if (game && game.phase === "plot" && frames && fcAt > 0) return { g: game, frame: frames[Math.min(frames.length - 1, fcAt)] };
+    return { g: game, frame: null };
+  }
+
+  function draw(now) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#070b14"; ctx.fillRect(0, 0, cssW, cssH);
+    for (const s of stars) {
+      const x = ((s.x * cssW * 1.6 - cam.x * cam.s * 0.08 * s.z) % cssW + cssW) % cssW;
+      const y = ((s.y * cssH * 1.6 - cam.y * cam.s * 0.08 * s.z) % cssH + cssH) % cssH;
+      ctx.globalAlpha = 0.25 + s.z * 0.45; ctx.fillStyle = "#cbd5e1"; ctx.fillRect(x, y, s.z * 1.4, s.z * 1.4);
+    }
+    ctx.globalAlpha = 1;
+    if (!game) return;
+    const { g, frame } = view();
+    const ownerOf = (n) => frame ? frame.nodes[n.id].owner : n.owner;
+    const garrOf = (n) => frame ? frame.nodes[n.id].garrison : n.garrison;
+    const P = (n) => toScreen(n.x, n.y);
+    const scale = cam.s;
+
+    // Sector names under each home.
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const n of g.nodes) {
+      if (n.type !== "command" || !n.name) continue;
+      // Outward from the Throne, past the home, so the name sits in open space.
+      const t = S.throneNode(g), dx = n.x - t.x, dy = n.y - t.y, d = Math.hypot(dx, dy) || 1;
+      const p = toScreen(n.x + dx / d * 120, n.y + dy / d * 120);
+      ctx.font = "600 " + Math.max(10, Math.min(13, 26 * scale)) + "px ui-monospace, monospace";
+      ctx.fillStyle = "rgba(160,180,210,.32)";
+      ctx.fillText(n.name.toUpperCase(), p.x, p.y);
+    }
+
+    // Lanes.
+    for (const l of g.lanes) {
+      const a = g.nodes[l.a], b = g.nodes[l.b], pa = P(a), pb = P(b);
+      const oa = ownerOf(a), ob = ownerOf(b);
+      ctx.strokeStyle = oa && oa === ob ? colorOf(oa) : "rgba(125,155,200,.28)";
+      ctx.globalAlpha = oa && oa === ob ? 0.55 : 1;
+      ctx.lineWidth = oa && oa === ob ? 2.4 : 1.4;
+      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Your plotted orders (plot phase only).
+    if (game.phase === "plot" && !replay && !frame) {
+      for (const o of game.orders[ME]) {
+        if (o.kind === "send") {
+          const path = S.findPath(game, o.from, o.to, ME);
+          if (path) {
+            arrowAlong(ctx, path.map((id) => P(game.nodes[id])), "rgba(34,211,238,.85)", [8, 6], 2.2);
+            const m = P(game.nodes[path[path.length - 1]]);
+            ctx.font = "700 11px ui-monospace, monospace"; ctx.fillStyle = "#a5f3fc";
+            ctx.fillText(String(Math.floor(game.nodes[o.from].garrison * o.frac)), m.x, m.y - 30);
+          }
+        } else if (o.kind === "support") {
+          const a = P(game.nodes[o.from]), b = P(game.nodes[o.to]);
+          arrowAlong(ctx, [a, b], "rgba(134,239,172,.8)", [2, 5], 2);
+        } else if (o.kind === "hold") {
+          const a = P(game.nodes[o.at]);
+          ctx.strokeStyle = "#86efac"; ctx.lineWidth = 2.5; ctx.setLineDash([4, 3]);
+          ctx.beginPath(); ctx.arc(a.x, a.y, S.NODE_TYPES[game.nodes[o.at].type].radius * scale + 9, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+        } else if (o.kind === "fire") {
+          const t = P(game.nodes[o.target]);
+          ctx.strokeStyle = "#ff7a5c"; ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(t.x, t.y, 30 + 4 * Math.sin(now / 150), 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+
+    // Fleets.
+    const fleets = frame ? frame.fleets : g.fleets;
+    for (const f of fleets) {
+      const a = g.nodes[f.path[f.leg]], b = g.nodes[f.path[f.leg + 1]];
+      const t = Math.min(1, f.t);
+      const p = toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const sz = 6 + Math.min(10, Math.sqrt(f.count));
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(ang);
+      ctx.fillStyle = colorOf(f.owner); ctx.globalAlpha = frame ? 0.65 : 1;
+      ctx.beginPath(); ctx.moveTo(sz, 0); ctx.lineTo(-sz * 0.7, sz * 0.6); ctx.lineTo(-sz * 0.4, 0); ctx.lineTo(-sz * 0.7, -sz * 0.6); ctx.closePath(); ctx.fill();
+      ctx.restore();
+      ctx.font = "700 10px ui-monospace, monospace"; ctx.fillStyle = "#e6f0ff";
+      ctx.fillText(String(Math.round(f.count)), p.x, p.y - sz - 6);
+    }
+
+    // Positions.
+    for (const n of g.nodes) {
+      const p = P(n), own = ownerOf(n), col = colorOf(own);
+      const r = Math.max(9, S.NODE_TYPES[n.type].radius * scale * 1.6);
+      ctx.save(); ctx.translate(p.x, p.y);
+      if (n.type === "doomstar" && H && H.paintOrb) {
+        const lp = g.doomShot ? 1 - g.doomShot.t / S.DOOM_LOCK_S : 0;
+        H.paintOrb(ctx, 0, 0, r * 1.1, own ? col : "#ffd166", own ? (g.charge[own] || 0) / S.DOOM_CHARGE_NEEDED : 0, g.doomShot && g.doomShot.owner === own ? lp : 0, now);
+      } else {
+        shapePath(ctx, n.type, r);
+        ctx.fillStyle = own ? col : "#1e293b"; ctx.globalAlpha = own ? 0.22 : 0.9; ctx.fill();
+        ctx.globalAlpha = 1; ctx.lineWidth = selected === n.id ? 3.5 : 2; ctx.strokeStyle = selected === n.id ? "#ffffff" : own ? col : "#64748b";
+        ctx.stroke();
+      }
+      if (n.terrain === "asteroid" || n.terrain === "well") {
+        ctx.strokeStyle = n.terrain === "asteroid" ? "rgba(176,137,95,.6)" : "rgba(155,127,212,.6)";
+        ctx.setLineDash([2, 4]); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, 0, r + 6, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (own && n.inSupply === false && !frame) {
+        ctx.strokeStyle = "#ff7a5c"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(0, 0, r + 10, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (frame && frame.nodes[n.id].owner !== n.owner) {
+        ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(0, 0, r + 12 + 3 * Math.sin(now / 160), 0, Math.PI * 2); ctx.stroke();
+      }
+      if (g.held && g.held[n.id]) {
+        ctx.strokeStyle = "#86efac"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(0, 0, r + 8, 0, Math.PI * 2); ctx.stroke();
+      }
+      for (let k = 0; k < n.level; k++) {
+        ctx.fillStyle = "#fbbf24";
+        ctx.beginPath(); ctx.arc(-r + 4 + k * 7, r + 6, 2.5, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+      ctx.font = "700 " + Math.max(11, Math.min(15, r * 0.8)) + "px ui-monospace, monospace";
+      ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,9,18,.85)"; ctx.fillStyle = "#f1f6ff";
+      const txt = String(Math.floor(garrOf(n)));
+      ctx.strokeText(txt, p.x, p.y); ctx.fillText(txt, p.x, p.y);
+    }
+
+    // Support links live during the round.
+    if (g.phase === "resolve") {
+      for (const sp of g.support) {
+        if (sp.cut) continue;
+        arrowAlong(ctx, [P(g.nodes[sp.from]), P(g.nodes[sp.to])], colorOf(sp.seat), [2, 5], 1.5);
+      }
+    }
+    // Doomstar lock-on.
+    if (g.doomShot && H && H.paintLock) {
+      const t = g.nodes[g.doomShot.targetId], from = P(S.throneNode(g)), to = P(t);
+      H.paintLock(ctx, from, to, S.NODE_TYPES[t.type].radius * scale * 1.6, 1 - g.doomShot.t / S.DOOM_LOCK_S, g.doomShot.t, colorOf(g.doomShot.owner), now);
+    }
+    // Effects.
+    for (const p of fx) {
+      const s = toScreen(p.x, p.y), a = Math.max(0, p.life / p.max);
+      ctx.globalAlpha = a;
+      if (p.kind === "p") { ctx.fillStyle = p.color; ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3); }
+      else { ctx.font = "700 13px ui-monospace, monospace"; ctx.fillStyle = p.color; ctx.fillText(p.text, s.x, s.y - 26 - (1 - a) * 26); }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ---------------------------------------------------------------
+  // Main loop
+  // ---------------------------------------------------------------
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    for (const p of fx) { p.life -= dt; if (p.kind === "p") { p.x += p.vx * dt / cam.s * 0.4; p.y += p.vy * dt / cam.s * 0.4; } }
+    for (let i = fx.length - 1; i >= 0; i--) if (fx[i].life <= 0) fx.splice(i, 1);
+    const live = replay ? replay.game : game;
+    if (live && live.phase === "resolve") {
+      let sim = dt * speed;
+      while (sim > 1e-6 && live.phase === "resolve") { const h = Math.min(1 / 30, sim); S.step(live, h); sim -= h; }
+      const evs = S.drainEvents(live);
+      handleEvents(evs);
+      $("rLabel").textContent = (replay ? "Replay · " : "Round " + live.round + " · ") + Math.floor(live.clock || 30) + "s";
+      $("bar").firstChild.style.width = Math.round(100 * (live.phase === "resolve" ? live.clock : 30) / S.ROUND_SECONDS) + "%";
+      if (live.phase !== "resolve") {
+        if (replay) { replay = null; startPlot(); say("Replay over — plot your orders."); }
+        else afterRound();
+      }
+    }
+    draw(now);
+    requestAnimationFrame(loop);
+  }
+  resize();
+  buildFactions();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
