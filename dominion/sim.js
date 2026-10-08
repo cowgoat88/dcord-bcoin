@@ -421,6 +421,9 @@
       lawLog: [],             // every council's result
       lawDeck: [],
       grudge: perSeat(() => ({})),
+      pacts: [],              // { a, b, from, to }
+      offers: [],             // { from, to } waiting for an answer this round
+      oathbreaker: perSeat(0),  // last round a seat is an Oathbreaker
       winner: null,
       events: [],
       history: []             // one entry per finished round: { round, orders, points }
@@ -645,6 +648,7 @@
     game.held = {};
     for (const s of game.seats) game.flags[s.id] = blankFlags();
     resolveCouncil(game);
+    breakPacts(game);
     const ids = seatOrder(game);
     const byKind = (kinds) => {
       const lists = ids.map((id) => game.orders[id].filter((o) => kinds.indexOf(o.kind) !== -1));
@@ -973,6 +977,7 @@
     game.held = {};
     game.roles = {};
     for (const s of game.seats) { game.orders[s.id] = []; game.locked[s.id] = !alive(game, s.id); }
+    game.offers = [];
     openCouncil(game);
     if (game.useDraft) openDraft(game);
     emit(game, { kind: "round", round: game.round });
@@ -1087,6 +1092,78 @@
       }
     }
   }
+  // ---- pacts ------------------------------------------------------------
+  // A promise between two seats: neither attacks the other for a few
+  // rounds, and both see what the other sees. Nothing in the rules stops
+  // an attack. Plotting one against a partner breaks the pact as the orders
+  // lock, and the breaker is an Oathbreaker for three rounds: its influence
+  // is gone, every other seat holds a grudge, and nobody will deal with it.
+  const PACT_ROUNDS = 2, OATH_ROUNDS = 3;
+  function pactBetween(game, a, b) {
+    return (game.pacts || []).find((p) => ((p.a === a && p.b === b) || (p.a === b && p.b === a)) && p.from <= game.round && game.round <= p.to) || null;
+  }
+  function partnersOf(game, seat) {
+    return (game.pacts || []).filter((p) => (p.a === seat || p.b === seat) && p.from <= game.round && game.round <= p.to)
+      .map((p) => (p.a === seat ? p.b : p.a));
+  }
+  function oathbroken(game, seat) { return !!game.oathbreaker && (game.oathbreaker[seat] || 0) >= game.round; }
+  function checkPact(game, a, b) {
+    if (!game.useCouncil) return "There is no council to witness a pact.";
+    if (game.phase !== "plot" && game.phase !== "draft") return "Pacts are made while plotting.";
+    if (a === b || !game.seatById[b] || !alive(game, b)) return "No such seat.";
+    if (pactBetween(game, a, b)) return "You already have a pact.";
+    if (oathbroken(game, a)) return "Nobody deals with an Oathbreaker.";
+    if (oathbroken(game, b)) return "That seat is an Oathbreaker.";
+    if (game.orders[a].some((o) => orderVictim(game, a, o) === b)) return "Your orders already strike them.";
+    if (game.orders[b].some((o) => orderVictim(game, b, o) === a)) return "Their orders already strike you.";
+    return undefined;
+  }
+  // An offer waits for the other seat to answer while plotting.
+  function offerPact(game, from, to) {
+    const why = checkPact(game, from, to);
+    if (why) return why;
+    if (game.offers.some((o) => o.from === from && o.to === to)) return "Already offered.";
+    game.offers.push({ from, to });
+    emit(game, { kind: "offer", from, to });
+    return undefined;
+  }
+  function answerOffer(game, to, from, yes) {
+    const i = game.offers.findIndex((o) => o.from === from && o.to === to);
+    if (i === -1) return "No such offer.";
+    game.offers.splice(i, 1);
+    return yes ? makePact(game, from, to) : undefined;
+  }
+  // Both seats have agreed: the pact runs from this round for PACT_ROUNDS.
+  function makePact(game, a, b) {
+    const why = checkPact(game, a, b);
+    if (why) return why;
+    game.pacts.push({ a, b, from: game.round, to: game.round + PACT_ROUNDS - 1 });
+    emit(game, { kind: "pact", a, b, to: game.round + PACT_ROUNDS - 1 });
+    return undefined;
+  }
+  // Does this order strike at a seat? (Its target as the orders lock.)
+  function orderVictim(game, seat, o) {
+    if (o.kind === "send" || (o.kind === "support" && game.nodes[o.to].owner !== seat)) return game.nodes[o.to].owner;
+    if (o.kind === "fire") return game.nodes[o.target].owner;
+    return NEUTRAL;
+  }
+  function breakPacts(game) {
+    if (!game.pacts || !game.pacts.length) return;
+    for (const s of game.seats) {
+      for (const o of game.orders[s.id]) {
+        const v = orderVictim(game, s.id, o);
+        if (v === NEUTRAL || v === s.id) continue;
+        const p = pactBetween(game, s.id, v);
+        if (!p) continue;
+        p.to = game.round - 1;          // over, from this round
+        game.oathbreaker[s.id] = game.round + OATH_ROUNDS - 1;
+        game.influence[s.id] = 0;
+        for (const x of game.seats) if (x.id !== s.id) addGrudge(game, x.id, s.id, x.id === v ? 4 : 2);
+        emit(game, { kind: "betrayal", owner: s.id, victim: v });
+      }
+    }
+  }
+
   // Grudges: who has hurt whom. They fade by a third each round. Rivals
   // turn on the seats that hurt them and vote against them.
   function addGrudge(game, victim, by, amount) {
@@ -1142,6 +1219,13 @@
   // its round. Everywhere else a seat knows only what it saw last.
   const SIGHT_RELAY = 2;
   function sightOf(game, seat) {
+    const seen = ownSight(game, seat);
+    if (seen.size === game.nodes.length) return seen;
+    // Pact partners share what they see.
+    for (const p of partnersOf(game, seat)) for (const id of ownSight(game, p)) seen.add(id);
+    return seen;
+  }
+  function ownSight(game, seat) {
     const seen = new Set();
     if (roleOf(game, seat) === "spymaster" || lawActive(game, "openSkies")) { for (const n of game.nodes) seen.add(n.id); return seen; }
     const t = throneNode(game);
@@ -1240,6 +1324,7 @@
     ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     sightOf, fleetSeen, refreshIntel, viewFor, SIGHT_RELAY,
+    PACT_ROUNDS, OATH_ROUNDS, pactBetween, partnersOf, oathbroken, checkPact, makePact, offerPact, answerOffer, orderVictim,
     LAWS, LAW_KEYS, INFLUENCE_START, lawActive, lawCount, voteChoices, castVote, tally, addGrudge,
     defenceOf, supportFor, resolveArrival, resolveAssault, stepLaneCombat, lanePoint, drainEvents
   };

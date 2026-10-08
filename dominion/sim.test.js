@@ -599,3 +599,63 @@ test("rivals vote legally, and AI seasons with the council finish", () => {
     assert.ok(g.lawLog.some((l) => l.passed));
   }
 });
+
+// ---------------------------------------------------------------------
+// Pacts
+// ---------------------------------------------------------------------
+test("a pact shares sight, lasts its rounds, and needs both seats", () => {
+  const g = S.createGame({ seed: 4, seats: seats(4), council: true });
+  const mine = S.sightOf(g, 1), theirs = S.sightOf(g, 3);
+  assert.equal(S.offerPact(g, 1, 3), undefined);
+  assert.equal(S.pactBetween(g, 1, 3), null, "an offer is not a pact");
+  assert.equal(S.answerOffer(g, 3, 1, true), undefined);
+  assert.ok(S.pactBetween(g, 1, 3));
+  const both = S.sightOf(g, 1);
+  for (const id of theirs) assert.ok(both.has(id), "partners see what each other sees");
+  assert.ok(both.size > mine.size);
+  for (let r = 0; r < S.PACT_ROUNDS; r++) { assert.ok(S.pactBetween(g, 1, 3)); S.beginResolve(g); S.runRound(g); }
+  assert.equal(S.pactBetween(g, 1, 3), null, "it runs out");
+  assert.equal(g.offers.length, 0);
+  assert.match(S.makePact(S.createGame({ seed: 4, seats: seats(4) }), 1, 2), /council/);
+});
+
+test("plotting against a partner breaks the pact and makes an Oathbreaker", () => {
+  const g = lineGame();
+  g.useCouncil = true;
+  g.nodes[1].owner = 2; g.nodes[1].garrison = 5;
+  S.computeSupply(g);
+  S.addOrder(g, 1, { kind: "send", from: 0, to: 1, frac: 0.5 });
+  assert.match(S.checkPact(g, 1, 2), /already strike/, "no promising peace with an attack plotted");
+  S.removeOrder(g, 1, 0);
+  assert.equal(S.makePact(g, 1, 2), undefined);
+  g.influence[1] = 5;
+  S.addOrder(g, 1, { kind: "send", from: 0, to: 1, frac: 0.5 });
+  S.beginResolve(g);
+  assert.equal(S.pactBetween(g, 1, 2), null, "broken");
+  assert.ok(S.oathbroken(g, 1));
+  assert.equal(g.influence[1], 0, "an Oathbreaker loses its influence");
+  assert.ok(g.grudge[2][1] >= 4, "the betrayed remembers");
+  assert.ok(S.drainEvents(g).some((e) => e.kind === "betrayal" && e.owner === 1 && e.victim === 2));
+  S.runRound(g);
+  assert.match(S.checkPact(g, 2, 1), /Oathbreaker/);
+});
+
+test("rivals keep their pacts", () => {
+  let checked = 0;
+  for (let seed = 1; seed <= 4; seed++) {
+    const g = S.createGame({ seed, seats: seats(4), draft: true, council: true });
+    while (g.phase !== "over") {
+      A.runDraft(g); A.planAll(g);
+      for (const s of g.seats) for (const o of g.orders[s.id]) {
+        const v = S.orderVictim(g, s.id, o);
+        if (v !== NEUTRAL && v !== s.id && S.pactBetween(g, s.id, v)) {
+          assert.ok(o.kind === "send" && g.nodes[o.to].type === "doomstar", "only a Hawk going for the Throne breaks faith");
+        }
+        checked++;
+      }
+      S.beginResolve(g); S.runRound(g); S.drainEvents(g);
+    }
+    assert.ok(g.pacts.length >= 1, "rivals make pacts");
+  }
+  assert.ok(checked > 100);
+});

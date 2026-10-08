@@ -114,10 +114,15 @@
     const rel = (n) => (n.sector < 0 ? -1 : ((n.sector - (home || 0)) % nSec + nSec) % nSec);
     const ring = game.nodes.slice().sort((a, b) => rel(a) - rel(b) || a.id - b.id);
     const mine = () => ring.filter((n) => n.owner === seat);
+    // A rival keeps its pacts, except that a Hawk will break one to take
+    // the Throne from a partner who leads.
+    const partners = S.partnersOf(game, seat);
+    const keepsFaith = (n) => partners.indexOf(n.owner) !== -1 &&
+      !(P === PERSONALITIES.hawk && n.type === "doomstar" && game.points[n.owner] > game.points[seat]);
 
     // 1. The weapon.
     if (S.canFire(game, seat)) {
-      const tgt = ring.filter((n) => hostile(seat, n))
+      const tgt = ring.filter((n) => hostile(seat, n) && !keepsFaith(n))
         .sort((a, b) => b.garrison - a.garrison)[0];
       if (tgt) add({ kind: "fire", target: tgt.id });
     }
@@ -141,7 +146,7 @@
     for (let tries = 0; tries < 2 && cpLeft(game, seat) > 0; tries++) {
       let best = null;
       for (const t of ring) {
-        if (t.owner === seat) continue;
+        if (t.owner === seat || keepsFaith(t)) continue;
         const sources = mine()
           .filter((s) => !busy.has(s.id) && s.garrison >= 8 && S.findPath(game, s.id, t.id, seat))
           .map((s) => ({ s, path: S.findPath(game, s.id, t.id, seat) }))
@@ -255,6 +260,57 @@
     S.castVote(game, seat, choice, Math.min(game.influence[seat], Math.round(game.influence[seat] * stake * 0.6)));
   }
 
+  // Pacts. Would this seat promise peace to that one? Turtles and traders
+  // like a quiet border; nobody deals with a seat it has a grudge against
+  // or with a runaway leader.
+  function pactValue(game, seat, other) {
+    const P = personalityOf(game, seat);
+    const grudge = (game.grudge && game.grudge[seat][other]) || 0;
+    const borders = game.lanes.some((l) => {
+      const a = game.nodes[l.a].owner, b = game.nodes[l.b].owner;
+      return (a === seat && b === other) || (a === other && b === seat);
+    });
+    let v = 0.5 + (P === PERSONALITIES.turtle ? 0.4 : P === PERSONALITIES.trader ? 0.3 : P === PERSONALITIES.hawk ? -0.3 : 0);
+    if (borders) v += 0.3;
+    v -= 0.3 * grudge;
+    if (game.points[other] - game.points[seat] >= 2) v -= 1;
+    v -= 0.4 * S.partnersOf(game, seat).length;
+    return v;
+  }
+  function answerPact(game, seat, other) {
+    if (S.checkPact(game, other, seat)) return false;
+    return pactValue(game, seat, other) > 0.6;
+  }
+  // Rivals make pacts among themselves before they plot, walking seats in
+  // the round's turn order so nobody is always asked first.
+  function diplomacy(game) {
+    if (!game.useCouncil) return;
+    for (const id of S.seatOrder(game)) {
+      const s = game.seatById[id];
+      if (!s.ai || !S.alive(game, id) || game.locked[id] || S.partnersOf(game, id).length) continue;
+      let best = null, bv = 0.6;
+      for (const o of S.seatOrder(game)) {
+        if (o === id || !game.seatById[o].ai || game.locked[o] || S.checkPact(game, id, o)) continue;
+        const v = pactValue(game, id, o);
+        if (v > bv && answerPact(game, o, id)) { bv = v; best = o; }
+      }
+      if (best) S.makePact(game, id, best);
+    }
+  }
+  // After plotting, a rival whose orders leave a person alone may offer
+  // them a pact.
+  function offersToPeople(game) {
+    if (!game.useCouncil) return;
+    for (const id of S.seatOrder(game)) {
+      const s = game.seatById[id];
+      if (!s.ai || !S.alive(game, id) || S.partnersOf(game, id).length) continue;
+      for (const o of S.seatOrder(game)) {
+        if (game.seatById[o].ai || !S.alive(game, o) || S.checkPact(game, id, o)) continue;
+        if (pactValue(game, id, o) > 0.75) { S.offerPact(game, id, o); break; }
+      }
+    }
+  }
+
   // The draft: which role is worth most to this seat this round.
   function roleValue(game, seat, role) {
     const P = personalityOf(game, seat);
@@ -290,10 +346,12 @@
 
   // Plot every AI seat that has not locked.
   function planAll(game) {
+    diplomacy(game);
     for (const s of game.seats) {
       if (s.ai && !game.locked[s.id] && S.alive(game, s.id)) plan(game, s.id);
     }
+    offersToPeople(game);
   }
 
-  return { plan, planAll, vote, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { plan, planAll, vote, pactValue, answerPact, diplomacy, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });

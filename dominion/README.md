@@ -135,11 +135,23 @@ Doomstar strike, fading by a third each round); rivals aim at those seats
 and vote to censure or sanction them, or the leader. The agenda shows in
 the draft, so it can steer the pick.
 
-Measured, 100 five-seat all-AI seasons with draft and council: wins by
-seat 17/15/22/22/24.
+### Pacts
 
-Not built yet (phases 4 to 6 in the design doc): promises between seats,
-the tech tree and faction rules, the campaign, and online play.
+Any two seats can make a pact for two rounds: an offer, then an answer
+(rivals answer at once, and offer you pacts at the start of a round).
+Partners share sight. Nothing in the rules stops an attack on a partner,
+but plotting one breaks the pact as the orders lock and makes the breaker
+an Oathbreaker for three rounds: its influence is gone, every seat holds a
+grudge, and nobody will make a pact with it. You cannot offer a pact with
+an attack on that seat already plotted. Rivals keep their word, except a
+Hawk taking the Throne from a partner who leads.
+
+Measured, 100 all-AI seasons with draft, council and pacts: wins by seat
+22/20/27/31 with four seats, 16/18/22/19/25 with five; about 7 pacts a
+season with four seats.
+
+Not built yet (phases 5 and 6 in the design doc): the tech tree and
+faction rules, the campaign, and online play.
 
 ## Measured
 
@@ -160,7 +172,7 @@ points and nobody was eliminated. Objectives were built to change that.
 node --test dominion/sim.test.js
 ```
 
-34 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+37 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
@@ -172,4 +184,5 @@ objectives; seasons ending on points; the roles draft (order, each role
 once, effects) and AI seasons drafting every round; what a seat sees, the view, forecast and
 rival plans keeping what is out of sight as last seen, intel refreshed
 each round; the council's agenda, votes, tally and every law's effect;
-grudges; rivals voting legally.
+grudges; rivals voting legally; pacts sharing sight and running out,
+betrayal making an Oathbreaker, rivals keeping their word.

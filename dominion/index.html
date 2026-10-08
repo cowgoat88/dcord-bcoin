@@ -95,6 +95,9 @@
   #cChoices i, .tally i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
   .tally { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 4px; }
   #btnCouncil.unvoted { border-color: var(--gold); }
+  .pact { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
+  .pact span { flex: 1 1 auto; }
+  .pact i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
@@ -176,7 +179,9 @@
 
     <div class="overlay" id="councilOv" hidden>
       <div class="card">
-        <h1 style="font-size:16px;letter-spacing:2px">THE COUNCIL</h1>
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h1 style="font-size:16px;letter-spacing:2px">THE COUNCIL</h1><button id="btnCouncilClose">Close</button>
+        </div>
         <p id="cAgenda"></p>
         <h2>Your vote</h2>
         <div class="row" id="cChoices"></div>
@@ -185,12 +190,14 @@
           <button id="cMinus" aria-label="Less influence">&minus;</button><b id="cInfN">0</b><button id="cPlus" aria-label="More influence">+</button>
           <span class="muted" id="cInfNote"></span>
         </div>
+        <h2>Pacts</h2>
+        <div id="cPacts"></div>
         <h2>In force</h2>
         <div id="cLaws"></div>
         <h2>Last council</h2>
         <div id="cLast"></div>
         <p class="muted" style="font-size:11px">One vote each, plus any influence added (spent win or lose). Influence: 1 a round, +1 per Relay. Votes stay secret until orders lock; the law acts as the round resolves.</p>
-        <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnCouncilClose">Close</button></div>
+
       </div>
     </div>
 
@@ -394,12 +401,14 @@
     return best;
   }
 
+  // Plotting against a partner is allowed, and said out loud.
+  const pactWarn = (n) => (n.owner !== ME && n.owner && S.pactBetween(game, ME, n.owner) ? " \u26a0 This breaks your pact with " + seatName(n.owner) + "." : "");
   function tap(px, py, touch) {
     if (!game || game.phase !== "plot" || replay) return;
     const n = nodeAt(px, py, touch);
     if (!n) { selected = null; mode = "send"; refresh(); return; }
     if (mode === "fire") {
-      say(S.addOrder(game, ME, { kind: "fire", target: n.id }) || "Strike plotted on " + label(n) + ".");
+      say(S.addOrder(game, ME, { kind: "fire", target: n.id }) || "Strike plotted on " + label(n) + "." + pactWarn(n));
       mode = "send"; replot(); return;
     }
     if (selected === null) {
@@ -410,7 +419,7 @@
     if (n.id === selected) { selected = null; mode = "send"; refresh(); return; }
     if (mode === "support") {
       const why = S.addOrder(game, ME, { kind: "support", from: selected, to: n.id });
-      say(why || label(game.nodes[selected]) + " supports " + label(n) + " this round.");
+      say(why || label(game.nodes[selected]) + " supports " + label(n) + " this round." + pactWarn(n));
       mode = "send"; if (!why) selected = null; replot(); return;
     }
     // Default: send. Tapping another of your own positions with nothing
@@ -421,7 +430,7 @@
       if (n.owner === ME) { selected = n.id; refresh(); return; }
       say(why); return;
     }
-    say("Sending " + Math.floor(game.nodes[selected].garrison * frac) + " to " + label(n) + ".");
+    say("Sending " + Math.floor(game.nodes[selected].garrison * frac) + " to " + label(n) + "." + pactWarn(n));
     selected = null; replot();
   }
 
@@ -499,6 +508,7 @@
     const r = S.roleOf(game, ME), lines = [];
     if (r) lines.push(S.ROLES[r].icon + " " + S.ROLES[r].label + ": " + S.ROLES[r].text);
     if (game.agenda) lines.push("\u2696 Before the council: " + S.LAWS[game.agenda.law].label + ". " + S.LAWS[game.agenda.law].text);
+    for (const o of game.offers.filter((x) => x.to === ME)) lines.push("\ud83e\udd1d " + seatName(o.from) + " offers you a pact. Answer in the Council.");
     sayQueue(lines);
   }
   function showDraft() {
@@ -616,8 +626,9 @@
       const el = document.createElement("span");
       el.className = "seat" + (S.alive(game, s.id) ? "" : " out") + (s.id === ME ? " me" : "");
       el.title = s.name + " · " + S.FACTIONS[s.faction].label;
+      const tag = s.id !== ME && S.pactBetween(game, ME, s.id) ? " \ud83e\udd1d" : S.oathbroken(game, s.id) ? " \u2717" : "";
       el.innerHTML = "<i style='background:" + s.color + "'></i><span class='n'>" + (s.id === ME ? "You" : S.FACTIONS[s.faction].icon + " " + s.name) +
-        "</span> <b>" + game.points[s.id] + "</b>";
+        "</span> <b>" + game.points[s.id] + "</b>" + tag;
       st.appendChild(el);
     }
     // Selection line.
@@ -666,7 +677,7 @@
     const metNow = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(ME) && o.test(game, ME)).length;
     $("btnObj").innerHTML = "&#9678;<span class='lbl'> Objectives</span>" + (metNow ? " <b style='color:var(--good)'>" + metNow + "</b>" : "");
     $("btnCouncil").innerHTML = "&#9878;<span class='lbl'> Council</span> <b>" + game.influence[ME] + "</b>";
-    $("btnCouncil").classList.toggle("unvoted", !!game.agenda && game.phase === "plot" && !game.votes[ME]);
+    $("btnCouncil").classList.toggle("unvoted", game.phase === "plot" && ((!!game.agenda && !game.votes[ME]) || game.offers.some((x) => x.to === ME)));
   }
 
   let toastT = 0;
@@ -738,6 +749,24 @@
     $("cMinus").disabled = !open || myInf <= 0;
     $("cPlus").disabled = !open || myInf >= game.influence[ME];
     $("cInfNote").textContent = "of " + game.influence[ME] + " \u00b7 your vote counts " + (1 + myInf);
+    // Pacts: yours, offers to you, and offers you can make.
+    const rows = [];
+    if (S.oathbroken(game, ME)) rows.push("<div class='pact'><span>You are an <b>Oathbreaker</b> until round " + game.oathbreaker[ME] + ". Nobody will deal with you.</span></div>");
+    for (const id of S.partnersOf(game, ME)) {
+      const p = S.pactBetween(game, ME, id);
+      rows.push("<div class='pact'><span>\ud83e\udd1d " + seatChip(id) + " \u00b7 through round " + p.to + " \u00b7 shared sight</span></div>");
+    }
+    for (const o of game.offers.filter((x) => x.to === ME)) {
+      rows.push("<div class='pact'><span>" + seatChip(o.from) + " offers a pact for " + S.PACT_ROUNDS + " rounds</span>" +
+        "<button data-acc='" + o.from + "'" + (open ? "" : " disabled") + ">Accept</button><button data-dec='" + o.from + "'" + (open ? "" : " disabled") + ">Decline</button></div>");
+    }
+    for (const s2 of game.seats) {
+      if (s2.id === ME || !S.alive(game, s2.id) || S.pactBetween(game, ME, s2.id) || game.offers.some((x) => x.to === ME && x.from === s2.id)) continue;
+      const why = S.checkPact(game, ME, s2.id);
+      rows.push("<div class='pact'><span>" + seatChip(s2.id) + (S.oathbroken(game, s2.id) ? " <span class='muted'>\u00b7 Oathbreaker</span>" : "") + "</span>" +
+        "<button data-off='" + s2.id + "'" + (open && !why ? "" : " disabled") + " title='" + (why || "Neither attacks the other for " + S.PACT_ROUNDS + " rounds; you share sight") + "'>Offer pact</button></div>");
+    }
+    $("cPacts").innerHTML = rows.join("") + "<p class='muted' style='font-size:11px'>Nothing stops an attack on a partner, but plotting one breaks the pact and makes you an Oathbreaker for " + S.OATH_ROUNDS + " rounds: your influence is gone and every seat holds it against you.</p>";
     const live = game.laws.filter((l) => l.to >= game.round);
     $("cLaws").innerHTML = live.length ? live.map(lawInForce).join("") : "<span class='muted'>No laws in force.</span>";
     const last = game.lawLog[game.lawLog.length - 1];
@@ -758,6 +787,21 @@
   });
   $("cMinus").addEventListener("click", () => { myInf = Math.max(0, myInf - 1); const v = game.votes[ME]; if (v) setVote(v.choice); else buildCouncil(); });
   $("cPlus").addEventListener("click", () => { myInf = Math.min(game.influence[ME], myInf + 1); const v = game.votes[ME]; if (v) setVote(v.choice); else buildCouncil(); });
+  $("cPacts").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b || b.disabled) return;
+    if (b.dataset.off) {
+      const id = +b.dataset.off, why = S.offerPact(game, ME, id);
+      if (why) { say(why); return; }
+      // A rival answers at once.
+      const yes = game.seatById[id].ai && A.answerPact(game, id, ME);
+      if (game.seatById[id].ai) S.answerOffer(game, id, ME, yes);
+      say(seatName(id) + (yes ? " agrees to a pact." : " declines."));
+    } else if (b.dataset.acc) {
+      const why = S.answerOffer(game, ME, +b.dataset.acc, true);
+      say(why || "Pact made with " + seatName(+b.dataset.acc) + ".");
+    } else if (b.dataset.dec) S.answerOffer(game, ME, +b.dataset.dec, false);
+    buildCouncil(); refresh(); replot();
+  });
   $("btnCouncil").addEventListener("click", () => { buildCouncil(); $("councilOv").hidden = false; });
   $("btnCouncilClose").addEventListener("click", () => { $("councilOv").hidden = true; });
   $("councilOv").addEventListener("click", (e) => { if (e.target.id === "councilOv") $("councilOv").hidden = true; });
@@ -803,6 +847,7 @@
         scoreLog.push((e.owner === ME ? "You" : seatName(e.owner)) + " +" + e.points + ": " + (e.secret && e.owner !== ME ? "a secret objective" : e.why));
       }
       else if (e.kind === "law") say("\u2696 " + lawResult(e));
+      else if (e.kind === "betrayal") scoreLog.push("\u2717 " + (e.owner === ME ? "You" : seatName(e.owner)) + " broke a pact with " + (e.victim === ME ? "you" : seatName(e.victim)) + ": Oathbreaker.");
       else if (e.kind === "reveal") { const o = S.objectiveById(e.objective); scoreLog.push("New objective: " + o.text + " (" + o.points + ")"); }
       else if (e.kind === "doomlock" && game.nodes[e.nodeId].owner === ME) say("⚠ Doomstar locked on " + label(game.nodes[e.nodeId]));
     }
