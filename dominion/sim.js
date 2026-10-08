@@ -413,6 +413,14 @@
       locked: perSeat(false),
       support: [],            // this round's live support orders
       held: {},               // node id -> seat, positions dug in this round
+      useCouncil: !!o.council,
+      influence: perSeat(INFLUENCE_START),
+      votes: perSeat(null),
+      agenda: null,           // { law, round } before the council this round
+      laws: [],               // laws in force: { id, seat?, from, to }
+      lawLog: [],             // every council's result
+      lawDeck: [],
+      grudge: perSeat(() => ({})),
       winner: null,
       events: [],
       history: []             // one entry per finished round: { round, orders, points }
@@ -428,6 +436,7 @@
     // The opening board is public, as a board game's is; after that each
     // seat only knows what it has seen.
     game.intel = perSeat(() => nodes.map((n) => [n.owner, n.garrison, n.level, 0]));
+    openCouncil(game);
     if (game.useDraft) openDraft(game);
     return game;
   }
@@ -470,7 +479,8 @@
   function throneNode(game) { return game.nodes.find((n) => n.type === "doomstar") || null; }
   function canFire(game, seat) {
     const t = throneNode(game);
-    return !!t && t.owner === seat && (game.charge[seat] || 0) >= DOOM_CHARGE_NEEDED && !game.doomShot;
+    return !!t && t.owner === seat && (game.charge[seat] || 0) >= DOOM_CHARGE_NEEDED && !game.doomShot &&
+      !lawActive(game, "interdict") && !lawActive(game, "censure", seat);
   }
 
   // ---- routing: only through your own ground --------------------------
@@ -511,8 +521,8 @@
   // Plotting is free of side effects: an order is checked against the
   // frozen board and stored. Nothing moves until the round resolves.
   function commandPoints(game, seat) {
-    return Math.min(CP_MAX, CP_BASE + Math.floor(nodesOf(game, seat).length / CP_PER)) +
-      (roleOf(game, seat) === "admiral" ? 2 : 0);
+    return Math.max(1, Math.min(CP_MAX, CP_BASE + Math.floor(nodesOf(game, seat).length / CP_PER)) +
+      (roleOf(game, seat) === "admiral" ? 2 : 0) + lawCount(game, "mobilize") - (lawActive(game, "censure", seat) ? 2 : 0));
   }
   function cpUsed(game, seat) { return game.orders[seat].length; }
 
@@ -634,6 +644,7 @@
     game.support = [];
     game.held = {};
     for (const s of game.seats) game.flags[s.id] = blankFlags();
+    resolveCouncil(game);
     const ids = seatOrder(game);
     const byKind = (kinds) => {
       const lists = ids.map((id) => game.orders[id].filter((o) => kinds.indexOf(o.kind) !== -1));
@@ -721,6 +732,7 @@
     if (wiped) { t.owner = NEUTRAL; t.level = 0; t.garrison = 0; t.assault = null; }
     game.stats[victim].taken += 1;
     if (game.points[victim] > game.points[shot.owner]) game.flags[shot.owner].doomOnLeader = true;
+    addGrudge(game, victim, shot.owner, 2);
     emit(game, { kind: "doomstar", x: t.x, y: t.y, owner: shot.owner, nodeId: t.id, damage: Math.round(before - t.garrison), wiped });
   }
   function stepCharge(game, dt) {
@@ -800,6 +812,11 @@
       game.stats[a.owner].captured += 1;
       if (defender !== NEUTRAL) game.stats[defender].lost += 1;
       emit(game, { kind: "capture", x: to.x, y: to.y, owner: a.owner, from: defender, nodeId: to.id, count: Math.round(to.garrison) });
+      addGrudge(game, defender, a.owner, to.type === "command" ? 3 : 1);
+      if (to.type === "command" && defender !== NEUTRAL && lawActive(game, "reparations")) {
+        game.points[a.owner] += 1;
+        emit(game, { kind: "score", owner: a.owner, points: 1, why: "Reparations for a Command" });
+      }
     } else {
       const perUnit = defender === NEUTRAL ? terrainDefence(to)
         : defenceOf(game, to) / Math.max(1e-9, to.garrison);
@@ -880,7 +897,8 @@
       if (n.owner === NEUTRAL) continue;
       const s = nodeStats(n, game), m = supplyMult(n, game);
       if (n.garrison < s.cap) n.garrison = Math.min(s.cap, n.garrison + s.unitRate * m * dt);
-      game.credits[n.owner] += s.creditRate * m * dt * (roleOf(game, n.owner) === "merchant" ? 2 : 1);
+      if (!lawActive(game, "sanction", n.owner))
+        game.credits[n.owner] += s.creditRate * m * dt * (roleOf(game, n.owner) === "merchant" ? 2 : 1);
     }
     for (const f of game.fleets) {
       const L0 = laneOf(f);
@@ -924,12 +942,18 @@
     for (const n of game.nodes) if (n.assault) resolveAssault(game, n);
     computeSupply(game);
     const throne = throneNode(game);
-    if (throne && throne.owner !== NEUTRAL) {
+    if (throne && throne.owner !== NEUTRAL && !lawActive(game, "sanctuary")) {
       game.points[throne.owner] += THRONE_POINTS;
       emit(game, { kind: "score", owner: throne.owner, points: THRONE_POINTS, why: "Held the Throne" });
     }
     scoreObjectives(game);
     refreshIntel(game);
+    for (const s of game.seats) {
+      if (!alive(game, s.id)) continue;
+      game.influence[s.id] += 1 + game.nodes.filter((n) => n.owner === s.id && n.type === "relay").length;
+      const gr = game.grudge[s.id];
+      for (const k in gr) { gr[k] = Math.round(gr[k] * 2 / 3 * 100) / 100; if (gr[k] < 0.3) delete gr[k]; }
+    }
     game.history[game.history.length - 1].points = Object.assign({}, game.points);
     const live = liveSeats(game);
     const leader = game.seats.slice().sort((a, b) => standing(game, b.id) - standing(game, a.id))[0];
@@ -949,8 +973,126 @@
     game.held = {};
     game.roles = {};
     for (const s of game.seats) { game.orders[s.id] = []; game.locked[s.id] = !alive(game, s.id); }
+    openCouncil(game);
     if (game.useDraft) openDraft(game);
     emit(game, { kind: "round", round: game.round });
+  }
+
+  // ---- the council ----------------------------------------------------------
+  // Politics is a second board. Every round one law comes before the
+  // council. Every live seat has one vote and may add influence to it,
+  // earned from Relays; votes are secret until the orders lock, and the
+  // law takes effect as the round resolves. Some laws elect a seat.
+  const INFLUENCE_START = 2;
+  const PERMANENT = 9999;
+  const LAWS = {
+    mobilize: { kind: "law", label: "Mobilization", text: "Every seat plots one more order, from now on." },
+    sanctuary: { kind: "law", label: "Sanctuary", text: "Holding the Throne scores nothing this round." },
+    interdict: { kind: "law", label: "Interdiction", text: "Nobody may fire the Doomstar this round or the next." },
+    tariff: { kind: "law", label: "Levy", text: "Every seat pays a fifth of its credits; the seats with fewest points share it." },
+    openSkies: { kind: "law", label: "Open Skies", text: "Every seat sees the whole galaxy this round." },
+    reparations: { kind: "law", label: "Reparations", text: "Taking a rival's Command scores 1 point, from now on." },
+    censure: { kind: "elect", label: "Censure", text: "The elected seat plots two fewer orders and may not fire the Doomstar next round." },
+    laurel: { kind: "elect", label: "Laurel", text: "The elected seat scores 1 point." },
+    marque: { kind: "elect", label: "Letter of Marque", text: "The elected seat receives 80 credits." },
+    sanction: { kind: "elect", label: "Sanction", text: "The elected seat earns no credits this round." }
+  };
+  const LAW_KEYS = Object.keys(LAWS);
+  function lawActive(game, id, seat) {
+    if (!game.laws) return false;
+    return game.laws.some((l) => l.id === id && l.from <= game.round && game.round <= l.to && (seat === undefined || l.seat === seat));
+  }
+  function lawCount(game, id) {
+    return game.laws ? game.laws.filter((l) => l.id === id && l.from <= game.round && game.round <= l.to).length : 0;
+  }
+  function openCouncil(game) {
+    if (!game.useCouncil) return;
+    if (!game.lawDeck.length) game.lawDeck = shuffled(LAW_KEYS, makeRng(game.seed ^ (0x1a3 + game.round * 7919)));
+    game.agenda = { law: game.lawDeck.shift(), round: game.round };
+    for (const s of game.seats) game.votes[s.id] = null;
+    emit(game, { kind: "agenda", law: game.agenda.law });
+  }
+  function shuffled(list, rng) {
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
+  }
+  function voteChoices(game) {
+    if (!game.agenda) return [];
+    return LAWS[game.agenda.law].kind === "elect" ? liveSeats(game) : ["for", "against"];
+  }
+  // Returns undefined if the vote is legal, else a reason. choice null
+  // withdraws the vote.
+  function castVote(game, seat, choice, influence) {
+    if (!game.agenda) return "Nothing is before the council.";
+    if (game.phase !== "plot" && game.phase !== "draft") return "Votes are cast while plotting.";
+    if (game.locked[seat]) return "Your orders are locked.";
+    if (choice === null) { game.votes[seat] = null; return undefined; }
+    if (voteChoices(game).indexOf(choice) === -1) return "Not a choice on this agenda.";
+    const inf = Math.max(0, Math.floor(influence || 0));
+    if (inf > game.influence[seat]) return "Not enough influence.";
+    game.votes[seat] = { choice, influence: inf };
+    return undefined;
+  }
+  function tally(game) {
+    const t = {};
+    for (const c of voteChoices(game)) t[c] = 0;
+    for (const s of game.seats) {
+      const v = game.votes[s.id];
+      if (!v || !alive(game, s.id) || t[v.choice] === undefined) continue;
+      t[v.choice] += 1 + v.influence;
+    }
+    return t;
+  }
+  function resolveCouncil(game) {
+    if (!game.agenda || game.skipCouncil) return;
+    const law = LAWS[game.agenda.law], id = game.agenda.law, t = tally(game);
+    for (const s of game.seats) { const v = game.votes[s.id]; if (v) game.influence[s.id] -= v.influence; }
+    let passed = false, elected = null;
+    if (law.kind === "elect") {
+      // Most votes wins; a tie goes to the seat with fewer points, then to
+      // the turn order. Nobody voting elects nobody.
+      const rank = {};
+      seatOrder(game).forEach((x, i) => { rank[x] = i; });
+      const best = voteChoices(game).filter((c) => t[c] > 0)
+        .sort((a, b) => t[b] - t[a] || game.points[a] - game.points[b] || rank[a] - rank[b])[0];
+      if (best !== undefined) { passed = true; elected = best; }
+    } else passed = t.for > t.against;
+    const votes = {};
+    for (const s of game.seats) votes[s.id] = game.votes[s.id];
+    emit(game, { kind: "law", law: id, passed, elected, tally: t, votes });
+    game.lawLog.push({ round: game.round, law: id, passed, elected, tally: t, votes });
+    if (!passed) return;
+    const r = game.round, add = (o) => game.laws.push(Object.assign({ id, from: r, to: r }, o));
+    switch (id) {
+      case "mobilize": add({ to: PERMANENT }); break;
+      case "reparations": add({ to: PERMANENT }); break;
+      case "sanctuary": case "openSkies": add({}); break;
+      case "interdict": add({ to: r + 1 }); break;
+      case "censure": add({ seat: elected, from: r + 1, to: r + 1 }); break;
+      case "sanction": add({ seat: elected }); break;
+      case "laurel":
+        game.points[elected] += 1;
+        emit(game, { kind: "score", owner: elected, points: 1, why: "Laurel of the council" });
+        break;
+      case "marque": game.credits[elected] += 80; break;
+      case "tariff": {
+        const live = liveSeats(game);
+        let pot = 0;
+        for (const x of live) { const pay = game.credits[x] / 5; game.credits[x] -= pay; pot += pay; }
+        const low = Math.min.apply(null, live.map((x) => game.points[x]));
+        const poor = live.filter((x) => game.points[x] === low);
+        for (const x of poor) game.credits[x] += pot / poor.length;
+        break;
+      }
+    }
+  }
+  // Grudges: who has hurt whom. They fade by a third each round. Rivals
+  // turn on the seats that hurt them and vote against them.
+  function addGrudge(game, victim, by, amount) {
+    if (!game.grudge || victim === NEUTRAL || by === NEUTRAL || victim === by) return;
+    const g = game.grudge[victim];
+    g[by] = (g[by] || 0) + amount;
   }
 
   // ---- the draft -----------------------------------------------------------
@@ -1001,7 +1143,7 @@
   const SIGHT_RELAY = 2;
   function sightOf(game, seat) {
     const seen = new Set();
-    if (roleOf(game, seat) === "spymaster") { for (const n of game.nodes) seen.add(n.id); return seen; }
+    if (roleOf(game, seat) === "spymaster" || lawActive(game, "openSkies")) { for (const n of game.nodes) seen.add(n.id); return seen; }
     const t = throneNode(game);
     if (t) seen.add(t.id);
     for (const n of game.nodes) {
@@ -1044,7 +1186,7 @@
       n.owner = m[0]; n.garrison = m[1]; n.level = m[2]; n.assault = null;
     }
     c.fleets = c.fleets.filter((f) => fleetSeen(f, seat, sight));
-    for (const s of c.seats) if (s.id !== seat) { c.orders[s.id] = []; c.locked[s.id] = false; }
+    for (const s of c.seats) if (s.id !== seat) { c.orders[s.id] = []; c.locked[s.id] = false; c.votes[s.id] = null; }
     c.intel = { [seat]: mem.map((m) => m.slice()) };
     c.viewOf = seat;
     computeSupply(c);
@@ -1058,6 +1200,9 @@
   function forecast(game, seat, every) {
     const step0 = every || 1;
     const c = viewFor(game, seat);
+    // Nobody knows how the council will vote, so the forecast leaves the
+    // law out.
+    c.skipCouncil = true;
     // The Spymaster sees rivals' orders once they are locked; everyone
     // else sees a galaxy where rivals do nothing.
     const spy = roleOf(game, seat) === "spymaster";
@@ -1095,6 +1240,7 @@
     ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     sightOf, fleetSeen, refreshIntel, viewFor, SIGHT_RELAY,
+    LAWS, LAW_KEYS, INFLUENCE_START, lawActive, lawCount, voteChoices, castVote, tally, addGrudge,
     defenceOf, supportFor, resolveArrival, resolveAssault, stepLaneCombat, lanePoint, drainEvents
   };
 });

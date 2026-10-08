@@ -86,7 +86,10 @@
   function plan(game, seat) {
     const view = S.viewFor(game, seat);
     planOn(view, seat);
+    vote(view, seat);
     for (const o of view.orders[seat]) S.addOrder(game, seat, o);
+    const v = view.votes && view.votes[seat];
+    if (v) S.castVote(game, seat, v.choice, v.influence);
     S.lockOrders(game, seat);
     return game.orders[seat];
   }
@@ -177,6 +180,8 @@
           const lead = order[0], second = order[1];
           if (lead && second && lead.id === t.owner && lead.id !== seat &&
               game.points[lead.id] > game.points[second.id]) score *= 1.4;
+          // Vendetta: a seat that has hurt this one is a sweeter target.
+          score *= 1 + Math.min(1, 0.12 * ((game.grudge && game.grudge[seat][t.owner]) || 0));
         }
         if (!best || score > best.score) best = { score, t, wave, supporters };
       }
@@ -206,6 +211,48 @@
         .sort((a, b) => threatTo(game, seat, b) - threatTo(game, seat, a) || S.dist(r, a) - S.dist(r, b))[0];
       if (dest) add({ kind: "send", from: r.id, to: dest.id, frac: 0.6 });
     }
+  }
+
+  // The council. A rival votes its interest, spends influence by how much
+  // the law matters to it, and when a law elects someone to suffer, picks
+  // the leader or whoever it holds the biggest grudge against.
+  function vote(game, seat) {
+    if (!game.agenda || !game.useCouncil) return;
+    const id = game.agenda.law, law = S.LAWS[id], P = personalityOf(game, seat);
+    const t = S.throneNode(game), live = S.liveSeats(game);
+    const grudge = (x) => (game.grudge && game.grudge[seat][x]) || 0;
+    let choice = null, stake = 0;
+    if (law.kind === "elect") {
+      if (id === "laurel" || id === "marque") { choice = seat; stake = id === "laurel" ? 0.9 : 0.4; }
+      else {
+        // Walk from the next seat round, as everything else does, so ties
+        // do not all fall on the same seat.
+        const k = live.indexOf(seat), others = live.slice(k + 1).concat(live.slice(0, k));
+        let best = -Infinity;
+        for (const x of others) {
+          const v = game.points[x] + 0.6 * grudge(x) + (t && t.owner === x ? 1 : 0);
+          if (v > best) { best = v; choice = x; }
+        }
+        stake = id === "censure" ? 0.6 : 0.35;
+      }
+    } else {
+      let v = 0;
+      const mineThrone = t && t.owner === seat, theirs = t && t.owner !== NEUTRAL && t.owner !== seat;
+      const low = Math.min.apply(null, live.map((x) => game.points[x]));
+      const avg = live.reduce((a, x) => a + game.credits[x], 0) / live.length;
+      switch (id) {
+        case "mobilize": v = 0.3; break;
+        case "sanctuary": v = mineThrone ? -1 : theirs ? 0.7 : 0; break;
+        case "interdict": v = mineThrone ? -0.9 : theirs ? 0.7 : 0.1; break;
+        case "tariff": v = game.points[seat] === low ? 0.8 : game.credits[seat] > avg ? -0.5 : 0.2; break;
+        case "openSkies": v = P === PERSONALITIES.hawk || P === PERSONALITIES.zealot ? 0.2 : -0.1; break;
+        case "reparations": v = P === PERSONALITIES.hawk ? 0.5 : P === PERSONALITIES.turtle ? -0.5 : 0.1; break;
+      }
+      if (v > 0) choice = "for"; else if (v < 0) choice = "against";
+      stake = Math.abs(v);
+    }
+    if (choice === null) return;
+    S.castVote(game, seat, choice, Math.min(game.influence[seat], Math.round(game.influence[seat] * stake * 0.6)));
   }
 
   // The draft: which role is worth most to this seat this round.
@@ -248,5 +295,5 @@
     }
   }
 
-  return { plan, planAll, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { plan, planAll, vote, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });

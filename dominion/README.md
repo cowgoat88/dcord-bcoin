@@ -107,8 +107,39 @@ Measured, 100 four-seat all-AI seasons: wins by seat 28/28/23/21; about a
 third of the galaxy is in sight of a seat at any time. Seasons ending on
 points: 25 of 30 with three seats, 51 of 100 with four, 12 of 30 with five.
 
-Not built yet (phases 4 to 6 in the design doc): the council, laws and
-promises, the tech tree and faction rules, the campaign, and online play.
+## The council (phase 4)
+
+Every round one law comes before the council, dealt from a shuffled deck
+of ten. Every live seat has one vote and may add influence to it (spent
+win or lose); influence comes in at 1 a round plus 1 per Relay held, so
+Relays are now worth fighting over for politics as well as the Doomstar.
+Votes are secret until the orders lock, then the law takes effect as the
+round resolves and everyone's vote is shown.
+
+| Law | Effect |
+|---|---|
+| Mobilization | every seat plots one more order, from now on |
+| Sanctuary | holding the Throne scores nothing this round |
+| Interdiction | nobody may fire the Doomstar this round or the next |
+| Levy | every seat pays a fifth of its credits to the seats with fewest points |
+| Open Skies | every seat sees the whole galaxy this round |
+| Reparations | taking a rival's Command scores 1 point, from now on |
+| Censure (elect) | the seat plots two fewer orders and may not fire next round |
+| Laurel (elect) | the seat scores 1 point |
+| Letter of Marque (elect) | the seat receives 80 credits |
+| Sanction (elect) | the seat earns no credits this round |
+
+A tied election goes to the seat with fewer points. Seats remember who
+hurt them (a grudge for each position taken, more for a Command or a
+Doomstar strike, fading by a third each round); rivals aim at those seats
+and vote to censure or sanction them, or the leader. The agenda shows in
+the draft, so it can steer the pick.
+
+Measured, 100 five-seat all-AI seasons with draft and council: wins by
+seat 17/15/22/22/24.
+
+Not built yet (phases 4 to 6 in the design doc): promises between seats,
+the tech tree and faction rules, the campaign, and online play.
 
 ## Measured
 
@@ -129,7 +160,7 @@ points and nobody was eliminated. Objectives were built to change that.
 node --test dominion/sim.test.js
 ```
 
-29 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+34 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
@@ -140,4 +171,5 @@ once each; in-round events counted and reset; rivals following
 objectives; seasons ending on points; the roles draft (order, each role
 once, effects) and AI seasons drafting every round; what a seat sees, the view, forecast and
 rival plans keeping what is out of sight as last seen, intel refreshed
-each round.
+each round; the council's agenda, votes, tally and every law's effect;
+grudges; rivals voting legally.

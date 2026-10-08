@@ -52,6 +52,11 @@ plans, not reflexes; points, not annihilation; politics is a second board.
   on it too. Anything new that reads the board on a seat's behalf (AI,
   forecast, UI hints) must read the view, not `game`, or it leaks what the
   seat cannot see. The UI draws through `known(n, fog)`.
+- The council resolves at the start of `beginResolve`, before any order is
+  applied, so a law voted this round already binds this round. The
+  forecast skips it (`skipCouncil`): nobody knows the vote. Laws in force
+  live in `game.laws` as `{ id, seat?, from, to }`; permanent ones use
+  `to: 9999`, never Infinity, which JSON turns into null.
 - Rivals plot only in the plot step, with the same command points and
   orders as a person, and lock. They never act during a resolve.
 

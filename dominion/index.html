@@ -89,16 +89,25 @@
   .obj .who i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   .obj .met { font-size: 10px; color: var(--good); border: 1px solid rgba(134,239,172,.5); border-radius: 8px; padding: 0 6px; }
   .obj.done .txt { color: var(--muted); text-decoration: line-through; }
+  .law { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .law b { color: var(--gold); }
+  #cChoices button.on { border-color: var(--gold); color: var(--gold); }
+  #cChoices i, .tally i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .tally { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+  #btnCouncil.unvoted { border-color: var(--gold); }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
 
   @media (max-width: 620px) {
-    #top { gap: 8px; padding: 6px 8px; }
+    #top { gap: 5px; padding: 6px 6px; flex-wrap: wrap; }
+    /* Standings get their own row on a phone, so six seats always fit. */
+    #standings { order: 10; flex: 1 1 100%; gap: 4px; }
+    #top button { padding: 6px 7px; }
     #top .brand, #top .k { display: none; }
     .seat { padding: 2px 6px; }
     .seat span.n { display: none; }
-    #btnObj .lbl, #tRole .lbl { display: none; }
+    #btnObj .lbl, #tRole .lbl, #btnCouncil .lbl { display: none; }
     button { padding: 7px 8px; font-size: 11px; }
     .seg button { padding: 7px 7px; }
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -115,6 +124,7 @@
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
     <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
     <div id="standings"></div>
+    <button id="btnCouncil" title="The council">&#9878;<span class="lbl"> Council</span></button>
     <button id="btnObj" title="Objectives">&#9678;<span class="lbl"> Objectives</span></button>
     <button id="btnMenu">Menu</button>
   </div>
@@ -146,6 +156,7 @@
       <div class="card">
         <h1 style="font-size:16px;letter-spacing:2px" id="draftTitle">CHOOSE YOUR ROLE</h1>
         <p id="draftOrder"></p>
+        <p id="draftAgenda"></p>
         <div class="roles" id="draftGrid"></div>
       </div>
     </div>
@@ -160,6 +171,26 @@
         <div id="objSecret"></div>
         <p id="objMore" class="muted"></p>
         <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnObjClose">Close</button></div>
+      </div>
+    </div>
+
+    <div class="overlay" id="councilOv" hidden>
+      <div class="card">
+        <h1 style="font-size:16px;letter-spacing:2px">THE COUNCIL</h1>
+        <p id="cAgenda"></p>
+        <h2>Your vote</h2>
+        <div class="row" id="cChoices"></div>
+        <div class="row" style="margin-top:8px">
+          <span class="muted">Add influence</span>
+          <button id="cMinus" aria-label="Less influence">&minus;</button><b id="cInfN">0</b><button id="cPlus" aria-label="More influence">+</button>
+          <span class="muted" id="cInfNote"></span>
+        </div>
+        <h2>In force</h2>
+        <div id="cLaws"></div>
+        <h2>Last council</h2>
+        <div id="cLast"></div>
+        <p class="muted" style="font-size:11px">One vote each, plus any influence added (spent win or lose). Influence: 1 a round, +1 per Relay. Votes stay secret until orders lock; the law acts as the round resolves.</p>
+        <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnCouncilClose">Close</button></div>
       </div>
     </div>
 
@@ -258,7 +289,7 @@
     const others = S.FACTION_KEYS.filter((k) => k !== faction);
     const seats = [{ faction, name: "You" }];
     for (let i = 0; i < rivals; i++) seats.push({ ai: true, faction: others[(seed + i) % others.length] });
-    game = S.createGame({ seed, seats, draft: true });
+    game = S.createGame({ seed, seats, draft: true, council: true });
     for (const s of game.seats) if (s.ai) s.name = S.FACTIONS[s.faction].label;
     selected = null; replay = null; lastRoundStart = null; fx.length = 0;
     $("startOv").hidden = true; $("endOv").hidden = true;
@@ -465,8 +496,10 @@
     A.planAll(game);                       // the rivals plot at the same moment you do
     replot();
     $("btnReplay").disabled = !lastRoundStart;
-    const r = S.roleOf(game, ME);
-    if (r) say(S.ROLES[r].icon + " " + S.ROLES[r].label + ": " + S.ROLES[r].text);
+    const r = S.roleOf(game, ME), lines = [];
+    if (r) lines.push(S.ROLES[r].icon + " " + S.ROLES[r].label + ": " + S.ROLES[r].text);
+    if (game.agenda) lines.push("\u2696 Before the council: " + S.LAWS[game.agenda.law].label + ". " + S.LAWS[game.agenda.law].text);
+    sayQueue(lines);
   }
   function showDraft() {
     $("draftTitle").textContent = "Round " + game.round + " \u00b7 choose your role";
@@ -476,6 +509,7 @@
         (id === ME ? "You" : s.name) + (pick ? " \u00b7 " + S.ROLES[pick].icon + " " + S.ROLES[pick].label : id === S.draftTurn(game) ? " \u00b7 picking" : "") + "</span>";
     }).join(" ");
     $("draftOrder").innerHTML = "Pick order, fewest points first: " + order;
+    $("draftAgenda").innerHTML = game.agenda ? "&#9878; Before the council this round: <b>" + S.LAWS[game.agenda.law].label + "</b> \u2014 " + S.LAWS[game.agenda.law].text : "";
     const left = S.rolesLeft(game);
     const grid = $("draftGrid");
     grid.innerHTML = "";
@@ -504,11 +538,20 @@
     // The round's scoring, one line after another, then the prompt.
     const lines = scoreLog.splice(0);
     lines.push("Round " + game.round + " \u2014 plot your orders.");
-    sayQueue(lines);
+    pendingLines = lines; lastStartLines = [];
     startPlot();
+    flushLines();
   }
-  let queueT = 0;
+  let queueT = 0, pendingLines = null;
+  // startPlot queues its own lines; the round's score lines go first.
+  function flushLines() {
+    if (!pendingLines) return;
+    const first = pendingLines; pendingLines = null;
+    sayQueue(first.concat(lastStartLines));
+  }
+  let lastStartLines = [];
   function sayQueue(lines) {
+    if (pendingLines !== null) { lastStartLines = lines; return; }
     clearTimeout(queueT);
     const next = () => { if (!lines.length) return; say(lines.shift()); if (lines.length) queueT = setTimeout(next, 2200); };
     next();
@@ -609,12 +652,21 @@
       ol.appendChild(el);
     });
     if (!game.orders[ME].length) ol.innerHTML = "<span class='muted'>No orders yet. Every position you leave alone keeps building.</span>";
+    if (game.agenda && game.phase === "plot") {
+      const v = game.votes[ME], el = document.createElement("span");
+      el.className = "ord"; el.style.cursor = "pointer";
+      el.textContent = "\u2696 " + S.LAWS[game.agenda.law].label + ": " + (v ? (v.choice === "for" ? "for" : v.choice === "against" ? "against" : v.choice === ME ? "you" : game.seatById[v.choice].name) + (v.influence ? " +" + v.influence : "") : "no vote");
+      el.addEventListener("click", () => { buildCouncil(); $("councilOv").hidden = false; });
+      ol.appendChild(el);
+    }
     $("fcLabel").textContent = fcAt ? "Forecast +" + fcAt + "s" : "Now";
     $("forecastTag").style.display = fcAt && game.phase === "plot" && !replay ? "block" : "none";
     $("forecastTag").textContent = "FORECAST +" + fcAt + "s \u00b7 " + (S.roleOf(game, ME) === "spymaster" ? "rivals' orders shown" : "rivals' orders unknown");
     $("btnLock").textContent = "Lock orders (" + S.cpUsed(game, ME) + ")";
     const metNow = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(ME) && o.test(game, ME)).length;
     $("btnObj").innerHTML = "&#9678;<span class='lbl'> Objectives</span>" + (metNow ? " <b style='color:var(--good)'>" + metNow + "</b>" : "");
+    $("btnCouncil").innerHTML = "&#9878;<span class='lbl'> Council</span> <b>" + game.influence[ME] + "</b>";
+    $("btnCouncil").classList.toggle("unvoted", !!game.agenda && game.phase === "plot" && !game.votes[ME]);
   }
 
   let toastT = 0;
@@ -649,6 +701,66 @@
   $("btnObj").addEventListener("click", () => { buildObjectives(); $("objOv").hidden = false; });
   $("btnObjClose").addEventListener("click", () => { $("objOv").hidden = true; });
   $("objOv").addEventListener("click", (e) => { if (e.target.id === "objOv") $("objOv").hidden = true; });
+
+  // ---- the council ----
+  let myInf = 0;
+  const seatChip = (id) => "<i style='background:" + game.seatById[id].color + "'></i>" + (id === ME ? "You" : game.seatById[id].name);
+  function lawResult(e) {
+    const law = S.LAWS[e.law];
+    const res = law.kind === "elect" ? (e.elected ? "elects " + (e.elected === ME ? "you" : game.seatById[e.elected].name) : "elects nobody")
+      : e.passed ? "passes" : "fails";
+    const t = Object.keys(e.tally).map((k) => (k === "for" || k === "against" ? k : (+k === ME ? "you" : game.seatById[k].name)) + " " + e.tally[k]).join(", ");
+    return law.label + " " + res + " (" + t + ")";
+  }
+  function lawInForce(l) {
+    const law = S.LAWS[l.id];
+    const when = l.to >= 9999 ? "from now on" : l.from > game.round ? "next round" : l.to > game.round ? "this round and next" : "this round";
+    return "<div class='law'><b>" + law.label + "</b>" + (l.seat ? " \u00b7 " + seatChip(l.seat) : "") + " \u00b7 " + when + "<br><span class='muted'>" + law.text + "</span></div>";
+  }
+  function buildCouncil() {
+    if (!game) return;
+    const a = game.agenda, v = game.votes[ME], open = a && (game.phase === "plot" || game.phase === "draft") && !game.locked[ME];
+    $("cAgenda").innerHTML = a ? "Round " + game.round + ": <b>" + S.LAWS[a.law].label + "</b> \u2014 " + S.LAWS[a.law].text : "Nothing is before the council.";
+    const ch = $("cChoices");
+    ch.innerHTML = "";
+    if (a) {
+      for (const c of S.voteChoices(game).concat([null])) {
+        const b = document.createElement("button");
+        b.dataset.c = c === null ? "" : String(c);
+        b.className = (v ? v.choice === c : c === null) ? "on" : "";
+        b.innerHTML = c === null ? "Abstain" : c === "for" ? "For" : c === "against" ? "Against" : seatChip(c);
+        b.disabled = !open;
+        ch.appendChild(b);
+      }
+    }
+    myInf = v ? v.influence : Math.min(myInf, game.influence[ME]);
+    $("cInfN").textContent = myInf;
+    $("cMinus").disabled = !open || myInf <= 0;
+    $("cPlus").disabled = !open || myInf >= game.influence[ME];
+    $("cInfNote").textContent = "of " + game.influence[ME] + " \u00b7 your vote counts " + (1 + myInf);
+    const live = game.laws.filter((l) => l.to >= game.round);
+    $("cLaws").innerHTML = live.length ? live.map(lawInForce).join("") : "<span class='muted'>No laws in force.</span>";
+    const last = game.lawLog[game.lawLog.length - 1];
+    $("cLast").innerHTML = last ? "<div class='law'>Round " + last.round + ": " + lawResult(last) + "<div class='tally'>" +
+      Object.keys(last.votes).map((id) => { const x = last.votes[id]; return "<span>" + seatChip(+id) + ": " +
+        (x ? (x.choice === "for" || x.choice === "against" ? x.choice : (+x.choice === ME ? "you" : game.seatById[x.choice].name)) + (x.influence ? " +" + x.influence : "") : "abstained") + "</span>"; }).join("") +
+      "</div></div>" : "<span class='muted'>The council has not met yet.</span>";
+  }
+  function setVote(choice) {
+    const why = S.castVote(game, ME, choice, choice === null ? 0 : myInf);
+    if (why) say(why);
+    buildCouncil(); refresh();
+  }
+  $("cChoices").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b || b.disabled) return;
+    const c = b.dataset.c;
+    setVote(c === "" ? null : c === "for" || c === "against" ? c : +c);
+  });
+  $("cMinus").addEventListener("click", () => { myInf = Math.max(0, myInf - 1); const v = game.votes[ME]; if (v) setVote(v.choice); else buildCouncil(); });
+  $("cPlus").addEventListener("click", () => { myInf = Math.min(game.influence[ME], myInf + 1); const v = game.votes[ME]; if (v) setVote(v.choice); else buildCouncil(); });
+  $("btnCouncil").addEventListener("click", () => { buildCouncil(); $("councilOv").hidden = false; });
+  $("btnCouncilClose").addEventListener("click", () => { $("councilOv").hidden = true; });
+  $("councilOv").addEventListener("click", (e) => { if (e.target.id === "councilOv") $("councilOv").hidden = true; });
 
   function showEnd() {
     const w = game.winner;
@@ -690,6 +802,7 @@
         if (!e.objective) floatText(t.x, t.y - 40, "+" + e.points + " " + seatName(e.owner), colorOf(e.owner));
         scoreLog.push((e.owner === ME ? "You" : seatName(e.owner)) + " +" + e.points + ": " + (e.secret && e.owner !== ME ? "a secret objective" : e.why));
       }
+      else if (e.kind === "law") say("\u2696 " + lawResult(e));
       else if (e.kind === "reveal") { const o = S.objectiveById(e.objective); scoreLog.push("New objective: " + o.text + " (" + o.points + ")"); }
       else if (e.kind === "doomlock" && game.nodes[e.nodeId].owner === ME) say("⚠ Doomstar locked on " + label(game.nodes[e.nodeId]));
     }

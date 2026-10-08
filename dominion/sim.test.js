@@ -481,3 +481,121 @@ test("intel is refreshed at the end of every round with what was seen", () => {
   assert.equal(g.intel[1][near.id][3], 1, "stamped with the round it was seen");
   assert.notEqual(g.intel[1][far.id][1], 3, "not what it could not see");
 });
+
+// ---------------------------------------------------------------------
+// The council
+// ---------------------------------------------------------------------
+function councilGame(law, n) {
+  const g = S.createGame({ seed: 4, seats: seats(n || 3), council: true });
+  g.agenda = { law, round: g.round };
+  return g;
+}
+test("a law comes before the council every round, and votes are checked", () => {
+  const g = S.createGame({ seed: 4, seats: seats(3), council: true });
+  assert.ok(S.LAWS[g.agenda.law]);
+  assert.equal(S.createGame({ seed: 4, seats: seats(3) }).agenda, null, "no council unless asked for");
+  const h = councilGame("mobilize");
+  assert.deepEqual(S.voteChoices(h), ["for", "against"]);
+  assert.match(S.castVote(h, 1, "maybe", 0), /Not a choice/);
+  assert.match(S.castVote(h, 1, "for", 3), /influence/);
+  assert.equal(S.castVote(h, 1, "for", 2), undefined);
+  assert.equal(S.viewFor(h, 2).votes[1], null, "votes are secret");
+  S.castVote(h, 2, "against", 0); S.castVote(h, 3, "against", 0);
+  assert.deepEqual(S.tally(h), { for: 3, against: 2 }, "influence adds to a vote");
+  S.beginResolve(h);
+  assert.equal(h.influence[1], 0, "influence is spent");
+  assert.ok(h.lawLog[0].passed);
+  assert.ok(S.lawActive(h, "mobilize"));
+  const seen = new Set();
+  const g2 = S.createGame({ seed: 4, seats: seats(3), council: true });
+  for (let r = 0; r < 10; r++) { seen.add(g2.agenda.law); S.beginResolve(g2); S.runRound(g2); }
+  assert.equal(seen.size, 10, "ten rounds bring ten different laws");
+});
+
+test("laws do what they say", () => {
+  const pass = (law, choiceFor) => {
+    const g = councilGame(law);
+    for (const s of g.seats) S.castVote(g, s.id, choiceFor === undefined ? "for" : choiceFor, 0);
+    return g;
+  };
+  let g = pass("mobilize");
+  const cp = S.commandPoints(g, 1);
+  S.beginResolve(g);
+  assert.equal(S.commandPoints(g, 1), cp + 1, "Mobilization");
+  g = pass("censure", 2);
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(S.commandPoints(g, 2), Math.max(1, S.commandPoints(g, 1) - 2), "Censure next round");
+  S.throneNode(g).owner = 2; g.charge[2] = S.DOOM_CHARGE_NEEDED;
+  assert.ok(!S.canFire(g, 2), "censured seats may not fire");
+  g = pass("sanctuary");
+  S.throneNode(g).owner = 1; S.throneNode(g).garrison = 500;
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(g.lawLog[0].passed, true);
+  assert.ok(!g.history[0] || g.points[1] === g.history[0].points[1]);
+  assert.ok(!S.drainEvents(g).some((e) => e.kind === "score" && e.why === "Held the Throne"), "Sanctuary: no Throne point");
+  g = pass("sanction", 3);
+  const c3 = g.credits[3];
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(g.credits[3], c3, "Sanction: no income");
+  assert.ok(g.credits[1] > c3);
+  g = pass("laurel", 2);
+  S.beginResolve(g);
+  assert.equal(g.points[2], 1, "Laurel");
+  g = pass("tariff");
+  g.credits[1] = 100; g.credits[2] = 100; g.credits[3] = 100; g.points[1] = 1; g.points[2] = 1;
+  S.beginResolve(g);
+  assert.equal(g.credits[3], 140, "the Levy goes to the fewest points");
+  g = pass("openSkies");
+  S.beginResolve(g);
+  assert.equal(S.sightOf(g, 1).size, g.nodes.length, "Open Skies");
+  g = pass("interdict");
+  S.beginResolve(g); S.runRound(g);
+  S.throneNode(g).owner = 1; g.charge[1] = S.DOOM_CHARGE_NEEDED;
+  assert.ok(!S.canFire(g, 1), "Interdiction lasts into the next round");
+  const e = councilGame("laurel");
+  e.points[1] = 3;
+  S.castVote(e, 1, 1, 0); S.castVote(e, 2, 2, 0);
+  S.beginResolve(e);
+  assert.equal(e.lawLog[0].elected, 2, "a tied election goes to the seat with fewer points");
+});
+
+test("Reparations: taking a rival's Command scores", () => {
+  const g = lineGame();
+  g.laws.push({ id: "reparations", from: 1, to: 9999 });
+  const cmd = g.nodes[2];
+  cmd.garrison = 1;
+  g.nodes[1].owner = 1; g.nodes[1].garrison = 200;
+  S.computeSupply(g);
+  S.addOrder(g, 1, { kind: "send", from: 1, to: 2, frac: 1 });
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(cmd.owner, 1);
+  assert.ok(g.points[1] >= 1);
+});
+
+test("grudges grow when a seat is hurt and fade each round", () => {
+  const g = lineGame();
+  const cmd = g.nodes[2];
+  cmd.garrison = 1; g.nodes[1].owner = 1; g.nodes[1].garrison = 200;
+  S.computeSupply(g);
+  S.addOrder(g, 1, { kind: "send", from: 1, to: 2, frac: 1 });
+  S.beginResolve(g); S.runRound(g);
+  const after = g.grudge[2][1];
+  assert.ok(after >= 1, "the seat that lost its Command remembers");
+  assert.equal(g.grudge[1][2], undefined);
+});
+
+test("rivals vote legally, and AI seasons with the council finish", () => {
+  for (let seed = 1; seed <= 3; seed++) {
+    const g = S.createGame({ seed, seats: seats(4), draft: true, council: true });
+    while (g.phase !== "over") {
+      A.runDraft(g); A.planAll(g);
+      for (const s of g.seats) {
+        const v = g.votes[s.id];
+        if (v) assert.ok(S.voteChoices(g).indexOf(v.choice) !== -1 && v.influence <= g.influence[s.id]);
+      }
+      S.beginResolve(g); S.runRound(g); S.drainEvents(g);
+    }
+    assert.ok(g.lawLog.length >= 1);
+    assert.ok(g.lawLog.some((l) => l.passed));
+  }
+});
