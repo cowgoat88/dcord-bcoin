@@ -37,6 +37,36 @@
     return PERSONALITIES[s && s.personality] || PERSONALITIES[PERSONALITY_KEYS[(game.seed + seat) % PERSONALITY_KEYS.length]];
   }
 
+  // What the open objectives make worth having, for this seat: a weight
+  // per position, and whether spending on upgrades or research scores.
+  function wants(game, seat) {
+    const goals = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(seat)).map((o) => o.id);
+    const sec = game.secret[seat];
+    if (sec && !sec.scored) goals.push(sec.id);
+    const has = (id) => goals.indexOf(id) !== -1;
+    const mineSectors = new Set(S.nodesOf(game, seat).map((n) => n.sector));
+    const home = game.seatById[seat].home;
+    const throne = S.throneNode(game);
+    const court = throne ? S.neighbors(game, throne.id) : [];
+    const weight = (n) => {
+      let w = 1;
+      if ((has("relays3") || has("relays5")) && n.type === "relay") w *= 1.8;
+      if (has("mines2") && n.type === "mine") w *= 1.8;
+      if ((has("spread") || has("everywhere")) && n.sector >= 0 && !mineSectors.has(n.sector)) w *= 1.7;
+      if (has("beachhead") && n.sector >= 0 && n.sector !== home && game.seats.some((r) => r.home === n.sector)) w *= 1.5;
+      if (has("nine") || has("fifteen") || has("twoTaken") || has("blitz")) w *= n.owner === S.NEUTRAL ? 1.3 : 1.1;
+      if (has("court") && (n.type === "doomstar" || court.indexOf(n.id) !== -1)) w *= 2;
+      if (has("crown") && n.type === "command" && n.owner !== S.NEUTRAL) w *= 2.5;
+      if (has("fortress") && n.sector === home) w *= 2.5;
+      return w;
+    };
+    return {
+      weight,
+      upgrade: has("factories") || has("levels"),
+      research: has("research") || has("doctrine")
+    };
+  }
+
   function cpLeft(game, seat) { return S.commandPoints(game, seat) - S.cpUsed(game, seat); }
   function hostile(seat, n) { return n.owner !== seat && n.owner !== NEUTRAL; }
 
@@ -53,6 +83,7 @@
 
   function plan(game, seat) {
     const P = personalityOf(game, seat);
+    const W = wants(game, seat);
     const N = (id) => game.nodes[id];
     const busy = new Set();                 // positions already given an order this round
     const add = (o) => {
@@ -127,7 +158,7 @@
         }
         need *= P.margin;
         if (force <= need) continue;
-        let score = VALUE[t.type] / (need + 6);
+        let score = VALUE[t.type] * W.weight(t) / (need + 6);
         if (t.type === "doomstar") score *= P.throne;
         if (t.owner !== NEUTRAL) {
           // Hitting the leader is worth more; hitting a weak neighbour is cheap.
@@ -149,10 +180,12 @@
     // 4. Spend.
     const tracks = ["assault", "fortify"].filter((tr) => S.techCost(game, seat, tr) !== null)
       .sort((a, b) => S.techCost(game, seat, a) - S.techCost(game, seat, b));
-    if (tracks.length && S.spendable(game, seat) >= S.techCost(game, seat, tracks[0]) * 1.1) add({ kind: "research", track: tracks[0] });
+    // An objective that pays for spending moves it ahead of the margin.
+    const resMargin = W.research ? 1.0 : 1.1, upMargin = W.upgrade ? 1.0 : 1.3;
+    if (tracks.length && S.spendable(game, seat) >= S.techCost(game, seat, tracks[0]) * resMargin) add({ kind: "research", track: tracks[0] });
     const up = mine().filter((n) => n.level < S.MAX_LEVEL && (n.type === "command" || n.type === "factory"))
-      .sort((a, b) => a.level - b.level)[0];
-    if (up && S.spendable(game, seat) >= S.upgradeCost(up.level) * 1.3) add({ kind: "upgrade", at: up.id });
+      .sort((a, b) => (W.upgrade && a.type === "factory" ? -1 : 0) - (W.upgrade && b.type === "factory" ? -1 : 0) || a.level - b.level)[0];
+    if (up && S.spendable(game, seat) >= S.upgradeCost(up.level) * upMargin) add({ kind: "upgrade", at: up.id });
 
     // 5. Bring the rear forward.
     const front = (n) => S.neighbors(game, n.id).some((id) => N(id).owner !== seat);
@@ -175,5 +208,5 @@
     }
   }
 
-  return { plan, planAll, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { plan, planAll, wants, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });

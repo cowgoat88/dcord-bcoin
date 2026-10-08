@@ -303,3 +303,84 @@ test("the simulation uses no math that may differ between browsers", () => {
   const g = S.createGame({ seed: 5, seats: seats(4) });
   assert.ok(g.nodes.every((n) => Number.isInteger(n.x) && Number.isInteger(n.y)), "positions are whole units");
 });
+
+// ---------------------------------------------------------------------
+// Objectives
+// ---------------------------------------------------------------------
+test("two public objectives show at the start and one more is revealed every round", () => {
+  const g = S.createGame({ seed: 4, seats: seats(3) });
+  assert.equal(S.publicObjectives(g).length, 2);
+  assert.equal(g.deck.length, 10);
+  assert.ok(g.deck.slice(0, 5).every((id) => S.objectiveById(id).stage === 1), "stage I first");
+  assert.ok(g.deck.slice(5).every((id) => S.objectiveById(id).stage === 2), "then stage II");
+  for (const s of g.seats) S.lockOrders(g, s.id);
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(S.publicObjectives(g).length, 3);
+  for (const s of g.seats) assert.ok(S.objectiveById(g.secret[s.id].id), "every seat has a secret");
+});
+
+test("a seat scores at most one public objective a round, each only once, and its secret only once", () => {
+  const g = S.createGame({ seed: 4, seats: seats(3) });
+  // Make every stage I objective trivially met by seat 1 on the board.
+  g.deck = ["relays3", "mines2", "nine", "spread", "factories", "court", "fifteen", "everywhere", "relays5", "levels"];
+  g.revealed = 3;
+  const free = g.nodes.filter((n) => n.owner === 0 && n.type !== "doomstar");
+  for (const n of free) { n.owner = 1; n.garrison = 20; }
+  g.secret[1] = { id: "fortress", scored: false };
+  const before = g.points[1];
+  for (const s of g.seats) S.lockOrders(g, s.id);
+  S.beginResolve(g); S.runRound(g);
+  const got = g.points[1] - before;
+  assert.equal(got, 2, "one public (1) and the secret (1): " + got);
+  assert.equal(g.secret[1].scored, true);
+  for (const s of g.seats) S.lockOrders(g, s.id);
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(g.points[1] - before, 3, "the next round, the next public only; the secret does not pay twice");
+  const scoredIds = Object.keys(g.scored).filter((id) => g.scored[id].includes(1));
+  assert.equal(scoredIds.length, 2);
+});
+
+test("things that happen during a round count toward objectives, and reset each round", () => {
+  const g = lineGame();
+  g.nodes[1].owner = 1; g.nodes[1].garrison = 20; g.nodes[3].garrison = 40;
+  S.addOrder(g, 1, { kind: "support", from: 3, to: 1 });
+  S.addOrder(g, 2, { kind: "send", from: 2, to: 1, frac: 1 });
+  S.beginResolve(g); S.runRound(g);
+  assert.equal(g.nodes[1].owner, 1);
+  assert.equal(g.flags[1].supportDecisive, true, "the support decided it");
+  for (const s of g.seats) S.lockOrders(g, s.id);
+  S.beginResolve(g);
+  assert.equal(g.flags[1].supportDecisive, false, "a new round starts clean");
+  const h = lineGame();
+  h.nodes[2].garrison = 5;
+  h.nodes[1].owner = 1; h.nodes[1].garrison = 30;
+  S.addOrder(h, 1, { kind: "send", from: 1, to: 2, frac: 1 });
+  S.beginResolve(h); S.runRound(h);
+  assert.equal(h.nodes[2].owner, 1);
+  assert.equal(h.flags[1].tookCommand, true, "taking a rival's Command is noticed");
+  assert.equal(h.flags[1].captures, 1);
+  assert.equal(h.flags[2].lost, 1);
+});
+
+test("rivals value what their open objectives ask for", () => {
+  const g = S.createGame({ seed: 4, seats: seats(3) });
+  g.deck = ["relays3", "nine", "mines2", "spread", "factories", "court", "fifteen", "everywhere", "relays5", "levels"];
+  g.revealed = 1;
+  g.secret[2] = { id: "crown", scored: false };
+  const w = A.wants(g, 2);
+  const relay = g.nodes.find((n) => n.type === "relay" && n.owner === 0);
+  const mine = g.nodes.find((n) => n.type === "mine" && n.owner === 0 && n.sector === relay.sector);
+  assert.ok(w.weight(relay) > w.weight(mine), "Hold 3 Relays makes Relays worth more");
+  const cmd = g.nodes.find((n) => n.type === "command" && n.owner === 1);
+  assert.ok(w.weight(cmd) >= 2.5, "a secret to take a Command makes Commands worth more");
+});
+
+test("seasons end on points, not only on the round limit", () => {
+  let onPoints = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const g = S.createGame({ seed, seats: seats(3) });
+    while (g.phase !== "over") { A.planAll(g); S.beginResolve(g); S.runRound(g); S.drainEvents(g); }
+    if (g.points[g.winner] >= S.POINTS_TO_WIN) onPoints++;
+  }
+  assert.ok(onPoints >= 3, "objectives decide some seasons: " + onPoints + "/12");
+});

@@ -50,9 +50,26 @@ Open `index.html`. No build step, no server.
 - **Forecast and replay**, both the same deterministic simulation run on a
   copy.
 
-Not built yet (phases 2 to 6 in the design doc): objectives beyond the
-Throne, the galaxy at 60 to 90 nodes with fog of war, the council, laws and
-promises, the tech tree and faction rules, the campaign, and online play.
+## Objectives (phase 2)
+
+Ten public objectives are dealt from the seed, five stage I (1 point)
+then five stage II (2 points). Two show at the start and one more is
+revealed at the end of each round. Each seat also holds one secret. At
+the end of a round every seat scores the most valuable public objective
+it meets (each once) and its secret (once); holding the Throne scores 1
+on top. Objectives point at places and moments: hold 3 Relays, take 2
+positions in one round, win a lane battle against a larger fleet, hold
+the Throne and two positions beside it, strike a leader with the
+Doomstar. Secrets include taking a rival's Command and winning a fight
+your support decided. Rivals weigh targets by their open objectives.
+
+Measured, all-AI seasons ending on points rather than the round limit:
+16 of 30 with three seats, 8 of 30 with four, 13 of 30 with five, with
+wins by seat within noise (9/11/10, 6/7/7/10, 8/7/6/6/3).
+
+Not built yet (phases 3 to 6 in the design doc): the galaxy at 60 to 90
+nodes with fog of war, the council, laws and promises, the tech tree and
+faction rules, the campaign, and online play.
 
 ## Measured
 
@@ -64,9 +81,8 @@ low-numbered sectors. Seats 3 and 4 had been winning 29 of 40. A season
 where every seat has the same faction and personality stays exactly
 symmetric for all 12 rounds.
 
-Every season currently runs to the round limit: nobody reaches 10 points
-and nobody is eliminated. That is the honest state of phase 1, and it is
-what phase 2's objectives are for.
+Before objectives, every season ran to the round limit: nobody reached 10
+points and nobody was eliminated. Objectives were built to change that.
 
 ## Tests
 
@@ -74,10 +90,12 @@ what phase 2's objectives are for.
 node --test dominion/sim.test.js
 ```
 
-18 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+24 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
 the forecast matching reality to the unit when rivals pass and hiding their
 plans; copies being independent; determinism; AI seasons finishing, fighting
-and only ever giving legal orders.
+and only ever giving legal orders; objectives dealt, revealed and scored
+once each; in-round events counted and reset; rivals following
+objectives; seasons ending on points.

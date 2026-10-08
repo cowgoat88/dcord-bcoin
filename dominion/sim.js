@@ -233,6 +233,93 @@
     return lanes;
   }
 
+  // ---- objectives ----------------------------------------------------------
+  // Points come from places and moments, never from a kill count, so the
+  // strongest army does not automatically lead. Public objectives are
+  // revealed one a round, cheap ones first, so the whole table chases the
+  // same goal at once and collides. Each seat also holds one secret.
+  //
+  // At status each seat may score ONE public objective it qualifies for
+  // (the most valuable) and its secret, once each, as in Twilight
+  // Imperium. Everything is checked against the board as the round ends,
+  // plus a few things that happened during it (game.flags).
+  const owned = (g, seat, type) => g.nodes.filter((n) => n.owner === seat && (!type || n.type === type));
+  const sectorsHeld = (g, seat) => new Set(owned(g, seat).filter((n) => n.sector >= 0).map((n) => n.sector));
+  const homeOf = (g, seat) => g.seatById[seat].home;
+  const OBJECTIVES = [
+    // Stage I: 1 point.
+    { id: "relays3", stage: 1, points: 1, text: "Hold 3 Relays", test: (g, s) => owned(g, s, "relay").length >= 3 },
+    { id: "mines2", stage: 1, points: 1, text: "Hold 3 Mines", test: (g, s) => owned(g, s, "mine").length >= 3 },
+    { id: "spread", stage: 1, points: 1, text: "Hold positions in 2 sectors besides your own", test: (g, s) => [...sectorsHeld(g, s)].filter((x) => x !== homeOf(g, s)).length >= 2 },
+    { id: "factories", stage: 1, points: 1, text: "Have 2 Factories at level 1 or higher", test: (g, s) => owned(g, s, "factory").filter((n) => n.level >= 1).length >= 2 },
+    { id: "nine", stage: 1, points: 1, text: "Hold 9 positions", test: (g, s) => owned(g, s).length >= 9 },
+    { id: "twoTaken", stage: 1, points: 1, text: "Take 2 positions in one round", test: (g, s) => g.flags[s].captures >= 2 },
+    { id: "underdog", stage: 1, points: 1, text: "Win a lane battle against a larger fleet", test: (g, s) => g.flags[s].underdog },
+    { id: "research", stage: 1, points: 1, text: "Research 2 levels in total", test: (g, s) => g.tech[s].assault + g.tech[s].fortify >= 2 },
+    // Stage II: 2 points.
+    { id: "court", stage: 2, points: 2, text: "Hold the Throne and 2 positions next to it", test: (g, s) => { const t = throneNode(g); return !!t && t.owner === s && neighbors(g, t.id).filter((id) => g.nodes[id].owner === s).length >= 2; } },
+    { id: "fifteen", stage: 2, points: 2, text: "Hold 15 positions", test: (g, s) => owned(g, s).length >= 15 },
+    { id: "everywhere", stage: 2, points: 2, text: "Hold a position in every sector", test: (g, s) => sectorsHeld(g, s).size >= g.seats.length },
+    { id: "relays5", stage: 2, points: 2, text: "Hold 5 Relays", test: (g, s) => owned(g, s, "relay").length >= 5 },
+    { id: "levels", stage: 2, points: 2, text: "Have 3 positions at level 2 or higher", test: (g, s) => owned(g, s).filter((n) => n.level >= 2).length >= 3 },
+    { id: "regicide", stage: 2, points: 2, text: "Strike a seat ahead of you on points with the Doomstar", test: (g, s) => g.flags[s].doomOnLeader },
+    { id: "doctrine", stage: 2, points: 2, text: "Research both tracks to level 2", test: (g, s) => g.tech[s].assault >= 2 && g.tech[s].fortify >= 2 }
+  ];
+  const SECRETS = [
+    { id: "crown", points: 2, text: "Take a rival's Command", test: (g, s) => g.flags[s].tookCommand },
+    { id: "severed", points: 1, text: "Have 3 rival positions cut off from supply at once", test: (g, s) => g.nodes.filter((n) => n.owner !== s && n.owner !== NEUTRAL && n.inSupply === false).length >= 3 },
+    { id: "untouched", points: 1, text: "Lose nothing in a round while holding 10 positions", test: (g, s) => g.flags[s].lost === 0 && owned(g, s).length >= 10 },
+    { id: "blitz", points: 1, text: "Take 3 positions in one round", test: (g, s) => g.flags[s].captures >= 3 },
+    { id: "beachhead", points: 1, text: "Hold 2 positions in a rival's home sector", test: (g, s) => g.seats.some((r) => r.id !== s && owned(g, s).filter((n) => n.sector === r.home).length >= 2) },
+    { id: "butcher", points: 1, text: "Destroy 40 enemy units in lane battles in one round", test: (g, s) => g.flags[s].laneKills >= 40 },
+    { id: "fortress", points: 1, text: "Hold every position in your home sector", test: (g, s) => g.nodes.filter((n) => n.sector === homeOf(g, s)).every((n) => n.owner === s) },
+    { id: "kingmaker", points: 1, text: "Win a fight that your support decided", test: (g, s) => g.flags[s].supportDecisive }
+  ];
+  const STAGE_ONE_SHOWN = 5, STAGE_TWO_SHOWN = 5;
+  function objectiveById(id) { return OBJECTIVES.find((o) => o.id === id) || SECRETS.find((o) => o.id === id) || null; }
+  function blankFlags() {
+    return { captures: 0, lost: 0, laneKills: 0, underdog: false, doomOnLeader: false, tookCommand: false, supportDecisive: false };
+  }
+  // A shuffled deck from the seed: five stage I objectives, then five stage
+  // II, two showing at the start and one more revealed at every status.
+  function dealObjectives(game, rng) {
+    const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
+    const one = shuffle(OBJECTIVES.filter((o) => o.stage === 1)).slice(0, STAGE_ONE_SHOWN).map((o) => o.id);
+    const two = shuffle(OBJECTIVES.filter((o) => o.stage === 2)).slice(0, STAGE_TWO_SHOWN).map((o) => o.id);
+    game.deck = one.concat(two);
+    game.revealed = 2;
+    game.scored = {};                       // objective id -> [seat ids that scored it]
+    const secrets = shuffle(SECRETS);
+    game.secret = {};
+    game.seats.forEach((s, i) => { game.secret[s.id] = { id: secrets[i % secrets.length].id, scored: false }; });
+  }
+  function publicObjectives(game) { return game.deck.slice(0, game.revealed).map(objectiveById); }
+
+  function scoreObjectives(game) {
+    for (const seat of seatOrder(game)) {
+      if (!alive(game, seat)) continue;
+      const open = publicObjectives(game)
+        .filter((o) => !(game.scored[o.id] || []).includes(seat) && o.test(game, seat))
+        .sort((a, b) => b.points - a.points);
+      if (open.length) {
+        const o = open[0];
+        (game.scored[o.id] = game.scored[o.id] || []).push(seat);
+        game.points[seat] += o.points;
+        emit(game, { kind: "score", owner: seat, points: o.points, why: o.text, objective: o.id });
+      }
+      const sec = game.secret[seat], so = sec && objectiveById(sec.id);
+      if (so && !sec.scored && so.test(game, seat)) {
+        sec.scored = true;
+        game.points[seat] += so.points;
+        emit(game, { kind: "score", owner: seat, points: so.points, why: so.text, objective: so.id, secret: true });
+      }
+    }
+    if (game.revealed < game.deck.length) {
+      game.revealed += 1;
+      emit(game, { kind: "reveal", objective: game.deck[game.revealed - 1] });
+    }
+  }
+
   // ---- game creation -----------------------------------------------------
   // opts: { seed, seats: [{ faction, ai, name }], map? }
   function createGame(opts) {
@@ -250,6 +337,7 @@
       name: s.name || (s.ai ? "Rival " + (i + 1) : "You"),
       faction: FACTIONS[s.faction] ? s.faction : FACTION_KEYS[(seed + i * 7) % FACTION_KEYS.length],
       ai: !!s.ai,
+      personality: s.personality || null,
       color: SEAT_COLORS[i]
     }));
     const perSeat = (v) => { const o2 = {}; for (const s of seats) o2[s.id] = typeof v === "function" ? v(s) : v; return o2; };
@@ -277,7 +365,13 @@
       events: [],
       history: []             // one entry per finished round: { round, orders, points }
     };
-    for (const s of seats) game.seatById[s.id] = s;
+    for (const s of seats) {
+      game.seatById[s.id] = s;
+      const home = nodes.find((n) => n.type === "command" && n.owner === s.id);
+      s.home = home ? home.sector : -1;
+    }
+    game.flags = perSeat(blankFlags);
+    dealObjectives(game, makeRng(seed ^ 0x0b1ec7));
     computeSupply(game);
     return game;
   }
@@ -480,6 +574,7 @@
     game.clock = 0;
     game.support = [];
     game.held = {};
+    for (const s of game.seats) game.flags[s.id] = blankFlags();
     const ids = seatOrder(game);
     const byKind = (kinds) => {
       const lists = ids.map((id) => game.orders[id].filter((o) => kinds.indexOf(o.kind) !== -1));
@@ -565,6 +660,7 @@
     const wiped = t.garrison <= 0.001;
     if (wiped) { t.owner = NEUTRAL; t.level = 0; t.garrison = 0; t.assault = null; }
     game.stats[victim].taken += 1;
+    if (game.points[victim] > game.points[shot.owner]) game.flags[shot.owner].doomOnLeader = true;
     emit(game, { kind: "doomstar", x: t.x, y: t.y, owner: shot.owner, nodeId: t.id, damage: Math.round(before - t.garrison), wiped });
   }
   function stepCharge(game, dt) {
@@ -626,10 +722,17 @@
     to.assault = null;
     if (!a) return;
     const am = assaultMult(game, a.owner);
-    const attack = a.count * am + supportFor(game, to.id, a.owner, false);
+    const atkSupport = supportFor(game, to.id, a.owner, false);
+    const attack = a.count * am + atkSupport;
     const defender = to.owner;
-    const defence = defenceOf(game, to) + (defender !== NEUTRAL ? supportFor(game, to.id, defender, true) : 0);
+    const defSupport = defender !== NEUTRAL ? supportFor(game, to.id, defender, true) : 0;
+    const defence = defenceOf(game, to) + defSupport;
     if (attack > defence) {
+      const fa = game.flags[a.owner];
+      fa.captures += 1;
+      if (to.type === "command" && defender !== NEUTRAL) fa.tookCommand = true;
+      if (atkSupport > 0 && attack - atkSupport <= defence) fa.supportDecisive = true;
+      if (defender !== NEUTRAL) game.flags[defender].lost += 1;
       const survivors = (attack - defence) / am;
       to.owner = a.owner;
       to.level = 0;
@@ -642,6 +745,7 @@
         : defenceOf(game, to) / Math.max(1e-9, to.garrison);
       const ownShare = defenceOf(game, to) / Math.max(1e-9, defence);
       to.garrison = Math.max(0, to.garrison - (attack * ownShare) / Math.max(1e-9, perUnit));
+      if (defender !== NEUTRAL && defSupport > 0 && defence - defSupport < attack) game.flags[defender].supportDecisive = true;
       emit(game, { kind: "repulsed", x: to.x, y: to.y, owner: defender, attacker: a.owner, nodeId: to.id, count: Math.round(a.count) });
     }
   }
@@ -690,6 +794,12 @@
         else { a.count = 0; b.count = 0; }
         if (a.count < 0.5) a.count = 0;
         if (b.count < 0.5) b.count = 0;
+        if (winner !== NEUTRAL) {
+          const loserCount = winner === a.owner ? cB : cA, winCount = winner === a.owner ? cA : cB;
+          const fw = game.flags[winner];
+          fw.laneKills += loserCount;
+          if (winCount < loserCount) fw.underdog = true;
+        }
         emit(game, { kind: "clash", x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2, owner: winner, count: Math.round(left),
           sides: [{ owner: a.owner, count: Math.round(cA) }, { owner: b.owner, count: Math.round(cB) }] });
       }
@@ -757,6 +867,7 @@
       game.points[throne.owner] += THRONE_POINTS;
       emit(game, { kind: "score", owner: throne.owner, points: THRONE_POINTS, why: "Held the Throne" });
     }
+    scoreObjectives(game);
     game.history[game.history.length - 1].points = Object.assign({}, game.points);
     const live = liveSeats(game);
     const leader = game.seats.slice().sort((a, b) => standing(game, b.id) - standing(game, a.id))[0];
@@ -822,6 +933,7 @@
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,
     commandPoints, cpUsed, checkOrder, addOrder, removeOrder, lockOrders, allLocked, spendable,
     beginResolve, step, runRound, endRound, standing, forecast, snapshotFrame,
+    OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     defenceOf, supportFor, resolveArrival, resolveAssault, stepLaneCombat, lanePoint, drainEvents
   };
 });

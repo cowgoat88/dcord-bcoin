@@ -77,6 +77,13 @@
   .grid button { text-align: left; padding: 8px; font-size: 11px; }
   .grid button b { display: block; font-size: 12px; }
   #facUp { min-height: 34px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  .obj { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .obj .pts { min-width: 26px; text-align: center; font-weight: 700; color: var(--gold); }
+  .obj .txt { flex: 1 1 auto; }
+  .obj .who { display: inline-flex; gap: 3px; }
+  .obj .who i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .obj .met { font-size: 10px; color: var(--good); border: 1px solid rgba(134,239,172,.5); border-radius: 8px; padding: 0 6px; }
+  .obj.done .txt { color: var(--muted); text-decoration: line-through; }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
@@ -86,6 +93,7 @@
     #top .brand, #top .k { display: none; }
     .seat { padding: 2px 6px; }
     .seat span.n { display: none; }
+    #btnObj .lbl { display: none; }
     button { padding: 7px 8px; font-size: 11px; }
     .seg button { padding: 7px 7px; }
     .grid { grid-template-columns: repeat(2, 1fr); }
@@ -101,6 +109,7 @@
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
     <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
     <div id="standings"></div>
+    <button id="btnObj" title="Objectives">&#9678;<span class="lbl"> Objectives</span></button>
     <button id="btnMenu">Menu</button>
   </div>
 
@@ -124,6 +133,19 @@
         <div class="row" style="margin-top:16px;justify-content:flex-end">
           <button class="primary" id="btnBegin">Begin the season</button>
         </div>
+      </div>
+    </div>
+
+    <div class="overlay" id="objOv" hidden>
+      <div class="card">
+        <h1 style="font-size:16px;letter-spacing:2px">OBJECTIVES</h1>
+        <p>At the end of each round you score the most valuable public objective you meet, once, and your secret, once. Holding the Throne scores 1 every round. First to <b id="objTarget">10</b>.</p>
+        <h2>Public</h2>
+        <div id="objPublic"></div>
+        <h2>Your secret</h2>
+        <div id="objSecret"></div>
+        <p id="objMore" class="muted"></p>
+        <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnObjClose">Close</button></div>
       </div>
     </div>
 
@@ -190,6 +212,7 @@
   let replay = null;            // { game, frames } while watching last round again
   let lastRoundStart = null;    // copy of the board as the last round began
   const fx = [];                // particles and floating words
+  const scoreLog = [];          // what was scored this round, shown when it ends
 
   // ---------------------------------------------------------------
   // Start screen
@@ -424,8 +447,17 @@
   }
   function afterRound() {
     if (game.phase === "over") { showEnd(); return; }
-    say("Round " + game.round + " — plot your orders.");
+    // The round's scoring, one line after another, then the prompt.
+    const lines = scoreLog.splice(0);
+    lines.push("Round " + game.round + " \u2014 plot your orders.");
+    sayQueue(lines);
     startPlot();
+  }
+  let queueT = 0;
+  function sayQueue(lines) {
+    clearTimeout(queueT);
+    const next = () => { if (!lines.length) return; say(lines.shift()); if (lines.length) queueT = setTimeout(next, 2200); };
+    next();
   }
   function showResolveUI(on) {
     $("actRow").style.display = on ? "none" : "";
@@ -512,6 +544,8 @@
     $("forecastTag").style.display = fcAt && game.phase === "plot" && !replay ? "block" : "none";
     $("forecastTag").textContent = "FORECAST +" + fcAt + "s · rivals' orders unknown";
     $("btnLock").textContent = "Lock orders (" + S.cpUsed(game, ME) + ")";
+    const metNow = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(ME) && o.test(game, ME)).length;
+    $("btnObj").innerHTML = "&#9678;<span class='lbl'> Objectives</span>" + (metNow ? " <b style='color:var(--good)'>" + metNow + "</b>" : "");
   }
 
   let toastT = 0;
@@ -520,6 +554,26 @@
     const t = $("toast"); t.textContent = msg; t.classList.add("show");
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 2600);
   }
+
+  function buildObjectives() {
+    if (!game) return;
+    $("objTarget").textContent = S.POINTS_TO_WIN;
+    const row = (o, scoredBy, done) => {
+      const met = !done && game.phase !== "over" && o.test(game, ME);
+      const who = (scoredBy || []).map((id) => "<i title='" + game.seatById[id].name + "' style='background:" + game.seatById[id].color + "'></i>").join("");
+      return "<div class='obj" + (done ? " done" : "") + "'><span class='pts'>" + o.points + "</span><span class='txt'>" +
+        o.text + (o.stage === 2 ? " <span class='muted'>(stage II)</span>" : "") + "</span>" +
+        (met ? "<span class='met'>met now</span>" : "") + "<span class='who'>" + who + "</span></div>";
+    };
+    $("objPublic").innerHTML = S.publicObjectives(game).map((o) => row(o, game.scored[o.id], (game.scored[o.id] || []).includes(ME))).join("");
+    const sec = game.secret[ME], so = S.objectiveById(sec.id);
+    $("objSecret").innerHTML = row(so, sec.scored ? [ME] : [], sec.scored);
+    const hidden = game.deck.length - game.revealed;
+    $("objMore").textContent = hidden ? hidden + " more to be revealed, one at the end of each round." : "All objectives are revealed.";
+  }
+  $("btnObj").addEventListener("click", () => { buildObjectives(); $("objOv").hidden = false; });
+  $("btnObjClose").addEventListener("click", () => { $("objOv").hidden = true; });
+  $("objOv").addEventListener("click", (e) => { if (e.target.id === "objOv") $("objOv").hidden = true; });
 
   function showEnd() {
     const w = game.winner;
@@ -545,13 +599,19 @@
   }
   function floatText(x, y, text, color) { fx.push({ kind: "t", x, y, text, color, life: 1.3, max: 1.3 }); }
   function handleEvents(evs, quiet) {
-    if (quiet) return;
+    // A skipped round draws no effects, but its scoring is still reported.
+    if (quiet) evs = evs.filter((e) => e.kind === "score" || e.kind === "reveal");
     for (const e of evs) {
       if (e.kind === "capture") { burst(e.x, e.y, colorOf(e.owner), 22, 160, 0.8); floatText(e.x, e.y, "TAKEN", colorOf(e.owner)); }
       else if (e.kind === "repulsed") { burst(e.x, e.y, "#94a3b8", 12, 110, 0.6); floatText(e.x, e.y, "HELD", "#cbd5e1"); }
       else if (e.kind === "clash") { burst(e.x, e.y, colorOf(e.owner), 14, 110, 0.5); floatText(e.x, e.y, e.owner ? String(e.count) : "✕", colorOf(e.owner)); }
       else if (e.kind === "doomstar") { burst(e.x, e.y, "#ff7a5c", 50, 260, 1.1); floatText(e.x, e.y, e.fizzled ? "FIZZLED" : "-" + e.damage, "#ff7a5c"); }
-      else if (e.kind === "score") { const t = S.throneNode(game); floatText(t.x, t.y - 40, "+" + e.points + " " + seatName(e.owner), colorOf(e.owner)); }
+      else if (e.kind === "score") {
+        const t = S.throneNode(game);
+        if (!e.objective) floatText(t.x, t.y - 40, "+" + e.points + " " + seatName(e.owner), colorOf(e.owner));
+        scoreLog.push((e.owner === ME ? "You" : seatName(e.owner)) + " +" + e.points + ": " + (e.secret && e.owner !== ME ? "a secret objective" : e.why));
+      }
+      else if (e.kind === "reveal") { const o = S.objectiveById(e.objective); scoreLog.push("New objective: " + o.text + " (" + o.points + ")"); }
       else if (e.kind === "doomlock" && game.nodes[e.nodeId].owner === ME) say("⚠ Doomstar locked on " + label(game.nodes[e.nodeId]));
     }
   }
