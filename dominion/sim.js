@@ -89,7 +89,12 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+  // Every browser must compute the same round from the same orders: online,
+  // each client re-runs the resolve itself and only the orders are stored.
+  // Math.sqrt and + - * / are exactly specified in JavaScript; Math.hypot,
+  // Math.pow and the trig functions are not, and may differ in the last
+  // bit between engines. So the simulation uses only the former.
+  function dist(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
   function emit(game, ev) { game.events.push(ev); }
 
@@ -103,7 +108,8 @@
     return v === undefined ? MOD_DEFAULTS[key] : v;
   }
   function fleetSpeed(game, seat) { return FLEET_SPEED * mod(game, seat, "speed"); }
-  function upgradeCost(level) { return Math.round(60 * Math.pow(level + 1, 1.45)); }
+  const UPGRADE_COSTS = [60, 164, 295, 448];      // 60 x (level + 1)^1.45, rounded
+  function upgradeCost(level) { return UPGRADE_COSTS[level] || UPGRADE_COSTS[UPGRADE_COSTS.length - 1]; }
 
   function nodeStats(node, game) {
     const base = NODE_TYPES[node.type];
@@ -190,7 +196,9 @@
       for (const j of jit) {
         const ang = a0 + j.a * span, rr = j.r * GALAXY_R;
         nodes.push({
-          id: nodes.length, x: cx + Math.cos(ang) * rr, y: cy + Math.sin(ang) * rr,
+          // Whole-unit coordinates: cos and sin may differ in the last bit
+          // between browsers, and a rounded position does not.
+          id: nodes.length, x: Math.round(cx + Math.cos(ang) * rr), y: Math.round(cy + Math.sin(ang) * rr),
           type: j.p.type, terrain: j.terrain,
           owner: j.p.home || j.p.homeSide ? s + 1 : NEUTRAL,
           garrison: j.p.g, level: 0, sector: s,

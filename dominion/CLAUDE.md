@@ -58,3 +58,15 @@ wins by seat, how seasons end, Throne holding and captures. Seat fairness
 is the first number to look at after any rule or AI change: a symmetric
 galaxy with a biased result means a tie-break somewhere is not rotation
 invariant.
+
+## Online plan: store orders, not state
+
+The planned backend is Neon Postgres through its Data API (HTTP from the
+browser, guarded by row-level security and Neon Auth). It stores only the
+match record and each seat's orders per round. Every client re-runs the
+round itself from the same orders. That needs no server code and keeps
+the game a static page, but it only works if the simulation is
+bit-identical in every browser, so `sim.js` uses only exactly specified
+math (`+ - * /`, `Math.sqrt`, `Math.round`); a test enforces it. Orders
+stay hidden by RLS until every live seat has locked the round.
+Sound: Howler.js (vendored, not from a CDN), when sound arrives.

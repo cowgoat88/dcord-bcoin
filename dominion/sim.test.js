@@ -289,3 +289,17 @@ test("an AI seat only ever gives orders a person could", () => {
     S.beginResolve(g); S.runRound(g); S.drainEvents(g);
   }
 });
+
+test("the simulation uses no math that may differ between browsers", () => {
+  // Online, every client re-runs each round from the stored orders, so the
+  // result must be identical everywhere. Math.hypot, Math.pow and trig are
+  // implementation-defined in their last bit; generation may use trig only
+  // because its output is rounded to whole units.
+  const src = require("fs").readFileSync(require("path").join(__dirname, "sim.js"), "utf8");
+  const code = src.replace(/\/\/.*$/gm, "");
+  assert.ok(!/Math\.(hypot|pow|exp|log|atan2?|tan)\b/.test(code), "no hypot, pow, exp, log or tan in the engine");
+  const trig = code.split("\n").filter((l) => /Math\.(sin|cos)\(/.test(l));
+  assert.ok(trig.every((l) => /Math\.round\(/.test(l)), "sin and cos only inside a rounding");
+  const g = S.createGame({ seed: 5, seats: seats(4) });
+  assert.ok(g.nodes.every((n) => Number.isInteger(n.x) && Number.isInteger(n.y)), "positions are whole units");
+});
