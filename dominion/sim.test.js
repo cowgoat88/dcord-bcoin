@@ -486,7 +486,8 @@ test("intel is refreshed at the end of every round with what was seen", () => {
 // The council
 // ---------------------------------------------------------------------
 function councilGame(law, n) {
-  const g = S.createGame({ seed: 4, seats: seats(n || 3), council: true });
+  // Not the Free Worlds: their Senate doubles a vote.
+  const g = S.createGame({ seed: 4, seats: seats(n || 3).map((x) => Object.assign(x, { faction: "vanguard" })), council: true });
   g.agenda = { law, round: g.round };
   return g;
 }
@@ -658,4 +659,89 @@ test("rivals keep their pacts", () => {
     assert.ok(g.pacts.length >= 1, "rivals make pacts");
   }
   assert.ok(checked > 100);
+});
+
+// ---------------------------------------------------------------------
+// Technology and factions
+// ---------------------------------------------------------------------
+test("the tech tree: one a round, each needs the one before it, and each does its job", () => {
+  const g = lineGame();
+  g.credits[1] = 2000;
+  assert.match(S.addOrder(g, 1, { kind: "research", tech: "assault2" }), /needs Assault Doctrine/);
+  assert.equal(S.addOrder(g, 1, { kind: "research", tech: "assault1" }), undefined);
+  assert.match(S.addOrder(g, 1, { kind: "research", tech: "drives" }), /One technology a round/);
+  const before = S.assaultMult(g, 1);
+  S.beginResolve(g);
+  assert.ok(S.hasTech(g, 1, "assault1"));
+  assert.ok(Math.abs(S.assaultMult(g, 1) / before - 1.15) < 1e-9);
+  assert.equal(g.credits[1], 2000 - S.TECH_COSTS[1]);
+  const h = lineGame();
+  const cp = S.commandPoints(h, 1), spd = S.pathTime(h, [0, 1], 1);
+  h.tech[1] = { logistics: 1, drives: 1, fortify1: 1, fortify2: 1, bastion: 1 };
+  assert.equal(S.commandPoints(h, 1), cp + 1, "Logistics Net");
+  assert.ok(S.pathTime(h, [0, 1], 1) < spd, "Ion Drives");
+  h.held[0] = 1;
+  const dug = S.defenceOf(h, h.nodes[0]);
+  delete h.held[0];
+  assert.ok(Math.abs(dug / S.defenceOf(h, h.nodes[0]) - 1.5) < 1e-9, "Bastion digs in by half");
+  h.held[0] = 1; h.tech[2] = { siege: 1 };
+  assert.ok(S.defenceOf(h, h.nodes[0], 2) < dug, "Siege Lances ignore digging in");
+  const k = S.createGame({ seed: 3, seats: seats(4) });
+  const near = S.sightOf(k, 1).size;
+  k.tech[1] = { sensors: 1 };
+  assert.ok(S.sightOf(k, 1).size > near, "Deep Sensors");
+});
+
+test("each faction bends one rule", () => {
+  const fac = (f) => [{ faction: f }, { faction: "standard", ai: true }, { faction: "vanguard", ai: true }];
+  // Senate: the Free Worlds' vote counts two.
+  const g = S.createGame({ seed: 2, seats: fac("standard"), council: true });
+  g.agenda = { law: "mobilize", round: 1 };
+  S.castVote(g, 1, "for", 0); S.castVote(g, 3, "against", 0);
+  assert.deepEqual(S.tally(g), { for: 2, against: 1 });
+  // Deep Strike: one unclaimed position may be crossed, at a cost.
+  const line = { mapW: 900, mapH: 200, nodes: [
+    { x: 100, y: 100, type: "command", owner: 1, garrison: 60 }, { x: 300, y: 100, type: "factory", owner: 0, garrison: 5 },
+    { x: 500, y: 100, type: "factory", owner: 0, garrison: 5 }, { x: 700, y: 100, type: "factory", owner: 0, garrison: 5 },
+    { x: 800, y: 190, type: "command", owner: 2, garrison: 30 }],
+    lanes: [{ a: 0, b: 1 }, { a: 1, b: 2 }, { a: 2, b: 3 }, { a: 3, b: 4 }] };
+  const k = S.createGame({ seed: 1, seats: [{ faction: "vanguard" }, { faction: "standard", ai: true }], map: JSON.parse(JSON.stringify(line)) });
+  assert.deepEqual(S.findPath(k, 0, 2, 1), [0, 1, 2], "over one unclaimed position");
+  assert.equal(S.findPath(k, 0, 3, 1), null, "not two");
+  const plain = S.createGame({ seed: 1, seats: [{ faction: "standard" }, { faction: "standard", ai: true }], map: JSON.parse(JSON.stringify(line)) });
+  assert.equal(S.findPath(plain, 0, 2, 1), null);
+  S.addOrder(k, 1, { kind: "send", from: 0, to: 2, frac: 0.5 });
+  S.beginResolve(k);
+  assert.equal(k.fleets[0].count, 30 * 0.75, "crossing costs a quarter");
+  // Hold the Line: the Iron Covenant's captures are dug in.
+  const c = lineGame();
+  c.seatById[1].faction = "shock";
+  c.nodes[1].garrison = 1;
+  S.addOrder(c, 1, { kind: "send", from: 0, to: 1, frac: 0.5 });
+  S.beginResolve(c);
+  for (let i = 0; i < 200 && c.nodes[1].owner !== 1; i++) S.step(c, 0.05);
+  assert.equal(c.held[1], 1);
+  // Trade Pacts: the Meridian Guild and its partner are paid every round.
+  const m = S.createGame({ seed: 2, seats: fac("prospectors"), council: true });
+  S.makePact(m, 1, 2);
+  const c1 = m.credits[1], c2 = m.credits[2];
+  m.seats.forEach((x) => { m.locked[x.id] = true; });
+  S.beginResolve(m); S.runRound(m);
+  assert.ok(m.credits[2] - c2 >= 40 && m.credits[1] - c1 >= 40);
+  // The Array: the Choir's Relays see three lanes.
+  const a = S.createGame({ seed: 3, seats: fac("relays") }), b = S.createGame({ seed: 3, seats: fac("standard") });
+  const r = a.nodes.find((n) => n.type === "relay" && n.sector === 0);
+  r.owner = 1; b.nodes[r.id].owner = 1;
+  assert.ok(S.sightOf(a, 1).size > S.sightOf(b, 1).size);
+  // Convoys: the Deep Combine's supply runs through a partner.
+  const d = lineGame();
+  d.seatById[1].faction = "logistics"; d.useCouncil = true;
+  d.nodes[3].owner = 2; d.nodes[1].owner = 1;
+  d.lanes = d.lanes.filter((l) => !(l.a === 0 && l.b === 1));
+  d.adjacency = { 0: [3], 1: [2, 3], 2: [1], 3: [1, 0] };
+  S.computeSupply(d);
+  assert.equal(d.nodes[1].inSupply, false);
+  S.makePact(d, 1, 2);
+  S.computeSupply(d);
+  assert.equal(d.nodes[1].inSupply, true);
 });

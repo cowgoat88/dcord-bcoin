@@ -31,6 +31,11 @@
     zealot: { margin: 1.20, throne: 3.0, hold: 0.9, send: 0.70, label: "Zealot" }
   };
   const PERSONALITY_KEYS = Object.keys(PERSONALITIES);
+  // The branches each personality reaches for first.
+  const TECH_LEAN = {
+    hawk: ["war", "propulsion"], turtle: ["bulwark", "statecraft"],
+    trader: ["statecraft", "propulsion"], zealot: ["war", "statecraft"]
+  };
 
   function personalityOf(game, seat) {
     const s = game.seatById[seat];
@@ -197,11 +202,17 @@
     }
 
     // 4. Spend.
-    const tracks = ["assault", "fortify"].filter((tr) => S.techCost(game, seat, tr) !== null)
-      .sort((a, b) => S.techCost(game, seat, a) - S.techCost(game, seat, b));
+    // Technology: each personality leans to a branch, cheapest first; an
+    // objective asking for breadth sends it to a branch it lacks.
+    const lean = TECH_LEAN[PERSONALITY_KEYS.find((k) => PERSONALITIES[k] === P)] || [];
+    const branches = new Set(Object.keys(game.tech[seat]).map((k) => S.TECHS[k].branch));
+    const techs = S.TECH_KEYS.filter((k) => S.techCost(game, seat, k) !== null)
+      .map((k) => ({ k, cost: S.techCost(game, seat, k) * (lean.indexOf(S.TECHS[k].branch) === 0 ? 0.6 : lean.indexOf(S.TECHS[k].branch) === 1 ? 0.8 : 1) *
+        (W.research && !branches.has(S.TECHS[k].branch) ? 0.7 : 1) }))
+      .sort((a, b) => a.cost - b.cost);
     // An objective that pays for spending moves it ahead of the margin.
     const resMargin = W.research ? 1.0 : 1.1, upMargin = W.upgrade ? 1.0 : 1.3;
-    if (tracks.length && S.spendable(game, seat) >= S.techCost(game, seat, tracks[0]) * resMargin) add({ kind: "research", track: tracks[0] });
+    if (techs.length && S.spendable(game, seat) >= S.techCost(game, seat, techs[0].k) * resMargin) add({ kind: "research", tech: techs[0].k });
     const up = mine().filter((n) => n.level < S.MAX_LEVEL && (n.type === "command" || n.type === "factory"))
       .sort((a, b) => (W.upgrade && a.type === "factory" ? -1 : 0) - (W.upgrade && b.type === "factory" ? -1 : 0) || a.level - b.level)[0];
     if (up && S.spendable(game, seat) >= S.upgradeCost(up.level) * upMargin) add({ kind: "upgrade", at: up.id });

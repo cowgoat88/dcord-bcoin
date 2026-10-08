@@ -98,6 +98,17 @@
   .pact { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
   .pact span { flex: 1 1 auto; }
   .pact i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .tree { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
+  .tree .br { display: flex; flex-direction: column; gap: 6px; }
+  .tree .br h3 { margin: 0; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+  .tree button { text-align: left; padding: 8px; display: flex; flex-direction: column; gap: 3px; min-height: 92px; }
+  .tree button b { font-size: 12px; }
+  .tree button span { font-size: 10.5px; color: var(--muted); line-height: 1.4; }
+  .tree button em { font-style: normal; font-size: 11px; color: var(--gold); }
+  .tree button.own { border-color: var(--good); }
+  .tree button.own em { color: var(--good); }
+  .tree button.plotted { border-color: var(--gold); }
+  @media (max-width: 620px) { .tree { grid-template-columns: repeat(2, 1fr); } }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
@@ -177,6 +188,16 @@
       </div>
     </div>
 
+    <div class="overlay" id="techOv" hidden>
+      <div class="card" style="width:min(720px,100%)">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h1 style="font-size:16px;letter-spacing:2px">TECHNOLOGY</h1><button id="btnTechClose">Close</button>
+        </div>
+        <p id="techNote"></p>
+        <div class="tree" id="techTree"></div>
+      </div>
+    </div>
+
     <div class="overlay" id="councilOv" hidden>
       <div class="card">
         <div class="row" style="justify-content:space-between;align-items:center">
@@ -222,8 +243,7 @@
       <button id="btnSupport" title="Lend half this position's strength to a neighbour this round">Support</button>
       <button id="btnHold" title="Dig in: defend 25% harder this round, but send nothing">Hold</button>
       <button id="btnUp">Upgrade</button>
-      <button id="btnAssault">&#9876; Assault</button>
-      <button id="btnFortify">&#9960; Fortify</button>
+      <button id="btnTech" title="The tech tree">&#9881; Tech</button>
       <button id="btnFire">&#9728; Fire</button>
     </div>
     <div id="orders"></div>
@@ -280,7 +300,8 @@
       b.classList.toggle("on", k === faction);
       grid.appendChild(b);
     }
-    $("facUp").textContent = S.FACTIONS[faction].up;
+    const f = S.FACTIONS[faction];
+    $("facUp").innerHTML = f.up + "<br><b style='color:var(--gold)'>" + f.rule.label + ":</b> " + f.rule.text;
   }
   $("facGrid").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
@@ -459,8 +480,7 @@
     say(S.addOrder(game, ME, { kind: "upgrade", at: selected }) || "Upgrade plotted.");
     replot();
   });
-  $("btnAssault").addEventListener("click", () => { say(S.addOrder(game, ME, { kind: "research", track: "assault" }) || "Assault research plotted."); replot(); });
-  $("btnFortify").addEventListener("click", () => { say(S.addOrder(game, ME, { kind: "research", track: "fortify" }) || "Fortify research plotted."); replot(); });
+  $("btnTech").addEventListener("click", () => { buildTech(); $("techOv").hidden = false; });
   $("btnFire").addEventListener("click", () => {
     if (!S.canFire(game, ME)) { say("Hold the Throne with a full charge to fire."); return; }
     mode = mode === "fire" ? "send" : "fire";
@@ -607,7 +627,7 @@
     if (o.kind === "support") return N(o.from) + " supports " + N(o.to);
     if (o.kind === "hold") return N(o.at) + " holds";
     if (o.kind === "upgrade") return "Upgrade " + N(o.at);
-    if (o.kind === "research") return "Research " + S.TECH[o.track].label;
+    if (o.kind === "research") return "Research " + S.TECHS[o.tech].label;
     if (o.kind === "fire") return "Doomstar → " + N(o.target);
     return o.kind;
   }
@@ -625,7 +645,7 @@
     for (const s of game.seats.slice().sort((a, b) => S.standing(game, b.id) - S.standing(game, a.id))) {
       const el = document.createElement("span");
       el.className = "seat" + (S.alive(game, s.id) ? "" : " out") + (s.id === ME ? " me" : "");
-      el.title = s.name + " · " + S.FACTIONS[s.faction].label;
+      el.title = s.name + " · " + S.FACTIONS[s.faction].label + " · " + S.FACTIONS[s.faction].rule.label + ": " + S.FACTIONS[s.faction].rule.text;
       const tag = s.id !== ME && S.pactBetween(game, ME, s.id) ? " \ud83e\udd1d" : S.oathbroken(game, s.id) ? " \u2717" : "";
       el.innerHTML = "<i style='background:" + s.color + "'></i><span class='n'>" + (s.id === ME ? "You" : S.FACTIONS[s.faction].icon + " " + s.name) +
         "</span> <b>" + game.points[s.id] + "</b>" + tag;
@@ -642,12 +662,8 @@
     $("btnFire").classList.toggle("on", mode === "fire");
     $("btnSupport").disabled = $("btnHold").disabled = $("btnUp").disabled = sel === null;
     $("btnFire").disabled = !S.canFire(game, ME);
-    for (const tr of ["assault", "fortify"]) {
-      const b = $(tr === "assault" ? "btnAssault" : "btnFortify");
-      const c = S.techCost(game, ME, tr), lv = S.techLevel(game, ME, tr);
-      b.textContent = (tr === "assault" ? "⚔ " : "⛨ ") + "●".repeat(lv) + "○".repeat(S.TECH_MAX - lv) + (c === null ? "" : " " + c + "c");
-      b.disabled = c === null || S.spendable(game, ME) < c;
-    }
+    const plotted = game.orders[ME].find((o) => o.kind === "research");
+    $("btnTech").innerHTML = "&#9881; Tech " + S.techCount(game, ME) + (plotted ? " \u00b7 " + S.TECHS[plotted.tech].label : "");
     if (sel) {
       const c = S.upgradeCost(sel.level);
       $("btnUp").textContent = sel.level >= S.MAX_LEVEL ? "Max" : "↑ L" + (sel.level + 1) + " " + c + "c";
@@ -712,6 +728,43 @@
   $("btnObj").addEventListener("click", () => { buildObjectives(); $("objOv").hidden = false; });
   $("btnObjClose").addEventListener("click", () => { $("objOv").hidden = true; });
   $("objOv").addEventListener("click", (e) => { if (e.target.id === "objOv") $("objOv").hidden = true; });
+
+  // ---- technology ----
+  function buildTech() {
+    if (!game) return;
+    const plotted = game.orders[ME].find((o) => o.kind === "research");
+    const open = game.phase === "plot" && !game.locked[ME];
+    $("techNote").innerHTML = "One technology a round, paid as the orders lock; each needs the one above it. You have " +
+      Math.floor(S.spendable(game, ME)) + " credits to spend." + (plotted ? " Plotted: <b>" + S.TECHS[plotted.tech].label + "</b> (tap it again to cancel)." : "");
+    const tree = $("techTree");
+    tree.innerHTML = "";
+    for (const bk of Object.keys(S.BRANCHES)) {
+      const br = S.BRANCHES[bk], col = document.createElement("div");
+      col.className = "br";
+      col.innerHTML = "<h3 style='color:" + br.color + "'>" + br.icon + " " + br.label + "</h3>";
+      for (const k of S.TECH_KEYS.filter((x) => S.TECHS[x].branch === bk)) {
+        const t = S.TECHS[k], own = S.hasTech(game, ME, k), cost = S.techCost(game, ME, k);
+        const isPlotted = plotted && plotted.tech === k;
+        const b = document.createElement("button");
+        b.dataset.t = k;
+        b.className = own ? "own" : isPlotted ? "plotted" : "";
+        b.disabled = !open || own || (!isPlotted && (cost === null || !!plotted || S.spendable(game, ME) < cost));
+        b.innerHTML = "<b>" + t.label + "</b><span>" + t.text + "</span><em>" +
+          (own ? "Owned" : isPlotted ? "Plotted" : cost === null ? "Needs " + S.TECHS[S.techPrereq(k)].label : cost + "c") + "</em>";
+        col.appendChild(b);
+      }
+      tree.appendChild(col);
+    }
+  }
+  $("techTree").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-t]"); if (!b || b.disabled) return;
+    const i = game.orders[ME].findIndex((o) => o.kind === "research");
+    if (i !== -1 && game.orders[ME][i].tech === b.dataset.t) { S.removeOrder(game, ME, i); say("Research cancelled."); }
+    else { const why = S.addOrder(game, ME, { kind: "research", tech: b.dataset.t }); say(why || S.TECHS[b.dataset.t].label + " plotted."); }
+    buildTech(); replot();
+  });
+  $("btnTechClose").addEventListener("click", () => { $("techOv").hidden = true; });
+  $("techOv").addEventListener("click", (e) => { if (e.target.id === "techOv") $("techOv").hidden = true; });
 
   // ---- the council ----
   let myInf = 0;

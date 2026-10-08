@@ -39,11 +39,32 @@
   const COALESCE_WINDOW = 1.0;
   const FLEET_SPEED = 115;
   const MIN_SEND = 2;
-  const TECH = {
-    assault: { label: "Assault", perLevel: 0.15, costs: [90, 200, 360] },
-    fortify: { label: "Fortify", perLevel: 0.10, costs: [80, 175, 320] }
+  // The tech tree: four branches of three. A technology needs the one
+  // before it in its branch. Each is a rule, not just a bigger number, from
+  // tier 3 on.
+  const BRANCHES = {
+    war:        { label: "War",        icon: "\u2694", color: "#fb7185" },
+    bulwark:    { label: "Bulwark",    icon: "\u26e8", color: "#86efac" },
+    propulsion: { label: "Propulsion", icon: "\u27a4", color: "#7dd3fc" },
+    statecraft: { label: "Statecraft", icon: "\u2696", color: "#fcd34d" }
   };
-  const TECH_MAX = 3;
+  const TECH_COSTS = [0, 90, 190, 330];
+  const TECHS = {
+    assault1:   { branch: "war", tier: 1, label: "Assault Doctrine", text: "Assaults land 15% harder." },
+    assault2:   { branch: "war", tier: 2, label: "Shock Troops", text: "Assaults land a further 15% harder." },
+    siege:      { branch: "war", tier: 3, label: "Siege Lances", text: "Your assaults ignore Asteroid Belts and dug-in defenders." },
+    fortify1:   { branch: "bulwark", tier: 1, label: "Hardpoints", text: "Your positions defend 10% harder." },
+    fortify2:   { branch: "bulwark", tier: 2, label: "Deep Bunkers", text: "Your positions defend a further 10% harder." },
+    bastion:    { branch: "bulwark", tier: 3, label: "Bastion", text: "Hold digs in by half again instead of a quarter." },
+    drives:     { branch: "propulsion", tier: 1, label: "Ion Drives", text: "Your fleets fly 20% faster." },
+    pickets:    { branch: "propulsion", tier: 2, label: "Lane Pickets", text: "Your fleets fight 25% harder in lanes." },
+    sensors:    { branch: "propulsion", tier: 3, label: "Deep Sensors", text: "You see one lane further from every position." },
+    envoys:     { branch: "statecraft", tier: 1, label: "Envoys", text: "One more influence every round." },
+    logistics:  { branch: "statecraft", tier: 2, label: "Logistics Net", text: "One more order every round." },
+    capacitors: { branch: "statecraft", tier: 3, label: "Capacitors", text: "The Doomstar charges half again as fast for you." }
+  };
+  const TECH_KEYS = Object.keys(TECHS);
+  const ASSAULT_PER = 0.15, FORTIFY_PER = 0.10;
   const DOOM_CHARGE_INTERVAL = 3.0, DOOM_CHARGE_NEEDED = 20, DOOM_DAMAGE = 26, DOOM_LOCK_S = 2.0;
 
   const MOD_DEFAULTS = {
@@ -52,16 +73,24 @@
   };
   const OUT_OF_SUPPLY_RATE = MOD_DEFAULTS.cutoff;
 
-  // OUTPOST's doctrines are Dominion's factions. Each keeps its modifiers;
-  // the bent rules described in the design doc arrive in a later phase.
+  // OUTPOST's doctrines are Dominion's factions. Each keeps its modifiers
+  // and bends one rule of the game.
   const FACTIONS = {
-    standard:    { label: "Free Worlds",      icon: "◆", up: "Balanced", mods: {} },
-    vanguard:    { label: "Kestrel Wings",    icon: "➤", up: "Fleets travel 40% faster; build 3% slower", mods: { speed: 1.40, units: 0.97 } },
-    logistics:   { label: "Deep Combine",     icon: "●", up: "Cut-off positions keep 90% output and Relays keep charging; income −30%", mods: { cutoff: 0.90, credits: 0.70 } },
-    relays:      { label: "Choir of the Array", icon: "★", up: "Relays out-build Factories and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 2.2, chargeRate: 2, units: 0.85 } },
-    prospectors: { label: "Meridian Guild",   icon: "◈", up: "Income +45%, research 25% cheaper; build 10% slower", mods: { credits: 1.45, research: 0.75, units: 0.90 } },
-    shock:       { label: "Iron Covenant",    icon: "▲", up: "Assaults land 15% harder; defend 6% worse, build 8% slower", mods: { attack: 1.15, defence: 0.94, units: 0.92 } }
+    standard:    { label: "Free Worlds",      icon: "◆", up: "Balanced", mods: {},
+      rule: { label: "Senate", text: "Your vote in the council counts two." } },
+    vanguard:    { label: "Kestrel Wings",    icon: "➤", up: "Fleets travel 5% faster; build 5% slower", mods: { speed: 1.05, units: 0.95 },
+      rule: { label: "Deep Strike", text: "Your fleets may fly over one unclaimed position on the way, losing a quarter of their number." } },
+    logistics:   { label: "Deep Combine",     icon: "●", up: "Cut-off positions keep 90% output and Relays keep charging; income −15%", mods: { cutoff: 0.90, credits: 0.85 },
+      rule: { label: "Convoys", text: "Your supply runs through pact partners' positions as if they were yours." } },
+    relays:      { label: "Choir of the Array", icon: "★", up: "Relays out-build Factories and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 2.2, chargeRate: 2, units: 0.85 },
+      rule: { label: "The Array", text: "Your Relays see three lanes out." } },
+    prospectors: { label: "Meridian Guild",   icon: "◈", up: "Income +45%, research 25% cheaper; build 10% slower", mods: { credits: 1.45, research: 0.75, units: 0.90 },
+      rule: { label: "Trade Pacts", text: "Every round of a pact pays you and your partner 40 credits each." } },
+    shock:       { label: "Iron Covenant",    icon: "▲", up: "Assaults land 8% harder; defend 6% worse, build 8% slower", mods: { attack: 1.08, defence: 0.94, units: 0.92 },
+      rule: { label: "Hold the Line", text: "Positions you take are dug in for the rest of the round." } }
   };
+  const TRADE_PACT_CREDITS = 40;
+  const DEEP_STRIKE_KEEP = 0.75;
   const FACTION_KEYS = Object.keys(FACTIONS);
 
   const SEAT_COLORS = ["#22d3ee", "#fb7185", "#fbbf24", "#a78bfa", "#a3e635", "#fb923c"];
@@ -78,6 +107,7 @@
   const ORDER_KINDS = ["send", "support", "hold", "upgrade", "research", "fire"];
   const SUPPORT_SHARE = 0.5;      // a supporting position lends this share of its garrison
   const HOLD_BONUS = 1.25;        // a held (dug-in) position defends at this multiple
+  const BASTION_BONUS = 1.5;      // ... or this, with the Bastion technology
 
   // ---- roles: the initiative draft ------------------------------------------
   // At the start of every round each seat drafts one role, fewest points
@@ -123,7 +153,7 @@
     const v = FACTIONS[factionOf(game, seat)].mods[key];
     return v === undefined ? MOD_DEFAULTS[key] : v;
   }
-  function fleetSpeed(game, seat) { return FLEET_SPEED * mod(game, seat, "speed"); }
+  function fleetSpeed(game, seat) { return FLEET_SPEED * mod(game, seat, "speed") * (game.tech && hasTech(game, seat, "drives") ? 1.2 : 1); }
   const UPGRADE_COSTS = [60, 164, 295, 448];      // 60 x (level + 1)^1.45, rounded
   function upgradeCost(level) { return UPGRADE_COSTS[level] || UPGRADE_COSTS[UPGRADE_COSTS.length - 1]; }
 
@@ -140,14 +170,22 @@
       radius: base.radius
     };
   }
-  function techLevel(game, seat, track) { return (game.tech[seat] && game.tech[seat][track]) || 0; }
-  function techCost(game, seat, track) {
-    const lv = techLevel(game, seat, track);
-    if (!TECH[track] || lv >= TECH_MAX) return null;
-    return Math.round(TECH[track].costs[lv] * mod(game, seat, "research") * (roleOf(game, seat) === "engineer" ? 0.75 : 1));
+  function hasTech(game, seat, id) { return !!(game.tech[seat] && game.tech[seat][id]); }
+  function techCount(game, seat) { return game.tech[seat] ? Object.keys(game.tech[seat]).length : 0; }
+  function techPrereq(id) {
+    const t = TECHS[id];
+    return TECH_KEYS.find((k) => TECHS[k].branch === t.branch && TECHS[k].tier === t.tier - 1) || null;
+  }
+  // What a technology costs this seat, or null if it cannot research it.
+  function techCost(game, seat, id) {
+    const t = TECHS[id];
+    if (!t || hasTech(game, seat, id)) return null;
+    const pre = techPrereq(id);
+    if (pre && !hasTech(game, seat, pre)) return null;
+    return Math.round(TECH_COSTS[t.tier] * mod(game, seat, "research") * (roleOf(game, seat) === "engineer" ? 0.75 : 1));
   }
   function assaultMult(game, seat) {
-    return (1 + TECH.assault.perLevel * techLevel(game, seat, "assault")) * mod(game, seat, "attack") *
+    return (1 + ASSAULT_PER * ((hasTech(game, seat, "assault1") ? 1 : 0) + (hasTech(game, seat, "assault2") ? 1 : 0))) * mod(game, seat, "attack") *
       (roleOf(game, seat) === "marshal" ? MARSHAL_BONUS : 1);
   }
   // What the n-th upgrade a seat makes this round costs (n from 0): the
@@ -156,7 +194,7 @@
     return roleOf(game, seat) === "engineer" && nth === 0 ? 0 : upgradeCost(level);
   }
   function fortifyMult(game, seat) {
-    return (1 + TECH.fortify.perLevel * techLevel(game, seat, "fortify")) * mod(game, seat, "defence");
+    return (1 + FORTIFY_PER * ((hasTech(game, seat, "fortify1") ? 1 : 0) + (hasTech(game, seat, "fortify2") ? 1 : 0))) * mod(game, seat, "defence");
   }
   function terrainDefence(node) { return (TERRAIN[node.terrain] || TERRAIN.open).defence; }
 
@@ -304,7 +342,7 @@
     { id: "nine", stage: 1, points: 1, text: "Hold 9 positions", test: (g, s) => owned(g, s).length >= 9 },
     { id: "twoTaken", stage: 1, points: 1, text: "Take 2 positions in one round", test: (g, s) => g.flags[s].captures >= 2 },
     { id: "underdog", stage: 1, points: 1, text: "Win a lane battle against a larger fleet", test: (g, s) => g.flags[s].underdog },
-    { id: "research", stage: 1, points: 1, text: "Research 2 levels in total", test: (g, s) => g.tech[s].assault + g.tech[s].fortify >= 2 },
+    { id: "research", stage: 1, points: 1, text: "Own 2 technologies", test: (g, s) => techCount(g, s) >= 2 },
     // Stage II: 2 points.
     { id: "court", stage: 2, points: 2, text: "Hold the Throne and 2 positions next to it", test: (g, s) => { const t = throneNode(g); return !!t && t.owner === s && neighbors(g, t.id).filter((id) => g.nodes[id].owner === s).length >= 2; } },
     { id: "fifteen", stage: 2, points: 2, text: "Hold 15 positions", test: (g, s) => owned(g, s).length >= 15 },
@@ -312,7 +350,7 @@
     { id: "relays5", stage: 2, points: 2, text: "Hold 5 Relays", test: (g, s) => owned(g, s, "relay").length >= 5 },
     { id: "levels", stage: 2, points: 2, text: "Have 3 positions at level 2 or higher", test: (g, s) => owned(g, s).filter((n) => n.level >= 2).length >= 3 },
     { id: "regicide", stage: 2, points: 2, text: "Strike a seat ahead of you on points with the Doomstar", test: (g, s) => g.flags[s].doomOnLeader },
-    { id: "doctrine", stage: 2, points: 2, text: "Research both tracks to level 2", test: (g, s) => g.tech[s].assault >= 2 && g.tech[s].fortify >= 2 }
+    { id: "doctrine", stage: 2, points: 2, text: "Own technologies in 3 branches", test: (g, s) => new Set(Object.keys(g.tech[s]).map((k) => TECHS[k].branch)).size >= 3 }
   ];
   const SECRETS = [
     { id: "crown", points: 2, text: "Take a rival's Command", test: (g, s) => g.flags[s].tookCommand },
@@ -396,7 +434,7 @@
       seats, seatById: {},
       fleets: [],
       credits: perSeat(40),
-      tech: perSeat(() => ({ assault: 0, fortify: 0 })),
+      tech: perSeat(() => ({})),   // technology id -> round researched
       charge: perSeat(0),
       points: perSeat(0),
       stats: perSeat(() => ({ sent: 0, captured: 0, lost: 0, fired: 0, taken: 0 })),
@@ -458,11 +496,14 @@
     for (const s of game.seats) {
       const stack = game.nodes.filter((n) => n.owner === s.id && n.type === "command").map((n) => n.id);
       const seen = new Set(stack);
+      // Convoys: the Deep Combine's supply also runs through its partners.
+      const through = factionOf(game, s.id) === "logistics" && game.pacts ? partnersOf(game, s.id) : [];
       while (stack.length) {
         const cur = stack.pop();
-        game.nodes[cur].inSupply = true;
+        if (game.nodes[cur].owner === s.id) game.nodes[cur].inSupply = true;
         for (const nx of neighbors(game, cur)) {
-          if (seen.has(nx) || game.nodes[nx].owner !== s.id) continue;
+          const o = game.nodes[nx].owner;
+          if (seen.has(nx) || (o !== s.id && through.indexOf(o) === -1)) continue;
           seen.add(nx); stack.push(nx);
         }
       }
@@ -487,31 +528,42 @@
   }
 
   // ---- routing: only through your own ground --------------------------
+  // Routes run only through your own ground. Deep Strike (Kestrel Wings)
+  // may also cross one unclaimed position per route: the search runs on
+  // (position, crossed yet?) pairs, key id or id + N.
   function findPath(game, fromId, toId, seat) {
     if (fromId === toId) return null;
+    const deep = seat !== undefined && factionOf(game, seat) === "vanguard";
+    const N = game.nodes.length;
     const distTo = { [fromId]: 0 }, prev = {}, done = new Set();
     const queue = [fromId];
+    let goal = null;
     while (queue.length) {
       let bi = 0;
       for (let i = 1; i < queue.length; i++) if (distTo[queue[i]] < distTo[queue[bi]]) bi = i;
-      const cur = queue.splice(bi, 1)[0];
-      if (cur === toId) break;
-      if (done.has(cur)) continue;
-      done.add(cur);
+      const key = queue.splice(bi, 1)[0];
+      const cur = key % N, used = key >= N;
+      if (cur === toId) { goal = key; break; }
+      if (done.has(key)) continue;
+      done.add(key);
       for (const nx of neighbors(game, cur)) {
-        if (done.has(nx)) continue;
-        if (nx !== toId && seat !== undefined && game.nodes[nx].owner !== seat) continue;
-        const d = distTo[cur] + dist(game.nodes[cur], game.nodes[nx]);
-        if (distTo[nx] === undefined || d < distTo[nx]) {
-          distTo[nx] = d; prev[nx] = cur;
-          if (queue.indexOf(nx) === -1) queue.push(nx);
+        let nkey = used ? nx + N : nx;
+        if (nx !== toId && seat !== undefined && game.nodes[nx].owner !== seat) {
+          if (!deep || used || game.nodes[nx].owner !== NEUTRAL) continue;
+          nkey = nx + N;
+        }
+        if (done.has(nkey)) continue;
+        const d = distTo[key] + dist(game.nodes[cur], game.nodes[nx]);
+        if (distTo[nkey] === undefined || d < distTo[nkey]) {
+          distTo[nkey] = d; prev[nkey] = key;
+          if (queue.indexOf(nkey) === -1) queue.push(nkey);
         }
       }
     }
-    if (prev[toId] === undefined) return null;
+    if (goal === null) return null;
     const path = [toId];
-    let cur = toId;
-    while (cur !== fromId) { cur = prev[cur]; path.unshift(cur); }
+    let k = goal;
+    while (k !== fromId) { k = prev[k]; path.unshift(k % N); }
     return path;
   }
   function pathTime(game, path, seat) {
@@ -525,7 +577,7 @@
   // frozen board and stored. Nothing moves until the round resolves.
   function commandPoints(game, seat) {
     return Math.max(1, Math.min(CP_MAX, CP_BASE + Math.floor(nodesOf(game, seat).length / CP_PER)) +
-      (roleOf(game, seat) === "admiral" ? 2 : 0) + lawCount(game, "mobilize") - (lawActive(game, "censure", seat) ? 2 : 0));
+      (roleOf(game, seat) === "admiral" ? 2 : 0) + lawCount(game, "mobilize") + (hasTech(game, seat, "logistics") ? 1 : 0) - (lawActive(game, "censure", seat) ? 2 : 0));
   }
   function cpUsed(game, seat) { return game.orders[seat].length; }
 
@@ -576,10 +628,12 @@
       return undefined;
     }
     if (order.kind === "research") {
-      if (!TECH[order.track]) return "No such research.";
-      if (mine.some((o) => o.kind === "research")) return "One research step a round.";
-      const cost = techCost(game, seat, order.track);
-      if (cost === null) return TECH[order.track].label + " is fully researched.";
+      const t = TECHS[order.tech];
+      if (!t) return "No such technology.";
+      if (mine.some((o) => o.kind === "research")) return "One technology a round.";
+      if (hasTech(game, seat, order.tech)) return "You already have " + t.label + ".";
+      const cost = techCost(game, seat, order.tech);
+      if (cost === null) return t.label + " needs " + TECHS[techPrereq(order.tech)].label + " first.";
       if (spendable(game, seat) < cost) return "Need " + cost + " credits.";
       return undefined;
     }
@@ -603,7 +657,7 @@
         const before = game.orders[seat].filter((x) => x.kind === "upgrade" && x.at === o.at);
         c -= upgradePrice(game, seat, at.level + before.indexOf(o), ups.indexOf(o));
       } else if (o.kind === "research") {
-        c -= techCost(game, seat, o.track) || 0;
+        c -= techCost(game, seat, o.tech) || 0;
       }
     }
     return c;
@@ -660,7 +714,7 @@
     };
     for (const [seat, o] of byKind(["upgrade", "research"])) {
       if (o.kind === "upgrade") applyUpgrade(game, seat, o.at);
-      else applyResearch(game, seat, o.track);
+      else applyResearch(game, seat, o.tech);
     }
     for (const [seat, o] of byKind(["hold", "support"])) {
       if (o.kind === "hold" && game.nodes[o.at].owner === seat) game.held[o.at] = seat;
@@ -685,12 +739,12 @@
     n.level += 1;
     emit(game, { kind: "upgrade", x: n.x, y: n.y, owner: seat, level: n.level });
   }
-  function applyResearch(game, seat, track) {
-    const cost = techCost(game, seat, track);
+  function applyResearch(game, seat, id) {
+    const cost = techCost(game, seat, id);
     if (cost === null || game.credits[seat] < cost) return;
     game.credits[seat] -= cost;
-    game.tech[seat][track] += 1;
-    emit(game, { kind: "research", owner: seat, track, level: game.tech[seat][track] });
+    game.tech[seat][id] = game.round;
+    emit(game, { kind: "research", owner: seat, tech: id });
   }
   function launch(game, seat, fromId, toId, frac) {
     const from = game.nodes[fromId];
@@ -700,8 +754,10 @@
     const count = Math.floor(from.garrison * frac);
     if (count < MIN_SEND) return;
     from.garrison -= count;
+    // Deep Strike: crossing unclaimed ground costs a quarter of the fleet.
+    const crossed = path.slice(1, -1).some((id) => game.nodes[id].owner !== seat);
     game.fleets.push({
-      owner: seat, from: fromId, to: toId, count, path, leg: 0, t: 0,
+      owner: seat, from: fromId, to: toId, count: crossed ? count * DEEP_STRIKE_KEEP : count, path, leg: 0, t: 0,
       duration: dist(from, game.nodes[path[1]]) / fleetSpeed(game, seat)
     });
     game.stats[seat].sent += count;
@@ -746,7 +802,7 @@
     game.chargeTimer += DOOM_CHARGE_INTERVAL;
     for (const s of game.seats) {
       const gained = game.nodes.reduce((sum, n) => sum + (n.owner === s.id ? relayCharge(game, n) : 0), 0) *
-        mod(game, s.id, "chargeRate");
+        mod(game, s.id, "chargeRate") * (hasTech(game, s.id, "capacitors") ? 1.5 : 1);
       if (!gained) continue;
       const before = game.charge[s.id];
       if (before >= DOOM_CHARGE_NEEDED) continue;
@@ -769,10 +825,14 @@
     }
     return s;
   }
-  function defenceOf(game, node) {
-    if (node.owner === NEUTRAL) return node.garrison * terrainDefence(node);
-    const hold = game.held[node.id] === node.owner || (game.phase === "resolve" && roleOf(game, node.owner) === "warden") ? HOLD_BONUS : 1;
-    return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner) * terrainDefence(node) * hold;
+  // attacker is optional: Siege Lances see through terrain and digging in.
+  function defenceOf(game, node, attacker) {
+    const siege = attacker !== undefined && hasTech(game, attacker, "siege");
+    const terrain = siege ? Math.min(1, terrainDefence(node)) : terrainDefence(node);
+    if (node.owner === NEUTRAL) return node.garrison * terrain;
+    const dug = game.held[node.id] === node.owner || (game.phase === "resolve" && roleOf(game, node.owner) === "warden");
+    const hold = dug && !siege ? (hasTech(game, node.owner, "bastion") ? BASTION_BONUS : HOLD_BONUS) : 1;
+    return node.garrison * DEFENDER_EDGE * fortifyMult(game, node.owner) * terrain * hold;
   }
 
   function resolveArrival(game, f) {
@@ -802,7 +862,7 @@
     const attack = a.count * am + atkSupport;
     const defender = to.owner;
     const defSupport = defender !== NEUTRAL ? supportFor(game, to.id, defender, true) : 0;
-    const defence = defenceOf(game, to) + defSupport;
+    const defence = defenceOf(game, to, a.owner) + defSupport;
     if (attack > defence) {
       const fa = game.flags[a.owner];
       fa.captures += 1;
@@ -817,14 +877,14 @@
       if (defender !== NEUTRAL) game.stats[defender].lost += 1;
       emit(game, { kind: "capture", x: to.x, y: to.y, owner: a.owner, from: defender, nodeId: to.id, count: Math.round(to.garrison) });
       addGrudge(game, defender, a.owner, to.type === "command" ? 3 : 1);
+      if (factionOf(game, a.owner) === "shock") game.held[to.id] = a.owner;
       if (to.type === "command" && defender !== NEUTRAL && lawActive(game, "reparations")) {
         game.points[a.owner] += 1;
         emit(game, { kind: "score", owner: a.owner, points: 1, why: "Reparations for a Command" });
       }
     } else {
-      const perUnit = defender === NEUTRAL ? terrainDefence(to)
-        : defenceOf(game, to) / Math.max(1e-9, to.garrison);
-      const ownShare = defenceOf(game, to) / Math.max(1e-9, defence);
+      const perUnit = defenceOf(game, to, a.owner) / Math.max(1e-9, to.garrison);
+      const ownShare = defenceOf(game, to, a.owner) / Math.max(1e-9, defence);
       to.garrison = Math.max(0, to.garrison - (attack * ownShare) / Math.max(1e-9, perUnit));
       if (defender !== NEUTRAL && defSupport > 0 && defence - defSupport < attack) game.flags[defender].supportDecisive = true;
       emit(game, { kind: "repulsed", x: to.x, y: to.y, owner: defender, attacker: a.owner, nodeId: to.id, count: Math.round(a.count) });
@@ -865,7 +925,8 @@
         if (a.owner === b.owner || a.count <= 0 || b.count <= 0) continue;
         const before = a.lp - b.lp, after = a.lc.s - b.lc.s;
         if (before === 0 || before * after > 0) continue;
-        const ma = assaultMult(game, a.owner), mb = assaultMult(game, b.owner);
+        const ma = assaultMult(game, a.owner) * (hasTech(game, a.owner, "pickets") ? 1.25 : 1);
+        const mb = assaultMult(game, b.owner) * (hasTech(game, b.owner, "pickets") ? 1.25 : 1);
         const ea = a.count * ma, eb = b.count * mb;
         const pa = lanePoint(game, a), pb = lanePoint(game, b);
         const cA = a.count, cB = b.count;
@@ -954,9 +1015,15 @@
     refreshIntel(game);
     for (const s of game.seats) {
       if (!alive(game, s.id)) continue;
-      game.influence[s.id] += 1 + game.nodes.filter((n) => n.owner === s.id && n.type === "relay").length;
+      game.influence[s.id] += 1 + game.nodes.filter((n) => n.owner === s.id && n.type === "relay").length + (hasTech(game, s.id, "envoys") ? 1 : 0);
       const gr = game.grudge[s.id];
       for (const k in gr) { gr[k] = Math.round(gr[k] * 2 / 3 * 100) / 100; if (gr[k] < 0.3) delete gr[k]; }
+    }
+    for (const p of game.pacts) {
+      if (p.from > game.round || game.round > p.to) continue;
+      if (factionOf(game, p.a) === "prospectors" || factionOf(game, p.b) === "prospectors") {
+        game.credits[p.a] += TRADE_PACT_CREDITS; game.credits[p.b] += TRADE_PACT_CREDITS;
+      }
     }
     game.history[game.history.length - 1].points = Object.assign({}, game.points);
     const live = liveSeats(game);
@@ -1045,7 +1112,7 @@
     for (const s of game.seats) {
       const v = game.votes[s.id];
       if (!v || !alive(game, s.id) || t[v.choice] === undefined) continue;
-      t[v.choice] += 1 + v.influence;
+      t[v.choice] += (factionOf(game, s.id) === "standard" ? 2 : 1) + v.influence;
     }
     return t;
   }
@@ -1234,7 +1301,8 @@
       if (n.owner !== seat) continue;
       let ring = [n.id];
       seen.add(n.id);
-      for (let hop = 0; hop < (n.type === "relay" ? SIGHT_RELAY : 1); hop++) {
+      const relaySight = SIGHT_RELAY + (factionOf(game, seat) === "relays" ? 1 : 0);
+      for (let hop = 0; hop < (n.type === "relay" ? relaySight : 1) + (hasTech(game, seat, "sensors") ? 1 : 0); hop++) {
         const nextRing = [];
         for (const id of ring) for (const nx of neighbors(game, id)) { if (!seen.has(nx)) nextRing.push(nx); seen.add(nx); }
         ring = nextRing;
@@ -1313,10 +1381,10 @@
   function drainEvents(game) { const e = game.events; game.events = []; return e; }
 
   return {
-    NEUTRAL, NODE_TYPES, TERRAIN, TECH, TECH_MAX, MAX_LEVEL, FACTIONS, FACTION_KEYS, SEAT_COLORS,
+    NEUTRAL, NODE_TYPES, TERRAIN, BRANCHES, TECHS, TECH_KEYS, TECH_COSTS, MAX_LEVEL, FACTIONS, FACTION_KEYS, SEAT_COLORS,
     DEFENDER_EDGE, COALESCE_WINDOW, FLEET_SPEED, MIN_SEND, DOOM_CHARGE_NEEDED, DOOM_DAMAGE, DOOM_LOCK_S,
     ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
-    seatOrder, makeRng, dist, clamp, nodeStats, techLevel, techCost, assaultMult, fortifyMult, terrainDefence, upgradeCost,
+    seatOrder, makeRng, dist, clamp, nodeStats, hasTech, techCount, techPrereq, techCost, assaultMult, fortifyMult, terrainDefence, upgradeCost,
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,
     commandPoints, cpUsed, checkOrder, addOrder, removeOrder, lockOrders, allLocked, spendable,

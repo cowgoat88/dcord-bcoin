@@ -150,8 +150,36 @@ Measured, 100 all-AI seasons with draft, council and pacts: wins by seat
 22/20/27/31 with four seats, 16/18/22/19/25 with five; about 7 pacts a
 season with four seats.
 
-Not built yet (phases 5 and 6 in the design doc): the tech tree and
-faction rules, the campaign, and online play.
+## Technology and factions (phase 5)
+
+Twelve technologies in four branches of three; each needs the one above
+it, one a round, paid as the orders lock (90, 190, 330 credits).
+
+| | Tier 1 | Tier 2 | Tier 3 |
+|---|---|---|---|
+| War | Assault Doctrine: assaults +15% | Shock Troops: +15% more | Siege Lances: assaults ignore Asteroid Belts and digging in |
+| Bulwark | Hardpoints: defence +10% | Deep Bunkers: +10% more | Bastion: Hold digs in by 50%, not 25% |
+| Propulsion | Ion Drives: fleets +20% speed | Lane Pickets: +25% in lane battles | Deep Sensors: one lane more sight everywhere |
+| Statecraft | Envoys: +1 influence a round | Logistics Net: +1 order a round | Capacitors: Doomstar charges 50% faster |
+
+Each faction keeps its modifiers and bends one rule:
+
+| Faction | Rule |
+|---|---|
+| Free Worlds | Senate: your council vote counts two |
+| Kestrel Wings | Deep Strike: fleets may fly over one unclaimed position, losing a quarter |
+| Deep Combine | Convoys: supply runs through pact partners' positions |
+| Choir of the Array | The Array: Relays see three lanes out |
+| Meridian Guild | Trade Pacts: every round of a pact pays both partners 40 credits |
+| Iron Covenant | Hold the Line: positions you take are dug in for the rest of the round |
+
+Measured, 150 four-seat all-AI seasons with everything on: faction win
+rates 0.21 to 0.29 (even is 0.25), wins by seat 41/35/30/44. Deep Strike
+over any amount of unclaimed ground won 47% of seasons; limiting it to one
+position, at a quarter of the fleet, and cutting Kestrel's speed bonus
+brought it to 29%.
+
+Not built yet (phase 6 in the design doc): the campaign, and online play.
 
 ## Measured
 
@@ -172,7 +200,7 @@ points and nobody was eliminated. Objectives were built to change that.
 node --test dominion/sim.test.js
 ```
 
-37 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
+39 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
 combat; Throne scoring; the three ways a season ends; seat order rotation;
@@ -185,4 +213,5 @@ once, effects) and AI seasons drafting every round; what a seat sees, the view, 
 rival plans keeping what is out of sight as last seen, intel refreshed
 each round; the council's agenda, votes, tally and every law's effect;
 grudges; rivals voting legally; pacts sharing sight and running out,
-betrayal making an Oathbreaker, rivals keeping their word.
+betrayal making an Oathbreaker, rivals keeping their word; the tech tree's prerequisites and effects;
+each faction's rule.
