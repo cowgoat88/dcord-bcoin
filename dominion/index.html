@@ -26,6 +26,22 @@
   #top .brand { color: var(--gold); font-weight: 700; letter-spacing: 2px; font-size: 12px; }
   #top .k { color: var(--muted); font-size: 10px; text-transform: uppercase; margin-right: 4px; }
   #top .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  #stats { display: flex; align-items: center; gap: 12px; cursor: pointer; border-radius: 7px; padding: 2px 4px; margin: -2px -4px; }
+  #stats:hover, #stats[aria-expanded="true"] { background: rgba(255,255,255,.06); }
+  #stats .caret { color: var(--muted); font-size: 11px; }
+  #standings { cursor: pointer; }
+  #details { position: absolute; top: 0; left: 0; right: 0; z-index: 12; max-height: 100%; overflow-y: auto;
+    background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 14px 14px; box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+  #details[hidden] { display: none; }
+  #details .dl { display: grid; grid-template-columns: auto auto 1fr; gap: 6px 12px; align-items: baseline; font-size: 12px; max-width: 760px; }
+  #details .dl b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #details .dl span { color: var(--muted); }
+  #details .dl .lab { color: var(--text); white-space: nowrap; }
+  #details h2 { margin: 12px 0 6px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+  #details h2:first-child { margin-top: 0; }
+  #details .rivals { display: grid; gap: 4px; font-size: 12px; max-width: 760px; }
+  #details .rivals div { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  #details .rivals i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
   #standings { display: flex; gap: 6px; flex: 1 1 auto; overflow: hidden; }
   .seat { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px;
     border: 1px solid var(--line); font-size: 11px; }
@@ -126,6 +142,9 @@
     #standings { order: 10; flex: 1 1 100%; gap: 4px; }
     #top button { padding: 6px 7px; }
     #top .brand, #top .k { display: none; }
+    #stats { gap: 6px; }
+    #details .dl { grid-template-columns: auto auto; }
+    #details .dl span { grid-column: 1 / -1; margin: -4px 0 4px; font-size: 11px; }
     .seat { padding: 2px 6px; }
     .seat span.n { display: none; }
     #btnObj .lbl, #tRole .lbl, #btnCouncil .lbl { display: none; }
@@ -139,13 +158,16 @@
 <div id="app">
   <div id="top">
     <span class="brand">DOMINION</span>
+    <div id="stats" role="button" tabindex="0" aria-expanded="false" title="Tap for details">
     <span id="tSeasonW" hidden><span class="k">Season</span><span class="v" id="tSeason">1/4</span></span>
     <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted">/12</span></span>
     <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
     <span id="tRole" class="v" style="color:var(--gold)"></span>
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
     <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
-    <div id="standings"></div>
+    <span class="caret" aria-hidden="true">&#9662;</span>
+    </div>
+    <div id="standings" role="button" tabindex="0" title="Tap for details"></div>
     <button id="btnCouncil" title="The council">&#9878;<span class="lbl"> Council</span></button>
     <button id="btnObj" title="Objectives">&#9678;<span class="lbl"> Objectives</span></button>
     <button id="btnMenu">Menu</button>
@@ -153,6 +175,7 @@
 
   <div id="boardWrap">
     <canvas id="board"></canvas>
+    <div id="details" hidden></div>
     <div id="toast"></div>
     <div id="forecastTag">FORECAST</div>
 
@@ -692,7 +715,9 @@
 
   // Plotting against a partner is allowed, and said out loud.
   const pactWarn = (n) => (n.owner !== ME && n.owner && S.pactBetween(game, ME, n.owner) ? " \u26a0 This breaks your pact with " + seatName(n.owner) + "." : "");
+  let swallowTap = false;
   function tap(px, py, touch) {
+    if (swallowTap) { swallowTap = false; return; }
     if (!game || game.phase !== "plot" || replay) return;
     const n = nodeAt(px, py, touch);
     if (!n) { selected = null; mode = "send"; refresh(); return; }
@@ -915,6 +940,7 @@
   }
   function refresh() {
     if (!game) return;
+    if (!$("details").hidden) buildDetails();
     $("tRound").textContent = game.round;
     const myRole = S.roleOf(game, ME);
     $("tRole").innerHTML = myRole ? S.ROLES[myRole].icon + "<span class='lbl'> " + S.ROLES[myRole].label + "</span>" : "";
@@ -1014,6 +1040,68 @@
   $("btnObj").addEventListener("click", () => { buildObjectives(); $("objOv").hidden = false; });
   $("btnObjClose").addEventListener("click", () => { $("objOv").hidden = true; });
   $("objOv").addEventListener("click", (e) => { if (e.target.id === "objOv") $("objOv").hidden = true; });
+
+  // ---- the top bar's numbers, explained ----
+  function buildDetails() {
+    if (!game) return;
+    const g = game, mine = S.nodesOf(g, ME), fac = S.FACTIONS[S.factionOf(g, ME)], role = S.roleOf(g, ME);
+    const row = (lab, val, why) => "<div class='lab'>" + lab + "</div><b>" + val + "</b><span>" + why + "</span>";
+    // Orders: where the number comes from.
+    const fromLand = Math.min(S.CP_MAX, S.CP_BASE + Math.floor(mine.length / S.CP_PER));
+    const parts = [S.CP_BASE + " base", "+" + (fromLand - S.CP_BASE) + " for " + mine.length + " positions (1 per " + S.CP_PER + ", up to " + S.CP_MAX + ")"];
+    if (role === "admiral") parts.push("+2 Admiral");
+    if (S.lawCount(g, "mobilize")) parts.push("+" + S.lawCount(g, "mobilize") + " Mobilization");
+    if (S.hasTech(g, ME, "logistics")) parts.push("+1 Logistics Net");
+    if (S.lawActive(g, "censure", ME)) parts.push("\u22122 Censure");
+    // Income over a round, as the resolve pays it.
+    const perRound = mine.reduce((a, n) => a + S.nodeStats(n, g).creditRate * (n.inSupply !== false ? 1 : S.mod(g, ME, "cutoff")), 0) *
+      S.ROUND_SECONDS * (role === "merchant" ? 2 : 1) * (S.lawActive(g, "sanction", ME) ? 0 : 1);
+    const ticks = S.ROUND_SECONDS / S.DOOM_CHARGE_INTERVAL;
+    const relays = mine.filter((n) => n.type === "relay");
+    const charge = relays.reduce((a, n) => a + S.relayCharge(g, n), 0) * S.mod(g, ME, "chargeRate") * (S.hasTech(g, ME, "capacitors") ? 1.5 : 1) * ticks;
+    const throne = S.throneNode(g), holds = throne && throne.owner === ME;
+    const infl = 1 + relays.length + (S.hasTech(g, ME, "envoys") ? 1 : 0);
+    const spend = S.spendable(g, ME);
+    let html = "<h2>Your numbers</h2><div class='dl'>";
+    if (campaign) html += row("Season", campaign.season + " of " + campaign.seasons, "Campaign points so far: " + campaign.points[ME] + ". Places earn 5, 3, 2, 1.");
+    html += row("Round", g.round + " of " + S.ROUND_LIMIT, "The season ends after round " + S.ROUND_LIMIT + ", or when someone reaches " + S.POINTS_TO_WIN + " points.");
+    html += row("Points", g.points[ME] + " of " + S.POINTS_TO_WIN, "1 a round for holding the Throne, plus objectives (\u25ce).");
+    html += row("Orders", S.cpUsed(g, ME) + " used of " + S.commandPoints(g, ME), "One per order this round: " + parts.join(", ") + ".");
+    html += row("Role", role ? S.ROLES[role].icon + " " + S.ROLES[role].label : "none yet", role ? S.ROLES[role].text + " This round only." : "Drafted at the start of each round, fewest points first.");
+    html += row("Credits", Math.floor(g.credits[ME]) + (spend < g.credits[ME] ? " (" + Math.floor(spend) + " free)" : ""),
+      "About +" + Math.round(perRound) + " a round from your positions. Pays for upgrades and technology" + (spend < g.credits[ME] ? "; the figure in brackets is what your plotted orders leave." : "."));
+    html += row("Doomstar", Math.floor(g.charge[ME]) + " of " + S.DOOM_CHARGE_NEEDED,
+      "Charge, about +" + Math.round(charge) + " a round from your " + relays.length + " Relay" + (relays.length === 1 ? "" : "s") + ". " +
+      (holds ? "You hold the Throne: at full charge you may fire it at a rival's position (\u2212" + S.DOOM_DAMAGE + " ships)." : "Firing needs the Throne at the centre as well as a full charge."));
+    html += row("Influence", g.influence[ME], "+" + infl + " a round (1, plus 1 per Relay" + (S.hasTech(g, ME, "envoys") ? ", plus Envoys" : "") + "). Spent on council votes (\u2696).");
+    html += row("Technology", S.techCount(g, ME) + " of " + S.TECH_KEYS.length, S.TECH_KEYS.filter((k) => S.hasTech(g, ME, k)).map((k) => S.TECHS[k].label).join(", ") || "None yet. \u2699 Tech to research.");
+    html += row("Faction", fac.icon + " " + fac.label, fac.up + ". " + fac.rule.label + ": " + fac.rule.text);
+    html += "</div><h2>The table</h2><div class='rivals'>";
+    for (const s of g.seats.slice().sort((a, b) => S.standing(g, b.id) - S.standing(g, a.id))) {
+      const r = S.roleOf(g, s.id), f = S.FACTIONS[s.faction];
+      const tags = [];
+      if (s.id !== ME && S.pactBetween(g, ME, s.id)) tags.push("\ud83e\udd1d pact");
+      if (S.oathbroken(g, s.id)) tags.push("\u2717 Oathbreaker");
+      if (throne && throne.owner === s.id) tags.push("holds the Throne");
+      if (!S.alive(g, s.id)) tags.push("out");
+      html += "<div><i style='background:" + s.color + "'></i><b>" + (s.id === ME ? "You" : s.name) + "</b><span class='muted'>" + f.icon + (s.name !== f.label ? " " + f.label : "") +
+        (r ? " \u00b7 " + S.ROLES[r].icon + " " + S.ROLES[r].label : "") + (tags.length ? " \u00b7 " + tags.join(" \u00b7 ") : "") + "</span><b style='margin-left:auto'>" + g.points[s.id] + " pts</b></div>";
+    }
+    html += "</div>";
+    $("details").innerHTML = html;
+  }
+  function toggleDetails(force) {
+    const open = force === undefined ? $("details").hidden : force;
+    if (open) buildDetails();
+    $("details").hidden = !open;
+    $("stats").setAttribute("aria-expanded", open ? "true" : "false");
+  }
+  $("stats").addEventListener("click", () => toggleDetails());
+  $("standings").addEventListener("click", () => toggleDetails());
+  for (const id of ["stats", "standings"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleDetails(); } });
+  $("details").addEventListener("click", () => toggleDetails(false));
+  // Tapping the map with the panel open only closes the panel.
+  canvas.addEventListener("pointerdown", () => { if (!$("details").hidden) { toggleDetails(false); swallowTap = true; } });
 
   // ---- technology ----
   function buildTech() {

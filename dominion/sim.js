@@ -1389,7 +1389,7 @@
 
   return {
     NEUTRAL, NODE_TYPES, TERRAIN, BRANCHES, TECHS, TECH_KEYS, TECH_COSTS, MAX_LEVEL, FACTIONS, FACTION_KEYS, SEAT_COLORS,
-    DEFENDER_EDGE, COALESCE_WINDOW, FLEET_SPEED, MIN_SEND, DOOM_CHARGE_NEEDED, DOOM_DAMAGE, DOOM_LOCK_S,
+    DEFENDER_EDGE, COALESCE_WINDOW, FLEET_SPEED, MIN_SEND, DOOM_CHARGE_NEEDED, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE, DOOM_LOCK_S,
     ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
     seatOrder, makeRng, dist, clamp, nodeStats, hasTech, techCount, techPrereq, techCost, assaultMult, fortifyMult, terrainDefence, upgradeCost,
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
