@@ -148,6 +148,9 @@
   #endBoard summary { cursor: pointer; }
   .plog { margin: 6px 0 2px; padding-left: 4px; list-style: none; color: var(--muted); }
   .plog .r { display: inline-block; min-width: 30px; color: var(--text); }
+  .rep { margin: 4px 0 6px; padding-left: 16px; font-size: 12px; color: var(--muted); }
+  .rep b { color: var(--text); }
+  #reportBody h2 { margin: 10px 0 2px; }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
@@ -291,6 +294,17 @@
       </div>
     </div>
 
+    <div class="overlay" id="reportOv" hidden>
+      <div class="card">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h1 style="font-size:16px;letter-spacing:2px" id="reportTitle">ROUND REPORT</h1><button id="btnReportClose" class="primary">Continue</button>
+        </div>
+        <p id="reportSum"></p>
+        <div id="reportBody"></div>
+        <label class="muted" style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:10px"><input type="checkbox" id="reportAuto" checked> Show after every round</label>
+      </div>
+    </div>
+
     <div class="overlay" id="techOv" hidden>
       <div class="card" style="width:min(720px,100%)">
         <div class="row" style="justify-content:space-between;align-items:center">
@@ -356,6 +370,7 @@
     <div class="row" id="fcRow">
       <span id="fcLabel">Now</span>
       <input id="fc" type="range" min="0" max="30" step="1" value="0" aria-label="Forecast">
+      <button id="btnReport" disabled title="The last round's report">Report</button>
       <button id="btnReplay" disabled>Replay</button>
       <button id="btnLock" class="primary">Lock orders</button>
     </div>
@@ -602,6 +617,7 @@
       try {
         const ready = await online.client.tryReveal((g) => { lastRoundStart = S.cloneGame(g); });
         if (ready) {
+          roundEvents = [];
           if (online.client.desync) say("\u26a0 This screen and seat " + online.client.desync.seat + " disagree about the galaxy.");
           handleEvents(S.drainEvents(game));
           selected = null; frames = null; fcAt = 0;
@@ -908,6 +924,7 @@
     Sound.play("lock");
     lastRoundStart = S.cloneGame(game);    // replay starts from here, with everyone's orders
     S.beginResolve(game);
+    roundEvents = [];
     handleEvents(S.drainEvents(game));
     selected = null; frames = null; fcAt = 0;
     showResolveUI(true);
@@ -915,6 +932,7 @@
   function afterRound() {
     if (game.phase === "over") { Sound.play("score"); showEnd(); return; }
     Sound.play("round");
+    showReport(game.round - 1);
     // The round's scoring, one line after another, then the prompt.
     const lines = scoreLog.splice(0);
     lines.push("Round " + game.round + " \u2014 plot your orders.");
@@ -945,10 +963,38 @@
     $("selInfo").style.display = on ? "none" : "";
     refresh();
   }
+  // What your sends would do if no rival gave an order, and which of your
+  // positions rivals in sight could take: both from what you can see.
+  let outcomes = {}, threats = {};
   function replot() {
     Sound.play("click");
     frames = S.forecast(game, ME, 1);
+    outcomes = {};
+    const last = frames[frames.length - 1];
+    for (const o of game.orders[ME]) {
+      if (o.kind !== "send" || outcomes[o.to]) continue;
+      const evs = frames.events || [];
+      const cap = evs.find((e) => e.kind === "capture" && e.owner === ME && e.nodeId === o.to);
+      const rep = evs.find((e) => e.kind === "repulsed" && e.attacker === ME && e.nodeId === o.to);
+      outcomes[o.to] = cap ? { ok: true, left: Math.round(last.nodes[o.to].owner === ME ? last.nodes[o.to].garrison : cap.count) }
+        : rep ? { ok: false, left: Math.round(last.nodes[o.to].garrison) }
+        : game.nodes[o.to].owner === ME ? { ok: true, left: Math.round(last.nodes[o.to].garrison), reinforce: true }
+        : { late: true };
+    }
+    threats = {};
+    if (game.phase === "plot") {
+      const view = S.viewFor(game, ME);
+      for (const n of S.nodesOf(view, ME)) {
+        const t = A.threatTo(view, ME, n), d = S.defenceOf(view, n);
+        if (t > d) threats[n.id] = Math.round(t - d);
+      }
+    }
     refresh();
+  }
+  function outcomeText(o) {
+    const r = o.kind === "send" && outcomes[o.to];
+    if (!r) return "";
+    return r.reinforce ? " \u00b7 reinforces" : r.late ? " \u00b7 still flying at the bell" : r.ok ? " \u00b7 takes it, ~" + r.left + " left" : " \u00b7 fails, " + r.left + " hold";
   }
 
   // ---------------------------------------------------------------
@@ -1012,7 +1058,8 @@
     $("selInfo").innerHTML = mode === "fire" ? "<b>Doomstar armed</b> · tap a rival's position"
       : mode === "support" && sel ? "<b>" + label(sel) + "</b> supports… tap a neighbour"
       : sel ? "<b>" + label(sel) + "</b> · " + Math.floor(sel.garrison) + " · tap a target to send " + Math.floor(sel.garrison * frac) +
-        " · or Support, Hold, Upgrade"
+        " · or Support, Hold, Upgrade" + (threats[sel.id] ? " \u00b7 <b style='color:#f87171'>\u26a0 rivals next to it could take it (by ~" + threats[sel.id] + "): Hold it, or have a neighbour Support it</b>" : "")
+      : Object.keys(threats).length ? "<b style='color:#f87171'>\u26a0 " + Object.keys(threats).length + " of your positions could fall</b> (red rings) \u00b7 tap one to see"
       : "Tap one of your positions · drag to pan, pinch or scroll to zoom";
     $("btnSupport").classList.toggle("on", mode === "support");
     $("btnFire").classList.toggle("on", mode === "fire");
@@ -1032,7 +1079,7 @@
       const el = document.createElement("span");
       el.className = "ord";
       el.innerHTML = "<b class='num'>" + (i + 1) + "</b><span></span><button data-i='" + i + "' aria-label='Remove order " + (i + 1) + "'>×</button>";
-      el.children[1].textContent = orderText(o);
+      el.children[1].textContent = orderText(o) + outcomeText(o);
       el.title = "Resolves in step " + PHASE[o.kind] + " of 4";
       ol.appendChild(el);
     });
@@ -1162,6 +1209,54 @@
   $("details").addEventListener("click", () => toggleDetails(false));
   // Tapping the map with the panel open only closes the panel.
   canvas.addEventListener("pointerdown", () => { if (!$("details").hidden) { toggleDetails(false); swallowTap = true; } });
+
+  // ---- the round report ----
+  let roundEvents = [];
+  let reportOn = true;
+  try { reportOn = localStorage.getItem("dominion.report") !== "off"; } catch (e) { /* no storage */ }
+  function showReport(round, force) {
+    if (!game || (!reportOn && !force && !roundEvents.length)) return;
+    if (!reportOn && !force) { buildReport(round); return; }
+    buildReport(round);
+    $("reportOv").hidden = false;
+  }
+  function buildReport(round) {
+    const ev = roundEvents.splice(0), g = game, nm = (id) => (id === ME ? "you" : id === S.NEUTRAL ? "unclaimed" : g.seatById[id].name);
+    const L = (id) => label(g.nodes[id]);
+    const sect = (title, items) => items.length ? "<h2>" + title + "</h2><ul class='rep'>" + items.map((x) => "<li>" + x + "</li>").join("") + "</ul>" : "";
+    const took = ev.filter((e) => e.kind === "capture" && e.owner === ME).map((e) => "<b>" + L(e.nodeId) + "</b> from " + nm(e.from) + ", " + e.count + " ships left there");
+    const lost = ev.filter((e) => e.kind === "capture" && e.from === ME).map((e) => "<b>" + L(e.nodeId) + "</b> to " + nm(e.owner));
+    const held = ev.filter((e) => e.kind === "repulsed" && e.owner === ME).map((e) => "<b>" + L(e.nodeId) + "</b> held against " + nm(e.attacker) + " (" + e.count + " ships)");
+    const failed = ev.filter((e) => e.kind === "repulsed" && e.attacker === ME).map((e) => "Attack on <b>" + L(e.nodeId) + "</b> failed (" + nm(e.owner) + " held)");
+    const clashes = ev.filter((e) => e.kind === "clash" && e.sides.some((sd) => sd.owner === ME)).map((e) => {
+      const other = e.sides.find((sd) => sd.owner !== ME), mine = e.sides.find((sd) => sd.owner === ME);
+      return (e.owner === ME ? "Won" : e.owner ? "Lost" : "Traded") + " a lane battle: your " + mine.count + " against " + nm(other.owner) + "'s " + other.count;
+    });
+    const doom = ev.filter((e) => e.kind === "doomstar").map((e) => nm(e.owner).replace(/^./, (c) => c.toUpperCase()) + " fired the Doomstar at <b>" + L(e.nodeId) + "</b>" + (e.fizzled ? ": it fizzled" : ", \u2212" + e.damage + (e.wiped ? ", wiped out" : "")));
+    const elsewhere = ev.filter((e) => e.kind === "capture" && e.owner !== ME && e.from !== ME).map((e) => nm(e.owner).replace(/^./, (c) => c.toUpperCase()) + " took <b>" + L(e.nodeId) + "</b> from " + nm(e.from));
+    const law = ev.filter((e) => e.kind === "law").map((e) => lawResult(e));
+    const tech = ev.filter((e) => e.kind === "research" && e.owner === ME).map((e) => "Researched <b>" + S.TECHS[e.tech].label + "</b>");
+    const pts = (g.scoreLog || []).filter((e) => e.round === round).map((e) => "<b>" + nm(e.owner).replace(/^./, (c) => c.toUpperCase()) + "</b> +" + e.points + " " + (e.secret && e.owner !== ME ? "a secret objective" : e.why));
+    const reveal = ev.filter((e) => e.kind === "reveal").map((e) => { const o = S.objectiveById(e.objective); return o.text + " (" + o.points + ")"; });
+    let html = sect("You took", took) + sect("You lost", lost) + sect("You held", held) + sect("Your attacks that failed", failed) +
+      sect("Lane battles", clashes) + sect("Doomstar", doom) + sect("Seen elsewhere", elsewhere) + sect("Council", law) + sect("Technology", tech) +
+      sect("Points this round", pts) + sect("New objective", reveal);
+    if (!html) html = "<p class='muted'>A quiet round: nothing taken, nothing lost.</p>";
+    const mine = S.nodesOf(g, ME).length;
+    $("reportTitle").textContent = "Round " + round + " report";
+    $("reportSum").innerHTML = "You hold " + mine + " position" + (mine === 1 ? "" : "s") + " and " + g.points[ME] + " of " + g.pointsToWin + " points." +
+      " Next: round " + g.round + " of " + g.roundLimit + ", the Throne scores " + S.thronePoints(g) + ".";
+    $("reportBody").innerHTML = html;
+    $("reportAuto").checked = reportOn;
+    $("btnReport").disabled = false;
+  }
+  $("btnReport").addEventListener("click", () => { $("reportOv").hidden = false; });
+  $("btnReportClose").addEventListener("click", () => { $("reportOv").hidden = true; });
+  $("reportOv").addEventListener("click", (e) => { if (e.target.id === "reportOv") $("reportOv").hidden = true; });
+  $("reportAuto").addEventListener("change", (e) => {
+    reportOn = e.target.checked;
+    try { localStorage.setItem("dominion.report", reportOn ? "on" : "off"); } catch (e2) { /* no storage */ }
+  });
 
   // ---- technology ----
   function buildTech() {
@@ -1420,12 +1515,14 @@
   }
   function floatText(x, y, text, color) { fx.push({ kind: "t", x, y, text, color, life: 1.3, max: 1.3 }); }
   function handleEvents(evs, quiet) {
-    // A skipped round draws no effects, but its scoring is still reported.
-    if (quiet) evs = evs.filter((e) => e.kind === "score" || e.kind === "reveal");
     // Fights out of sight happen out of sight. The Doomstar is seen by all.
     const fog = fogOf(replay ? replay.game : game);
     if (fog) evs = evs.filter((e) => !((e.kind === "capture" || e.kind === "repulsed") && !fog.sight.has(e.nodeId) && e.owner !== ME && e.from !== ME && e.attacker !== ME) &&
       !(e.kind === "clash" && e.lane && !fog.sight.has(e.lane[0]) && !fog.sight.has(e.lane[1]) && e.sides.every((sd) => sd.owner !== ME)));
+    // Everything you saw this round goes into its report, skipped or not.
+    if (!replay) roundEvents.push(...evs);
+    // A skipped round draws no effects, but its scoring is still reported.
+    if (quiet) evs = evs.filter((e) => e.kind === "score" || e.kind === "reveal");
     if (!quiet) for (const e of evs) {
       const snd = { capture: "capture", repulsed: "repulsed", clash: "clash", doomlock: "doomlock", doomstar: "doomstar", law: "law" }[e.kind] ||
         (e.kind === "launch" && e.owner === ME ? "launch" : e.kind === "score" ? "score" : null);
@@ -1628,6 +1725,26 @@
       ctx.fillStyle = "#22d3ee"; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = "#04121a"; ctx.stroke();
       ctx.fillStyle = "#04121a"; ctx.font = "700 10px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(String(bd.n), x, y + 0.5);
+    }
+    // Predicted results of your sends (if rivals do nothing), and threats.
+    if (game.phase === "plot" && !replay && !game.locked[ME]) {
+      ctx.font = "700 11px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (const id in outcomes) {
+        const r = outcomes[id]; if (r.reinforce) continue;
+        const n = game.nodes[id], q = P(n), rr = Math.max(9, S.NODE_TYPES[n.type].radius * scale * 1.6);
+        const txt = r.late ? "\u2026" : (r.ok ? "\u2713 " : "\u2717 ") + r.left, wdt = ctx.measureText(txt).width + 10;
+        ctx.fillStyle = r.late ? "rgba(100,116,139,.9)" : r.ok ? "rgba(34,197,94,.92)" : "rgba(239,68,68,.92)";
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(q.x - wdt / 2, q.y + rr + 4, wdt, 16, 8) : ctx.rect(q.x - wdt / 2, q.y + rr + 4, wdt, 16); ctx.fill();
+        ctx.fillStyle = "#04121a"; ctx.fillText(txt, q.x, q.y + rr + 12.5);
+      }
+      for (const id in threats) {
+        const n = game.nodes[id], q = P(n), rr = Math.max(9, S.NODE_TYPES[n.type].radius * scale * 1.6);
+        ctx.strokeStyle = "rgba(239,68,68," + (0.55 + 0.3 * Math.sin(now / 220)) + ")"; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.arc(q.x, q.y, rr + 14, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+        const x = q.x - rr - 8, y = q.y - rr - 6;
+        ctx.fillStyle = "#ef4444"; ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y + 6); ctx.lineTo(x - 8, y + 6); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.font = "800 10px ui-monospace, monospace"; ctx.fillText("!", x, y + 1.5);
+      }
     }
     // Support links live during the round.
     if (g.phase === "resolve") {

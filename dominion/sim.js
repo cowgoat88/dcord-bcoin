@@ -1406,6 +1406,7 @@
       step(c, STEP);
       if (c.clock >= next - 1e-9 || c.phase !== "resolve") { frames.push(snapshotFrame(c)); next += step0; }
     }
+    frames.events = c.events;      // what the forecast round would do: captures, repulses, clashes
     return frames;
   }
   function snapshotFrame(g) {
