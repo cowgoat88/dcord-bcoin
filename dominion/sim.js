@@ -995,8 +995,11 @@
   }
 
   // Run the rest of the round in one go (the AI, tests, and the forecast).
+  // Every resolve, forecast and replay steps by exactly STEP: the same
+  // orders then give the same round on every screen and every client.
+  const STEP = 1 / 20;
   function runRound(game, dt) {
-    const h = dt || 1 / 20;
+    const h = dt || STEP;
     let guard = 0;
     while (game.phase === "resolve" && guard++ < 100000) step(game, h);
   }
@@ -1180,6 +1183,9 @@
     if (game.phase !== "plot" && game.phase !== "draft") return "Pacts are made while plotting.";
     if (a === b || !game.seatById[b] || !alive(game, b)) return "No such seat.";
     if (pactBetween(game, a, b)) return "You already have a pact.";
+    // Online, a pact with a person would need an answer mid-plot; only
+    // rivals deal with each other there, for now.
+    if (game.online && (!game.seatById[a].ai || !game.seatById[b].ai)) return "Pacts with people are not made online yet.";
     if (oathbroken(game, a)) return "Nobody deals with an Oathbreaker.";
     if (oathbroken(game, b)) return "That seat is an Oathbreaker.";
     if (game.orders[a].some((o) => orderVictim(game, a, o) === b)) return "Your orders already strike them.";
@@ -1365,7 +1371,7 @@
     const frames = [snapshotFrame(c)];
     let next = step0;
     while (c.phase === "resolve") {
-      step(c, 1 / 20);
+      step(c, STEP);
       if (c.clock >= next - 1e-9 || c.phase !== "resolve") { frames.push(snapshotFrame(c)); next += step0; }
     }
     return frames;
@@ -1389,7 +1395,7 @@
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,
     commandPoints, cpUsed, checkOrder, addOrder, removeOrder, lockOrders, allLocked, spendable,
-    beginResolve, step, runRound, endRound, standing, forecast, snapshotFrame,
+    beginResolve, step, runRound, STEP, endRound, standing, forecast, snapshotFrame,
     ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     sightOf, fleetSeen, refreshIntel, viewFor, SIGHT_RELAY,

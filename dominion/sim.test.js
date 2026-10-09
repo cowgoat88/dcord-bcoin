@@ -302,6 +302,11 @@ test("the simulation uses no math that may differ between browsers", () => {
   assert.ok(trig.every((l) => /Math\.round\(/.test(l)), "sin and cos only inside a rounding");
   const g = S.createGame({ seed: 5, seats: seats(4) });
   assert.ok(g.nodes.every((n) => Number.isInteger(n.x) && Number.isInteger(n.y)), "positions are whole units");
+  // Rivals plan on every client too, so the same holds for them.
+  for (const f of ["ai.js", "campaign.js", "online.js"]) {
+    const c = require("fs").readFileSync(require("path").join(__dirname, f), "utf8").replace(/\/\/.*$/gm, "");
+    assert.ok(!/Math\.(hypot|pow|exp|log|atan2?|tan|sin|cos|random)\b/.test(c), f + " uses only exact math");
+  }
 });
 
 // ---------------------------------------------------------------------

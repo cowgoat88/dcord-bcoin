@@ -20,7 +20,7 @@ https://raw.githack.com/cowgoat88/dcord-bcoin/<commit-sha>/dominion/index.html
 
 ## Before committing
 
-- `node --test dominion/sim.test.js dominion/campaign.test.js` green, run twice.
+- `node --test dominion/sim.test.js dominion/campaign.test.js dominion/online.test.js` green, run twice.
 - `node --test outpost/*.test.js` still green: nothing in `outpost/` should
   have changed.
 - Look at the page at desktop and phone width.
@@ -79,7 +79,7 @@ is the first number to look at after any rule or AI change: a symmetric
 galaxy with a biased result means a tie-break somewhere is not rotation
 invariant.
 
-## Online plan: store orders, not state
+## Online: store orders, not state
 
 The planned backend is Neon Postgres through its Data API (HTTP from the
 browser, guarded by row-level security and Neon Auth). It stores only the
@@ -89,4 +89,11 @@ the game a static page, but it only works if the simulation is
 bit-identical in every browser, so `sim.js` uses only exactly specified
 math (`+ - * /`, `Math.sqrt`, `Math.round`); a test enforces it. Orders
 stay hidden by RLS until every live seat has locked the round.
+
+Built: `online.js` (stores and the match client), `schema.sql` (tables and
+RLS), the Online option in the page. Two rules keep clients identical:
+the resolve on screen steps by `S.STEP` through an accumulator, never by
+frame time; and rivals plan (`Client.planRivals`) at the start of the plot,
+before any person's orders are applied. Never let anything a person does
+reach the game state online except through posted moves.
 Sound: Howler.js, vendored in `vendor/`, never from a CDN.

@@ -212,7 +212,33 @@ URIs in `sounds.js`, so they play from a `file://` page too. **Sound
 on/off** on the start screen, or press M; the choice is remembered in this
 browser.
 
-Not built yet: online play (Neon, once a Data API URL is provided).
+## Online
+
+Choose **Online** on the start screen: two people plus your chosen number
+of rivals, one season. One person creates a match and sends the code; the
+other joins with it. Only orders travel. Every screen re-runs each round
+itself from everyone's orders, which works because the engine and the
+rivals use only exactly specified math and every resolve, forecast and
+replay steps by the same fixed 1/20 s (`S.STEP`); a fingerprint of the
+board travels with each plot, and a screen that disagrees says so.
+
+- **This browser**: two tabs of one browser, sharing a match through
+  localStorage. No server; for trying it out or two people at one desk.
+- **Neon server**: a Neon project with the Data API and Neon Auth enabled
+  and `schema.sql` run once in its SQL editor. Paste the Data API URL and
+  a Neon Auth access token. Row-level security referees: you may only post
+  for your own seat, once a round, never edit a move, and nobody can read
+  another person's orders until everyone has locked that round.
+
+`schema.sql`'s rules were checked on Postgres 16 with a stand-in for
+`auth.user_id()`. The Neon client (`online.js`) follows the Data API's
+PostgREST conventions and is tested against a fake fetch; it has not been
+run against a live Neon project from here, because this environment cannot
+reach neon.com. Getting a token is the open step: Neon Auth's sign-in
+needs its own client setup, so for now the token is pasted.
+
+Online for now: pacts are only made between rivals (an answer from a person
+mid-plot would need another round trip), and the campaign is offline only.
 
 ## Measured
 
@@ -230,7 +256,7 @@ points and nobody was eliminated. Objectives were built to change that.
 ## Tests
 
 ```
-node --test dominion/sim.test.js dominion/campaign.test.js
+node --test dominion/sim.test.js dominion/campaign.test.js dominion/online.test.js
 ```
 
 39 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
@@ -249,4 +275,8 @@ grudges; rivals voting legally; pacts sharing sight and running out,
 betrayal making an Oathbreaker, rivals keeping their word; the tech tree's prerequisites and effects;
 each faction's rule. `campaign.test.js`, 4 cases: a full campaign
 (places, legacy draft order, one legacy each, a winner), legacies applied,
-a person's legacy pick, grudges carried over.
+a person's legacy pick, grudges carried over. `online.test.js`, 4 cases:
+a full online season of two people and two rivals with both clients
+identical every round and orders hidden until both lock, the database
+refusing moves for another seat or twice, no pacts with people online,
+the Neon client's requests.

@@ -72,6 +72,8 @@
   #startOv, #endOv, #legacyOv { position: fixed; z-index: 30; }
   #helpOv { position: fixed; z-index: 40; }
   .help p { font-size: 12px; margin: 4px 0 8px; }
+  .field { display: block; width: 100%; margin-top: 6px; padding: 8px; background: rgba(255,255,255,.04); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px; }
   .help h2 { margin-top: 12px; }
   .card { width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; padding: 22px; }
@@ -161,9 +163,22 @@
         <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 10, or the most points after 12 rounds, rules.</p>
         <h2>Play</h2>
         <div class="seg" id="modeSeg">
-          <button data-m="season" class="on">One season</button><button data-m="campaign">Campaign &middot; 4 seasons</button>
+          <button data-m="season" class="on">One season</button><button data-m="campaign">Campaign &middot; 4 seasons</button><button data-m="online">Online</button>
         </div>
         <p id="modeNote" class="muted" style="font-size:11px"></p>
+        <div id="onlineBox" hidden>
+          <div class="seg" id="netSeg"><button data-n="local" class="on">This browser</button><button data-n="neon">Neon server</button></div>
+          <div id="neonFields" hidden>
+            <input id="neonUrl" class="field" placeholder="Neon Data API URL" autocomplete="off">
+            <input id="neonToken" class="field" placeholder="Neon Auth access token" autocomplete="off">
+          </div>
+          <div class="row" style="margin-top:8px">
+            <button id="btnCreate" class="primary">Create match</button>
+            <input id="joinCode" class="field" style="flex:1 1 120px;width:auto" placeholder="Match code" autocomplete="off">
+            <button id="btnJoin">Join</button>
+          </div>
+          <p id="onlineStatus" style="font-size:12px"></p>
+        </div>
         <h2>Rivals</h2>
         <div class="seg" id="rivalSeg">
           <button data-n="2" class="on">2</button><button data-n="3">3</button><button data-n="4">4</button><button data-n="5">5</button>
@@ -316,6 +331,7 @@
 <script src="sim.js"></script>
 <script src="ai.js"></script>
 <script src="campaign.js"></script>
+<script src="online.js"></script>
 <script src="vendor/howler.core.min.js"></script>
 <script src="sounds.js" defer></script>
 <script src="holo.js"></script>
@@ -323,7 +339,9 @@
 (function () {
   "use strict";
   const S = window.DominionSim, A = window.DominionAI, H = window.OutpostHolo;
-  const ME = 1;
+  let ME = 1;                    // your seat; online it may be another
+  let online = null;            // { client, store } in an online match
+  let pollT = 0;
   const $ = (id) => document.getElementById(id);
   const canvas = $("board"), ctx = canvas.getContext("2d");
 
@@ -335,6 +353,7 @@
   // after closing the page. Everything works without it.
   const SAVE_KEY = "dominion.save.v1";
   function save() {
+    if (online) return;         // the server holds an online match
     try { localStorage.setItem(SAVE_KEY, JSON.stringify({ campaign, game: game && game.phase !== "over" ? game : null, at: Date.now() })); } catch (e) { /* no storage */ }
   }
   function loadSave() {
@@ -407,7 +426,11 @@
   function showMode() {
     $("modeNote").textContent = playMode === "campaign"
       ? "Four seasons against the same rivals on new galaxies. Places earn campaign points (5, 3, 2, 1); between seasons everyone drafts a lasting legacy, the trailing seat first."
-      : "One season: first to 10 points, or the most after 12 rounds.";
+      : playMode === "online"
+        ? "Two people and your chosen number of rivals, one season. Only orders travel; every screen plays the round itself. \u201cThis browser\u201d plays between two tabs here, no server. \u201cNeon server\u201d needs a Neon project with the Data API, Neon Auth and schema.sql."
+        : "One season: first to 10 points, or the most after 12 rounds.";
+    $("onlineBox").hidden = playMode !== "online";
+    $("btnBegin").hidden = playMode === "online";
     $("btnBegin").textContent = playMode === "campaign" ? "Begin the campaign" : "Begin the season";
     const sv = loadSave();
     $("btnContinue").hidden = !sv;
@@ -447,7 +470,112 @@
       beginGame(S.createGame({ seed, seats, draft: true, council: true }));
     }
   });
+  // ---- online ----
+  let net = "local";
+  try { $("neonUrl").value = localStorage.getItem("dominion.neonUrl") || ""; $("neonToken").value = localStorage.getItem("dominion.neonToken") || ""; } catch (e) { /* no storage */ }
+  $("netSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    net = b.dataset.n;
+    [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
+    $("neonFields").hidden = net !== "neon";
+  });
+  const O = window.DominionOnline;
+  function tabUser() {
+    try {
+      let id = sessionStorage.getItem("dominion.uid");
+      if (!id) { id = "tab-" + Math.random().toString(36).slice(2, 10); sessionStorage.setItem("dominion.uid", id); }
+      return id;
+    } catch (e) { return "tab-" + Math.random().toString(36).slice(2, 10); }
+  }
+  function openStore() {
+    if (net === "local") return O.browserDatabase().storeFor(tabUser());
+    const url = $("neonUrl").value.trim(), token = $("neonToken").value.trim();
+    if (!/^https:\/\//.test(url) || !token) throw new Error("Enter the Data API URL and an access token.");
+    try { localStorage.setItem("dominion.neonUrl", url); localStorage.setItem("dominion.neonToken", token); } catch (e) { /* no storage */ }
+    return O.neonStore(url, () => token);
+  }
+  const status = (t) => { $("onlineStatus").textContent = t; };
+  function stopPolling() { clearTimeout(pollT); pollT = 0; }
+  $("btnCreate").addEventListener("click", async () => {
+    stopPolling();
+    try {
+      const store = openStore();
+      const seed = (Date.now() % 100000) + 1;
+      const n = rivals + 2, other = Math.floor(n / 2);
+      const pool = S.FACTION_KEYS.filter((k) => k !== faction);
+      const seats = [];
+      for (let i = 0; i < n; i++) {
+        if (i === 0) seats.push({ faction, name: "Seat 1" });
+        else if (i === other) seats.push({ faction: pool[(seed + i) % pool.length], name: "Seat " + (i + 1) });
+        else { const f = pool[(seed + i) % pool.length]; seats.push({ faction: f, ai: true, name: S.FACTIONS[f].label }); }
+      }
+      const m = await O.createMatch(store, { seed, seats });
+      $("joinCode").value = m.id;
+      status("Match code " + m.id + " \u2014 send it to the other player. Waiting for them to join\u2026");
+      const wait = async () => {
+        try {
+          if (await O.seatsFilled(store, m.id)) { startOnline(store, m, 1); return; }
+        } catch (e) { status("Lost the server: " + e.message); }
+        pollT = setTimeout(wait, 1500);
+      };
+      wait();
+    } catch (e) { status(e.message); }
+  });
+  $("btnJoin").addEventListener("click", async () => {
+    stopPolling();
+    try {
+      const store = openStore(), id = $("joinCode").value.trim();
+      if (!id) { status("Enter a match code."); return; }
+      const seat = await O.joinMatch(store, id);
+      const [m] = await store.select("matches", { id });
+      startOnline(store, m, seat);
+    } catch (e) { status(e.message); }
+  });
+  function startOnline(store, match, seat) {
+    stopPolling();
+    campaign = null;
+    ME = seat;
+    online = { store, client: new O.Client(store, match, seat) };
+    for (const s of online.client.game.seats) if (s.id === ME) s.name = "You";
+    status("");
+    beginGame(online.client.game);
+  }
+  // The online round: wait on the draft, plot, lock, wait on the others.
+  async function onlinePlot() {
+    stopPolling();
+    let turn;
+    try { turn = await online.client.syncDraft(); } catch (e) { say("Lost the server: " + e.message); pollT = setTimeout(onlinePlot, 3000); return; }
+    if (game.phase === "draft") {
+      showDraft();
+      if (turn !== ME) { $("draftTitle").textContent = "Round " + game.round + " \u00b7 waiting for " + game.seatById[turn].name + " to pick"; pollT = setTimeout(onlinePlot, 1500); }
+      return false;
+    }
+    $("draftOv").hidden = true;
+    online.client.planRivals();
+    return true;
+  }
+  async function onlineLock() {
+    try { await online.client.lock(); } catch (e) { if (!/already/.test(e.message)) { say("Could not lock: " + e.message); return; } }
+    showResolveUI(true);
+    $("rLabel").textContent = "Waiting for the other player\u2026";
+    const wait = async () => {
+      try {
+        const ready = await online.client.tryReveal((g) => { lastRoundStart = S.cloneGame(g); });
+        if (ready) {
+          if (online.client.desync) say("\u26a0 This screen and seat " + online.client.desync.seat + " disagree about the galaxy.");
+          handleEvents(S.drainEvents(game));
+          selected = null; frames = null; fcAt = 0;
+          showResolveUI(true);
+          return;
+        }
+      } catch (e) { $("rLabel").textContent = "Lost the server, retrying\u2026"; }
+      pollT = setTimeout(wait, 1500);
+    };
+    wait();
+  }
+
   function beginGame(g) {
+    if (!online || online.client.game !== g) { online = null; ME = 1; stopPolling(); }
     game = g;
     selected = null; replay = null; lastRoundStart = null; fx.length = 0;
     $("startOv").hidden = true; $("endOv").hidden = true; $("legacyOv").hidden = true;
@@ -458,6 +586,7 @@
   }
   $("btnAgain").addEventListener("click", () => { $("endOv").hidden = true; showMode(); $("startOv").hidden = false; });
   $("btnMenu").addEventListener("click", () => { showMode(); $("startOv").hidden = false; });
+  $("btnBegin").addEventListener("click", stopPolling);
   $("btnLegacy").addEventListener("click", () => { $("endOv").hidden = true; showLegacy(); });
 
   // ---------------------------------------------------------------
@@ -633,7 +762,7 @@
   });
   $("btnSkip").addEventListener("click", () => {
     if (replay) { replay = null; startPlot(); return; }
-    if (game && game.phase === "resolve") { S.runRound(game, 1 / 20); handleEvents(S.drainEvents(game), true); afterRound(); }
+    if (game && game.phase === "resolve") { S.runRound(game); handleEvents(S.drainEvents(game), true); afterRound(); }
   });
   $("btnReplay").addEventListener("click", () => {
     if (!lastRoundStart) return;
@@ -646,10 +775,18 @@
   // ---------------------------------------------------------------
   // The round
   // ---------------------------------------------------------------
-  function startPlot() {
+  async function startPlot() {
     save();
     mode = "send"; selected = null; fcAt = 0; $("fc").value = 0;
     showResolveUI(false);
+    if (online) {
+      if (!(await onlinePlot())) return;
+      replot();
+      $("btnReplay").disabled = !lastRoundStart;
+      const r = S.roleOf(game, ME);
+      sayQueue([r ? S.ROLES[r].icon + " " + S.ROLES[r].label + ": " + S.ROLES[r].text : "", game.agenda ? "\u2696 Before the council: " + S.LAWS[game.agenda.law].label + ". " + S.LAWS[game.agenda.law].text : ""].filter(Boolean));
+      return;
+    }
     // The draft first: rivals behind you on points pick before you.
     if (game.phase === "draft") {
       A.runDraft(game);
@@ -681,7 +818,7 @@
       const r = S.ROLES[k], taken = left.indexOf(k) === -1;
       const owner = taken ? Object.keys(game.draft.picks).find((id) => game.draft.picks[id] === k) : null;
       const b = document.createElement("button");
-      b.dataset.role = k; b.disabled = taken;
+      b.dataset.role = k; b.disabled = taken || S.draftTurn(game) !== ME;
       b.innerHTML = "<b>" + r.icon + " " + r.label + "</b><span>" + r.text + "</span>" +
         (owner ? "<em style='color:" + game.seatById[owner].color + "'>" + game.seatById[owner].name + "</em>" : "");
       grid.appendChild(b);
@@ -690,6 +827,7 @@
   }
   function lockIn() {
     if (!game || game.phase !== "plot") return;
+    if (online) { if (!game.locked[ME]) { Sound.play("lock"); onlineLock(); } return; }
     S.lockOrders(game, ME);
     Sound.play("lock");
     lastRoundStart = S.cloneGame(game);    // replay starts from here, with everyone's orders
@@ -723,6 +861,7 @@
     next();
   }
   function showResolveUI(on) {
+    if (on) stepDebt = 0;
     $("actRow").style.display = on ? "none" : "";
     $("orders").style.display = on ? "none" : "";
     $("fcRow").style.display = on ? "none" : "";
@@ -858,6 +997,10 @@
   }
   $("draftGrid").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-role]"); if (!b || b.disabled) return;
+    if (online) {
+      online.client.pick(b.dataset.role).then((why) => { if (why) say(why); startPlot(); }, (e2) => say("Could not pick: " + e2.message));
+      return;
+    }
     const why = S.pickRole(game, ME, b.dataset.role);
     if (why) { say(why); return; }
     startPlot();
@@ -1294,7 +1437,7 @@
   // ---------------------------------------------------------------
   // Main loop
   // ---------------------------------------------------------------
-  let last = performance.now();
+  let last = performance.now(), stepDebt = 0;
   function loop(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -1302,8 +1445,10 @@
     for (let i = fx.length - 1; i >= 0; i--) if (fx[i].life <= 0) fx.splice(i, 1);
     const live = replay ? replay.game : game;
     if (live && live.phase === "resolve") {
-      let sim = dt * speed;
-      while (sim > 1e-6 && live.phase === "resolve") { const h = Math.min(1 / 30, sim); S.step(live, h); sim -= h; }
+      // Fixed steps, whatever the frame rate: the round must come out the
+      // same as the forecast, the replay and every other client.
+      stepDebt += dt * speed;
+      while (stepDebt >= S.STEP - 1e-9 && live.phase === "resolve") { S.step(live, S.STEP); stepDebt -= S.STEP; }
       const evs = S.drainEvents(live);
       handleEvents(evs);
       $("rLabel").textContent = (replay ? "Replay · " : "Round " + live.round + " · ") + Math.floor(live.clock || 30) + "s";
