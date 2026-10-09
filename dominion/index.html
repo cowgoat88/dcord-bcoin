@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Doomstar: Dominion</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#070b14">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <style>
   :root {
     --bg: #070b14; --panel: #0e1524; --panel2: #121b2e; --line: rgba(120,150,190,.18);
@@ -238,6 +244,11 @@
         <h2>Rivals</h2>
         <div class="seg" id="rivalSeg">
           <button data-n="2" class="on">2</button><button data-n="3">3</button><button data-n="4">4</button><button data-n="5">5</button>
+        </div>
+        <h2>Galaxy</h2>
+        <div class="row">
+          <input id="galaxyCode" class="field" style="flex:1 1 140px;width:auto;margin-top:0" placeholder="Galaxy code (blank for a new one)" autocomplete="off" spellcheck="false">
+          <button id="btnDaily" title="Today's galaxy: the same for everyone today">Daily galaxy</button>
         </div>
         <h2>Your faction</h2>
         <div class="grid" id="facGrid"></div>
@@ -547,8 +558,25 @@
     rivals = +b.dataset.n;
     [...e.currentTarget.children].forEach((c) => c.classList.toggle("on", c === b));
   });
+  // Galaxy codes: rivals and seed, e.g. 3-1A2B. The same code gives the
+  // same galaxy, objectives and secrets to anyone who enters it.
+  const galaxyCode = (g) => (g.seats.length - 1) + "-" + g.seed.toString(36).toUpperCase();
+  function parseCode(text) {
+    const m = /^\s*([1-5])\s*-\s*([0-9a-z]+)\s*$/i.exec(text || "");
+    if (!m) return null;
+    const seed = parseInt(m[2], 36);
+    return seed > 0 && seed < 1e9 ? { rivals: +m[1], seed } : null;
+  }
+  $("btnDaily").addEventListener("click", () => {
+    const d = new Date(), n = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+    $("galaxyCode").value = "3-" + ((n * 2654435761 >>> 0) % 99991 + 1).toString(36).toUpperCase();
+    say("Today's galaxy: 3 rivals. Everyone who enters this code today plays the same galaxy.");
+  });
   $("btnBegin").addEventListener("click", () => {
-    const seed = (Date.now() % 100000) + 1;
+    const code = parseCode($("galaxyCode").value);
+    if ($("galaxyCode").value.trim() && !code) { say("That galaxy code is not valid: it looks like 3-1A2B."); return; }
+    if (code) rivals = code.rivals;
+    const seed = code ? code.seed : (Date.now() % 100000) + 1;
     const others = S.FACTION_KEYS.filter((k) => k !== faction);
     const seats = [{ faction, name: "You" }];
     for (let i = 0; i < rivals; i++) seats.push({ ai: true, faction: others[(seed + i) % others.length] });
@@ -1222,6 +1250,7 @@
       (holds ? "You hold the Throne: at full charge you may fire it at a rival's position (\u2212" + S.DOOM_DAMAGE + " ships)." : "Firing needs the Throne at the centre as well as a full charge."));
     html += row("Influence", g.influence[ME], "+" + infl + " a round (1, plus 1 per Relay" + (S.hasTech(g, ME, "envoys") ? ", plus Envoys" : "") + "). Spent on council votes (\u2696).");
     html += row("Technology", S.techCount(g, ME) + " of " + S.TECH_KEYS.length, S.TECH_KEYS.filter((k) => S.hasTech(g, ME, k)).map((k) => S.TECHS[k].label).join(", ") || "None yet. \u2699 Tech to research.");
+    html += row("Galaxy", galaxyCode(g), "Share this code: whoever enters it on the start screen plays this galaxy, with these objectives and secrets.");
     html += row("Faction", fac.icon + " " + fac.label, fac.up + ". " + fac.rule.label + ": " + fac.rule.text);
     html += "</div><h2>The table</h2><div class='rivals'>";
     for (const s of g.seats.slice().sort((a, b) => S.standing(g, b.id) - S.standing(g, a.id))) {
@@ -1436,7 +1465,7 @@
     const rows = game.seats.slice().sort((a, b) => S.standing(game, b.id) - S.standing(game, a.id))
       .map((x) => "<tr><td><span style='color:" + x.color + "'>●</span> " + x.name + (x.name !== S.FACTIONS[x.faction].label ? " · " + S.FACTIONS[x.faction].label : "") +
         "</td><td class='muted'>" + S.nodesOf(game, x.id).length + " positions</td><td>" + game.points[x.id] + "</td></tr>");
-    $("endScores").innerHTML = rows.join("");
+    $("endScores").innerHTML = rows.join("") + "<tr><td colspan='3' class='muted' style='font-size:11px'>Galaxy code <b style='color:var(--text)'>" + galaxyCode(game) + "</b>: share it to play this galaxy again.</td></tr>";
     $("endBoard").innerHTML = scoreboard();
     // The campaign: count the season once, then the table and what next.
     $("btnLegacy").hidden = true;
@@ -1705,7 +1734,10 @@
     const fleets = frame ? frame.fleets : fog ? g.fleets.filter((f) => S.fleetSeen(f, ME, fog.sight)) : g.fleets;
     for (const f of fleets) {
       const a = g.nodes[f.path[f.leg]], b = g.nodes[f.path[f.leg + 1]];
-      const t = Math.min(1, f.t);
+      // Between fixed simulation steps, draw the fleet where it will be:
+      // the round itself still moves in exact 1/20 s steps.
+      const ahead = !frame && g.phase === "resolve" && f.duration ? (stepDebt / S.STEP) * S.STEP / f.duration : 0;
+      const t = Math.min(1, f.t + ahead);
       const p = toScreen(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
       const sz = 6 + Math.min(10, Math.sqrt(f.count));
@@ -1853,6 +1885,9 @@
   buildFactions();
   showMode();
   showSound();
+  // Installable and playable offline once loaded from a server (a service
+  // worker cannot run from a file:// page).
+  if ("serviceWorker" in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register("sw.js").catch(() => {});
   requestAnimationFrame(loop);
 })();
 </script>

@@ -36,6 +36,9 @@ plans, not reflexes; points, not annihilation; politics is a second board.
 
 - `sim.js` the rules, `ai.js` the rival commanders, `campaign.js` seasons
   and legacies, `index.html` the page. All UMD, no build step.
+- `sw.js` caches the files listed in it for offline play: add any new file
+  the page loads to `FILES` and bump `VERSION`, or installed copies keep
+  serving the old one.
 - `sounds.js` is generated: edit `tools/sfx.js` and run
   `node dominion/tools/sfx.js`. Howler (vendored) plays the data URIs; a
   file fetch would fail from `file://`.

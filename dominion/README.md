@@ -310,6 +310,19 @@ Every seat has a mark as well as a colour (● ▲ ■ ◆ ★ ✚), drawn besid
 positions and shown in the standings, the details panel, the report and
 the scoreboard, so ownership never depends on telling colours apart.
 
+## Install, galaxy codes, smoother fleets
+
+- **Install:** served over https (githack included), the page can be added
+  to a phone's home screen and runs offline after the first load
+  (`manifest.webmanifest`, `sw.js`, icons from `tools/icons.js`). A
+  `file://` page cannot install; everything else still works there.
+- **Galaxy codes:** the start screen takes a code such as `3-1A2B`
+  (rivals and seed). The same code gives the same galaxy, objectives and
+  secrets. **Daily galaxy** fills in today's code, the same for everyone
+  today. The current code is in the details panel and on the end screen.
+- **Smoother fleets:** fleets are drawn between the simulation's fixed
+  1/20 s steps; the round itself still advances in exact steps.
+
 ## Orders on screen
 
 Orders are numbered in the order given, with the same numbers drawn on the
