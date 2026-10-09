@@ -70,6 +70,9 @@
   .overlay[hidden] { display: none; }
   /* The screens between games cover the whole page, panel included. */
   #startOv, #endOv, #legacyOv { position: fixed; z-index: 30; }
+  #helpOv { position: fixed; z-index: 40; }
+  .help p { font-size: 12px; margin: 4px 0 8px; }
+  .help h2 { margin-top: 12px; }
   .card { width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; padding: 22px; }
   .card h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: 4px; color: var(--gold); }
@@ -169,6 +172,7 @@
         <div class="grid" id="facGrid"></div>
         <div id="facUp"></div>
         <div class="row" style="margin-top:16px;justify-content:flex-end">
+          <button id="btnHelp">How to play</button>
           <button id="btnSound" title="Sound on or off (M)">Sound on</button>
           <button id="btnContinue" hidden>Continue</button>
           <button class="primary" id="btnBegin">Begin the season</button>
@@ -195,6 +199,32 @@
         <div id="objSecret"></div>
         <p id="objMore" class="muted"></p>
         <div class="row" style="justify-content:flex-end;margin-top:10px"><button id="btnObjClose">Close</button></div>
+      </div>
+    </div>
+
+    <div class="overlay" id="helpOv" hidden>
+      <div class="card" style="width:min(620px,100%)">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h1 style="font-size:16px;letter-spacing:2px">HOW TO PLAY</h1><button id="btnHelpClose">Close</button>
+        </div>
+        <div class="help">
+          <h2>The round</h2>
+          <p><b>Draft</b> a role (fewest points picks first) &rarr; <b>plot</b> orders against a frozen galaxy &rarr; <b>lock</b> &rarr; thirty seconds of war play out with nobody touching anything &rarr; <b>score</b>. First to 10 points, or the most after 12 rounds.</p>
+          <h2>Orders</h2>
+          <p>Each costs one order point (3 a round, +1 per 5 positions). Tap your position, then a target, to <b>send</b> 25&ndash;100% of its ships. <b>Support</b> lends half a position's strength to a neighbour's fight without moving (cut if it is attacked). <b>Hold</b> digs in: 25% harder to take, but it sends nothing. <b>Upgrade</b> builds faster. Fleets only travel through your own ground and fight any rival fleet they meet in a lane.</p>
+          <h2>Forecast and replay</h2>
+          <p>Drag the slider to watch the round as it would go if no rival did anything. Replay shows the last round again.</p>
+          <h2>Points</h2>
+          <p>Holding the <b>Throne</b> at the centre scores 1 a round. Each round you also score your best public <b>objective</b> once and your <b>secret</b> once (&#9678; Objectives). The Throne's <b>Doomstar</b> fires at a rival once its Relays have charged it.</p>
+          <h2>Fog of war</h2>
+          <p>You see your positions and one lane out, two from Relays. Dimmed positions with a <b>~</b> show what you saw last.</p>
+          <h2>The council</h2>
+          <p>One law a round (&#9878; Council). Vote, and add influence (1 a round, +1 per Relay) to swing it; it acts as the round resolves. <b>Pacts</b>: two rounds of peace and shared sight. Breaking one makes you an Oathbreaker.</p>
+          <h2>Technology</h2>
+          <p>&#9881; Tech: twelve technologies in four branches, one a round, each needing the one above it. Every faction also bends one rule; see the start screen.</p>
+          <h2>Campaign</h2>
+          <p>Four seasons against the same rivals. Places earn 5/3/2/1; between seasons everyone drafts a lasting legacy, the trailing seat first. Progress is saved in this browser.</p>
+        </div>
       </div>
     </div>
 
@@ -336,6 +366,9 @@
     };
   })();
   const showSound = () => { $("btnSound").textContent = Sound.on ? "Sound on" : "Sound off"; };
+  $("btnHelp").addEventListener("click", () => { $("helpOv").hidden = false; });
+  $("btnHelpClose").addEventListener("click", () => { $("helpOv").hidden = true; });
+  $("helpOv").addEventListener("click", (e) => { if (e.target.id === "helpOv") $("helpOv").hidden = true; });
   $("btnSound").addEventListener("click", () => { Sound.toggle(); showSound(); Sound.play("click"); });
   window.addEventListener("keydown", (e) => { if (e.key === "m" || e.key === "M") { Sound.toggle(); showSound(); } });
   function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* no storage */ } }
