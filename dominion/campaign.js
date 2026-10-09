@@ -50,7 +50,10 @@
     return {
       v: 1, seed, seasons: o.seasons || SEASONS, season: 1, seats,
       points: per(0), legacies: per(() => []), grudge: per(() => ({})),
-      results: [], draft: null, phase: "season", winner: null
+      results: [], draft: null, phase: "season", winner: null,
+      // Season length and rival strength, the same every season. Only the
+      // ones given, so the record stays plain JSON.
+      rules: JSON.parse(JSON.stringify({ pointsToWin: o.pointsToWin, roundLimit: o.roundLimit, difficulty: o.difficulty }))
     };
   }
 
@@ -58,7 +61,7 @@
 
   // The season's match, with everyone's legacies applied.
   function seasonGame(c) {
-    const g = S.createGame({ seed: seasonSeed(c), seats: c.seats, draft: true, council: true });
+    const g = S.createGame(Object.assign({ seed: seasonSeed(c), seats: c.seats, draft: true, council: true }, c.rules || {}));
     for (const s of g.seats) {
       if (c.seats[s.id - 1].name) s.name = c.seats[s.id - 1].name;
       for (const k of c.legacies[s.id]) LEGACIES[k].apply(g, s.id);

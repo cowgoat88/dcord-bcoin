@@ -108,6 +108,12 @@
     return game.round <= third ? THRONE_POINTS : game.round <= 2 * third ? THRONE_POINTS + 1 : THRONE_POINTS + 2;
   }
   const POINTS_TO_WIN = 20;
+  // Season lengths offered on the start screen. Standard is the default.
+  const LENGTHS = {
+    quick:    { label: "Quick", pointsToWin: 13, roundLimit: 12 },
+    standard: { label: "Standard", pointsToWin: 20, roundLimit: 18 },
+    epic:     { label: "Epic", pointsToWin: 28, roundLimit: 24 }
+  };
   const CP_BASE = 3;              // orders a seat may give in a round
   const CP_PER = 5;               // +1 order for every this many positions held
   const CP_MAX = 8;
@@ -164,8 +170,16 @@
   function mod(game, seat, key) {
     if (!seat) return MOD_DEFAULTS[key];
     const v = FACTIONS[factionOf(game, seat)].mods[key];
-    return v === undefined ? MOD_DEFAULTS[key] : v;
+    const base = v === undefined ? MOD_DEFAULTS[key] : v;
+    // Difficulty: rivals produce less or more, and the start screen says so.
+    const eco = RIVAL_ECONOMY[game.difficulty];
+    if (eco && (key === "credits" || key === "units") && game.seatById[seat] && game.seatById[seat].ai) return base * eco[key];
+    return base;
   }
+  const RIVAL_ECONOMY = {
+    easy: { credits: 0.7, units: 0.75 },
+    hard: { credits: 1.25, units: 1.15 }
+  };
   function fleetSpeed(game, seat) { return FLEET_SPEED * mod(game, seat, "speed") * (game.tech && hasTech(game, seat, "drives") ? 1.2 : 1); }
   const UPGRADE_COSTS = [60, 164, 295, 448];      // 60 x (level + 1)^1.45, rounded
   function upgradeCost(level) { return UPGRADE_COSTS[level] || UPGRADE_COSTS[UPGRADE_COSTS.length - 1]; }
@@ -487,6 +501,7 @@
       oathbreaker: perSeat(0),  // last round a seat is an Oathbreaker
       winner: null,
       events: [],
+      difficulty: o.difficulty || "normal",   // how rivals think: easy | normal | hard (ai.js)
       pointsToWin: o.pointsToWin || POINTS_TO_WIN,
       roundLimit: o.roundLimit || ROUND_LIMIT,
       scoreLog: [],           // { round, owner, points, why, objective, secret }, in order
@@ -1423,7 +1438,7 @@
   return {
     NEUTRAL, NODE_TYPES, TERRAIN, BRANCHES, TECHS, TECH_KEYS, TECH_COSTS, MAX_LEVEL, FACTIONS, FACTION_KEYS, SEAT_COLORS,
     DEFENDER_EDGE, COALESCE_WINDOW, FLEET_SPEED, MIN_SEND, DOOM_CHARGE_NEEDED, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE, DOOM_LOCK_S,
-    ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
+    ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, LENGTHS, RIVAL_ECONOMY, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
     seatOrder, makeRng, dist, clamp, nodeStats, hasTech, techCount, techPrereq, techCost, assaultMult, fortifyMult, terrainDefence, upgradeCost,
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,

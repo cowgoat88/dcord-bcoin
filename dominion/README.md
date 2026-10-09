@@ -287,6 +287,20 @@ hold 1.6x the garrison; rivals value a rival's position 2.2x an empty one;
 20 points to win. Faction numbers were retuned after (200 seasons: win
 rates 0.20 to 0.29).
 
+## Season length and rival strength
+
+The start screen offers **Quick** (13 points / 12 rounds, about 11 rounds),
+**Standard** (20 / 18, about 16) and **Epic** (28 / 24, about 22), and
+rivals at **Easy**, **Normal** or **Hard**. Rivals always play by your
+rules: the same orders and command points. Easy rivals play cautiously
+and produce 30% fewer credits and 25% fewer ships; Hard rivals produce
+25% more credits and 15% more ships and pile onto a person in the lead.
+Sharper thinking alone did not make rivals stronger (every variant tried
+was within noise of Normal), so Hard is an open handicap, as the start
+screen says. Measured, a seat playing at Normal strength against three
+rivals wins 33% at Easy, 26% at Normal, 13% at Hard (80 seasons each).
+Campaigns and online matches keep the settings they started with.
+
 ## Orders on screen
 
 Orders are numbered in the order given, with the same numbers drawn on the

@@ -93,3 +93,9 @@ test("grudges carry into the next season at half strength", () => {
   C.runLegacyDraft(c);
   assert.equal(C.seasonGame(c).grudge[1][2], 2);
 });
+
+test("a campaign keeps its season length and rival strength every season", () => {
+  const c = C.createCampaign({ seed: 2, seats: seats(3), pointsToWin: 13, roundLimit: 12, difficulty: "hard" });
+  const g = C.seasonGame(c);
+  assert.equal(g.pointsToWin, 13); assert.equal(g.roundLimit, 12); assert.equal(g.difficulty, "hard");
+});

@@ -767,3 +767,15 @@ test("every point scored is logged with its round and reason, and the target is 
   assert.equal(S.POINTS_TO_WIN, 20);
   assert.equal(S.ROUND_LIMIT, 18);
 });
+
+test("rival strength: easy and hard rivals produce less and more, people never change", () => {
+  const mk = (d) => S.createGame({ seed: 4, seats: [{ faction: "standard" }, { faction: "standard", ai: true }], difficulty: d });
+  const e = mk("easy"), n = mk("normal"), h = mk("hard");
+  assert.ok(S.mod(e, 2, "credits") < S.mod(n, 2, "credits") && S.mod(n, 2, "credits") < S.mod(h, 2, "credits"));
+  assert.ok(S.mod(e, 2, "units") < S.mod(n, 2, "units") && S.mod(n, 2, "units") < S.mod(h, 2, "units"));
+  assert.equal(S.mod(e, 1, "credits"), S.mod(h, 1, "credits"), "the person's seat is the same at every level");
+  for (const k of Object.keys(S.LENGTHS)) {
+    const g = S.createGame(Object.assign({ seed: 4, seats: seats(2) }, S.LENGTHS[k]));
+    assert.equal(g.roundLimit, S.LENGTHS[k].roundLimit);
+  }
+});

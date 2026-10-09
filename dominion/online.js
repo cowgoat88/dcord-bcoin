@@ -114,7 +114,8 @@
   const people = (config) => config.seats.map((s, i) => (s.ai ? 0 : i + 1)).filter(Boolean);
 
   async function createMatch(store, config) {
-    const m = await store.insert("matches", { seed: config.seed, config: { seats: config.seats, draft: true, council: true } });
+    const m = await store.insert("matches", { seed: config.seed, config: { seats: config.seats, draft: true, council: true,
+      pointsToWin: config.pointsToWin, roundLimit: config.roundLimit, difficulty: config.difficulty } });
     await store.insert("seats", { match_id: m.id, seat: people(m.config)[0] });
     return m;
   }
@@ -150,7 +151,8 @@
     this.store = store;
     this.match = match;
     this.seat = seat;
-    this.game = S.createGame({ seed: match.seed, seats: match.config.seats, draft: true, council: true });
+    const c = match.config;
+    this.game = S.createGame({ seed: match.seed, seats: c.seats, draft: true, council: true, pointsToWin: c.pointsToWin, roundLimit: c.roundLimit, difficulty: c.difficulty });
     this.game.online = true;
     this.people = people(match.config);
     this.planned = 0;        // the round rivals last planned in

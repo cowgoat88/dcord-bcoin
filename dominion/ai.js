@@ -35,6 +35,17 @@
   // cost. At 1 rivals grabbed every neutral first and half the rounds had no
   // fight; 2.2 is where contact starts early without anyone running away.
   const RIVAL_BIAS = 2.2;
+  // How rivals think at each difficulty. Easy rivals want a bigger margin,
+  // attack once a round and defend one position. Normal and hard think the
+  // same; hard rivals instead produce more (RIVAL_ECONOMY in sim.js),
+  // because measured, no sharper thinking made them win more often.
+  const DIFFICULTY = {
+    easy:   { margin: 1.35, attacks: 1, defend: 1, onLeader: 1 },
+    normal: { margin: 1.00, attacks: 2, defend: 2, onLeader: 1 },
+    hard:   { margin: 1.00, attacks: 2, defend: 2, onLeader: 1.3 }
+  };
+  const DIFFICULTY_KEYS = Object.keys(DIFFICULTY);
+  const levelOf = (game) => DIFFICULTY[game.difficulty] || DIFFICULTY.normal;
   // The branches each personality reaches for first.
   const TECH_LEAN = {
     hawk: ["war", "propulsion"], turtle: ["bulwark", "statecraft"],
@@ -145,7 +156,8 @@
       .map((n) => ({ n, threat: threatTo(game, seat, n), def: S.defenceOf(game, n) }))
       .filter((x) => x.threat > x.def)
       .sort((a, b) => (VALUE[b.n.type] - VALUE[a.n.type]) || (b.threat - a.threat));
-    for (const e of endangered.slice(0, 2)) {
+    const D = levelOf(game);
+    for (const e of endangered.slice(0, D.defend)) {
       if (cpLeft(game, seat) <= 1) break;
       if (e.threat < e.def * S.HOLD_BONUS * P.hold + 1 || e.n.type === "command") add({ kind: "hold", at: e.n.id });
       const helper = S.neighbors(game, e.n.id).map(N)
@@ -156,7 +168,7 @@
 
     // 3. Attack: the best target this round, taken by everything that can
     // reach it together, plus support from positions next to it.
-    for (let tries = 0; tries < 2 && cpLeft(game, seat) > 0; tries++) {
+    for (let tries = 0; tries < D.attacks && cpLeft(game, seat) > 0; tries++) {
       let best = null;
       for (const t of ring) {
         if (t.owner === seat || keepsFaith(t)) continue;
@@ -186,7 +198,7 @@
             if (h.owner === t.owner) need += h.garrison * S.SUPPORT_SHARE * 0.5 * S.DEFENDER_EDGE;
           }
         }
-        need *= P.margin;
+        need *= P.margin * D.margin;
         if (force <= need) continue;
         let score = VALUE[t.type] * W.weight(t) / (need + 6);
         if (t.type === "doomstar") score *= P.throne;
@@ -201,6 +213,7 @@
           // Rivals' ground is worth more than empty space: taking it scores
           // twice, what they lose and what you gain.
           score *= RIVAL_BIAS * (P === PERSONALITIES.hawk ? 1.2 : 1);
+          if (!game.seatById[t.owner].ai && game.seats.every((x) => x.id === t.owner || game.points[t.owner] > game.points[x.id])) score *= D.onLeader;
           // Vendetta: a seat that has hurt this one is a sweeter target.
           score *= 1 + Math.min(1, 0.12 * ((game.grudge && game.grudge[seat][t.owner]) || 0));
         }
@@ -375,5 +388,5 @@
     offersToPeople(game);
   }
 
-  return { plan, planAll, vote, pactValue, answerPact, diplomacy, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { DIFFICULTY, DIFFICULTY_KEYS, plan, planAll, vote, pactValue, answerPact, diplomacy, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });
