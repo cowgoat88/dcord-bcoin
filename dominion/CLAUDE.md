@@ -43,6 +43,13 @@ plans, not reflexes; points, not annihilation; politics is a second board.
   `node dominion/tools/sfx.js`. Howler (vendored) plays the data URIs; a
   file fetch would fail from `file://`.
 
+## Words on screen
+
+One match is a **skirmish**; a **campaign** is several skirmishes. The
+code keeps its older names (`seasonGame`, `campaign.season`,
+`endSeason`, `playMode = "season"`): change what players read, not the
+identifiers.
+
 ## Engine notes
 
 - `sim.js` is pure and deterministic. The forecast and the replay are the

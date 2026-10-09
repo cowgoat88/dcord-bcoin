@@ -1,7 +1,7 @@
 # DOOMSTAR: DOMINION
 
 A slow, plotted space-empire game built on the OUTPOST engine. A match is a
-season of a galactic war: every round, everyone plots orders against a
+skirmish of a galactic war: every round, everyone plots orders against a
 frozen galaxy, then the orders lock and thirty simulated seconds of war play
 out with nobody touching anything. Hold the Throne at the centre when a
 round ends to score. First to 20 points, or the most points after 18
@@ -12,6 +12,12 @@ https://claude.ai/code/artifact/5cfa5de5-1840-4c79-9bfa-21bf4f59e9d6
 
 OUTPOST itself is untouched in `../outpost/`. Dominion copies what it
 needs and has its own engine, AI and UI.
+
+## Words
+
+A **skirmish** is one match. A **campaign** is a run of skirmishes against
+the same rivals, scored with campaign points and legacies. (The code still
+calls a match a season: `seasonGame`, `campaign.season`.)
 
 ## Play
 
@@ -63,7 +69,7 @@ the Throne and two positions beside it, strike a leader with the
 Doomstar. Secrets include taking a rival's Command and winning a fight
 your support decided. Rivals weigh targets by their open objectives.
 
-Measured, all-AI seasons ending on points rather than the round limit:
+Measured, all-AI skirmishes ending on points rather than the round limit:
 16 of 30 with three seats, 8 of 30 with four, 13 of 30 with five, with
 wins by seat within noise (9/11/10, 6/7/7/10, 8/7/6/6/3).
 
@@ -82,7 +88,7 @@ so the leader gets what is left. Each lasts one round:
 | Spymaster | the forecast shows rivals' locked orders |
 
 Rivals pick by what their situation asks for. With the draft, all-AI
-seasons ending on points: 24 of 30 with three seats, 18 of 30 with four,
+skirmishes ending on points: 24 of 30 with three seats, 18 of 30 with four,
 17 of 30 with five, wins by seat within noise.
 
 ## The galaxy and fog of war (phase 3)
@@ -100,11 +106,11 @@ and fights out of sight are not reported. The forecast and the rival
 commanders both work from that same knowledge (`viewFor`), never from the
 real board: a test changes everything a rival cannot see and checks its
 orders do not change. The Spymaster sees the whole galaxy for its round.
-The season's end lifts the fog. On a phone the camera opens on what you
+The skirmish's end lifts the fog. On a phone the camera opens on what you
 can see; pinch out for the rest.
 
-Measured, 100 four-seat all-AI seasons: wins by seat 28/28/23/21; about a
-third of the galaxy is in sight of a seat at any time. Seasons ending on
+Measured, 100 four-seat all-AI skirmishes: wins by seat 28/28/23/21; about a
+third of the galaxy is in sight of a seat at any time. Skirmishes ending on
 points: 25 of 30 with three seats, 51 of 100 with four, 12 of 30 with five.
 
 ## The council (phase 4)
@@ -146,9 +152,9 @@ grudge, and nobody will make a pact with it. You cannot offer a pact with
 an attack on that seat already plotted. Rivals keep their word, except a
 Hawk taking the Throne from a partner who leads.
 
-Measured, 100 all-AI seasons with draft, council and pacts: wins by seat
+Measured, 100 all-AI skirmishes with draft, council and pacts: wins by seat
 22/20/27/31 with four seats, 16/18/22/19/25 with five; about 7 pacts a
-season with four seats.
+skirmish with four seats.
 
 ## Technology and factions (phase 5)
 
@@ -173,20 +179,20 @@ Each faction keeps its modifiers and bends one rule:
 | Meridian Guild | Trade Pacts: every round of a pact pays both partners 40 credits |
 | Iron Covenant | Hold the Line: positions you take are dug in for the rest of the round |
 
-Measured, 150 four-seat all-AI seasons with everything on: faction win
+Measured, 150 four-seat all-AI skirmishes with everything on: faction win
 rates 0.21 to 0.29 (even is 0.25), wins by seat 41/35/30/44. Deep Strike
-over any amount of unclaimed ground won 47% of seasons; limiting it to one
+over any amount of unclaimed ground won 47% of skirmishes; limiting it to one
 position, at a quarter of the fleet, and cutting Kestrel's speed bonus
 brought it to 29%.
 
 ## The campaign (phase 6)
 
-Choose **Campaign** on the start screen: four seasons against the same
-rivals (same factions, same personalities) on a new galaxy each season.
-Places earn campaign points, 5/3/2/1. Between seasons every seat drafts a
+Choose **Campaign** on the start screen: four skirmishes against the same
+rivals (same factions, same personalities) on a new galaxy each skirmish.
+Places earn campaign points, 5/3/2/1. Between skirmishes every seat drafts a
 legacy it keeps for the rest of the campaign, furthest behind first:
 
-| Legacy | Effect, every season |
+| Legacy | Effect, every skirmish |
 |---|---|
 | Veterans | start with Assault Doctrine |
 | Ramparts | start with Hardpoints |
@@ -197,10 +203,10 @@ legacy it keeps for the rest of the campaign, furthest behind first:
 | Standing Army | Command starts with 25 more ships |
 | Throne Claim | Doomstar starts half charged |
 
-Grudges carry into the next season at half strength; pacts do not. The
-campaign and the season in progress are saved in this browser at the
+Grudges carry into the next skirmish at half strength; pacts do not. The
+campaign and the skirmish in progress are saved in this browser at the
 start of every round, so **Continue** on the start screen picks up where
-you left off (a single season too). The game works without storage.
+you left off (a single skirmish too). The game works without storage.
 
 ## Sound
 
@@ -215,7 +221,7 @@ browser.
 ## Online
 
 Choose **Online** on the start screen: two people plus your chosen number
-of rivals, one season. One person creates a match and sends the code; the
+of rivals, one skirmish. One person creates a match and sends the code; the
 other joins with it. Only orders travel. Every screen re-runs each round
 itself from everyone's orders, which works because the engine and the
 rivals use only exactly specified math and every resolve, forecast and
@@ -242,41 +248,41 @@ mid-plot would need another round trip), and the campaign is offline only.
 
 ## Measured
 
-All-AI seasons, 40 seeds: four-seat wins by seat 6/9/13/12 (within noise of
+All-AI skirmishes, 40 seeds: four-seat wins by seat 6/9/13/12 (within noise of
 10 each). Two biases were found and fixed on the way: a fixed processing
 order gave the later seat the decisive second hit on contested positions,
 and the AI walked targets by node id, so every rival preferred the same
-low-numbered sectors. Seats 3 and 4 had been winning 29 of 40. A season
+low-numbered sectors. Seats 3 and 4 had been winning 29 of 40. A skirmish
 where every seat has the same faction and personality stays exactly
 symmetric for all 12 rounds.
 
-Before objectives, every season ran to the round limit: nobody reached 10
+Before objectives, every skirmish ran to the round limit: nobody reached 10
 points and nobody was eliminated. Objectives were built to change that.
 
-## Season length and the scoreboard
+## Skirmish length and the scoreboard
 
-A season is first to 20 points or the most after 18 rounds (it was 10 and
-12, and seasons ended before the fighting started). Measured over 40
-four-seat all-AI seasons: average end round 11.1 to 15.8, 75% ending on
-points, and positions taken from rivals up from 5 to 19 a season. Both are
+A skirmish is first to 20 points or the most after 18 rounds (it was 10 and
+12, and skirmishes ended before the fighting started). Measured over 40
+four-seat all-AI skirmishes: average end round 11.1 to 15.8, 75% ending on
+points, and positions taken from rivals up from 5 to 19 a skirmish. Both are
 per-game settings (`pointsToWin`, `roundLimit` in `createGame`).
 
 Every point is logged with its round and reason (`game.scoreLog`). The end
 screen shows the winning point (round, reason, and the total it reached),
 points by round for every seat, and each seat's full list of points
-(secrets revealed once the season is over).
+(secrets revealed once the skirmish is over).
 
 ### Contact
 
-Measured over 60 four-seat all-AI seasons, before and after:
+Measured over 60 four-seat all-AI skirmishes, before and after:
 
 | | before | after |
 |---|---|---|
 | first position taken from a rival | round 6.6 | round 5.0 |
 | rounds with no rival position taken | 49% | 32% |
 | points from the Throne | 15% | 24% |
-| lead changes a season | 1.9 | 2.5 |
-| average season | 15.8 rounds | 15.6 rounds |
+| lead changes a skirmish | 1.9 | 2.5 |
+| average skirmish | 15.8 rounds | 15.6 rounds |
 
 What changed: the Throne scores 1 a round in the first third of the round
 limit, 2 in the second, 3 in the last; four new objectives need contact
@@ -284,10 +290,10 @@ limit, 2 in the second, 3 in the last; four new objectives need contact
 from the leader, take three from rivals in a round) and the deck is six
 of each stage; every seat starts with a Mine as well; unclaimed positions
 hold 1.6x the garrison; rivals value a rival's position 2.2x an empty one;
-20 points to win. Faction numbers were retuned after (200 seasons: win
+20 points to win. Faction numbers were retuned after (200 skirmishes: win
 rates 0.20 to 0.29).
 
-## Season length and rival strength
+## Skirmish length and rival strength
 
 The start screen offers **Quick** (13 points / 12 rounds, about 11 rounds),
 **Standard** (20 / 18, about 16) and **Epic** (28 / 24, about 22), and
@@ -298,7 +304,7 @@ and produce 30% fewer credits and 25% fewer ships; Hard rivals produce
 Sharper thinking alone did not make rivals stronger (every variant tried
 was within noise of Normal), so Hard is an open handicap, as the start
 screen says. Measured, a seat playing at Normal strength against three
-rivals wins 33% at Easy, 26% at Normal, 13% at Hard (80 seasons each).
+rivals wins 33% at Easy, 26% at Normal, 13% at Hard (80 skirmishes each).
 Campaigns and online matches keep the settings they started with.
 
 ## First game and colour
@@ -340,13 +346,13 @@ node --test dominion/sim.test.js dominion/campaign.test.js dominion/online.test.
 39 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
-combat; Throne scoring; the three ways a season ends; seat order rotation;
+combat; Throne scoring; the three ways a skirmish ends; seat order rotation;
 the forecast matching reality to the unit when rivals pass and hiding their
-plans; copies being independent; determinism; AI seasons finishing, fighting
+plans; copies being independent; determinism; AI skirmishes finishing, fighting
 and only ever giving legal orders; objectives dealt, revealed and scored
 once each; in-round events counted and reset; rivals following
-objectives; seasons ending on points; the roles draft (order, each role
-once, effects) and AI seasons drafting every round; what a seat sees, the view, forecast and
+objectives; skirmishes ending on points; the roles draft (order, each role
+once, effects) and AI skirmishes drafting every round; what a seat sees, the view, forecast and
 rival plans keeping what is out of sight as last seen, intel refreshed
 each round; the council's agenda, votes, tally and every law's effect;
 grudges; rivals voting legally; pacts sharing sight and running out,
@@ -354,7 +360,7 @@ betrayal making an Oathbreaker, rivals keeping their word; the tech tree's prere
 each faction's rule. `campaign.test.js`, 4 cases: a full campaign
 (places, legacy draft order, one legacy each, a winner), legacies applied,
 a person's legacy pick, grudges carried over. `online.test.js`, 4 cases:
-a full online season of two people and two rivals with both clients
+a full online skirmish of two people and two rivals with both clients
 identical every round and orders hidden until both lock, the database
 refusing moves for another seat or twice, no pacts with people online,
 the Neon client's requests.

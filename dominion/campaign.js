@@ -18,15 +18,15 @@
   const PLACE_POINTS = [5, 3, 2, 1, 0, 0];
   const giveTech = (id) => (g, s) => { g.tech[s][id] = 0; };
   const LEGACIES = {
-    veterans: { label: "Veterans", text: "Start every season with Assault Doctrine.", apply: giveTech("assault1") },
-    ramparts: { label: "Ramparts", text: "Start every season with Hardpoints.", apply: giveTech("fortify1") },
-    couriers: { label: "Couriers", text: "Start every season with Ion Drives.", apply: giveTech("drives") },
-    friends: { label: "Old Friends", text: "Start every season with Envoys.", apply: giveTech("envoys") },
-    warchest: { label: "War Chest", text: "Start every season with 80 more credits.", apply: (g, s) => { g.credits[s] += 80; } },
-    machine: { label: "Machine of State", text: "Start every season with 3 more influence.", apply: (g, s) => { g.influence[s] += 3; } },
-    army: { label: "Standing Army", text: "Your Command starts every season with 25 more ships.",
+    veterans: { label: "Veterans", text: "Start every skirmish with Assault Doctrine.", apply: giveTech("assault1") },
+    ramparts: { label: "Ramparts", text: "Start every skirmish with Hardpoints.", apply: giveTech("fortify1") },
+    couriers: { label: "Couriers", text: "Start every skirmish with Ion Drives.", apply: giveTech("drives") },
+    friends: { label: "Old Friends", text: "Start every skirmish with Envoys.", apply: giveTech("envoys") },
+    warchest: { label: "War Chest", text: "Start every skirmish with 80 more credits.", apply: (g, s) => { g.credits[s] += 80; } },
+    machine: { label: "Machine of State", text: "Start every skirmish with 3 more influence.", apply: (g, s) => { g.influence[s] += 3; } },
+    army: { label: "Standing Army", text: "Your Command starts every skirmish with 25 more ships.",
       apply: (g, s) => { const c = g.nodes.find((n) => n.type === "command" && n.owner === s); if (c) c.garrison += 25; } },
-    claim: { label: "Throne Claim", text: "Start every season with the Doomstar half charged.",
+    claim: { label: "Throne Claim", text: "Start every skirmish with the Doomstar half charged.",
       apply: (g, s) => { g.charge[s] = S.DOOM_CHARGE_NEEDED / 2; } }
   };
   const LEGACY_KEYS = Object.keys(LEGACIES);
@@ -74,7 +74,7 @@
   // The season is over: places, campaign points, grudges, then the legacy
   // draft or the campaign's end.
   function endSeason(c, g) {
-    if (c.phase !== "season" || g.phase !== "over") return "The season is not over.";
+    if (c.phase !== "season" || g.phase !== "over") return "The skirmish is not over.";
     const ranked = g.seats.slice().sort((a, b) => S.standing(g, b.id) - S.standing(g, a.id)).map((s) => s.id);
     const earned = {};
     ranked.forEach((id, i) => { earned[id] = PLACE_POINTS[i] || 0; c.points[id] += earned[id]; });
