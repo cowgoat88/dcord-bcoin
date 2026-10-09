@@ -199,7 +199,7 @@
       <div class="card">
         <h1>DOOMSTAR</h1>
         <p style="margin-top:0;color:var(--text)">DOMINION &middot; a season of the galactic war</p>
-        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 15, or the most points after 18 rounds, rules.</p>
+        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 20, or the most points after 18 rounds, rules.</p>
         <h2>Play</h2>
         <div class="seg" id="modeSeg">
           <button data-m="season" class="on">One season</button><button data-m="campaign">Campaign &middot; 4 seasons</button><button data-m="online">Online</button>
@@ -246,7 +246,7 @@
     <div class="overlay" id="objOv" hidden>
       <div class="card">
         <h1 style="font-size:16px;letter-spacing:2px">OBJECTIVES</h1>
-        <p>At the end of each round you score the most valuable public objective you meet, once, and your secret, once. Holding the Throne scores 1 every round. First to <b id="objTarget">10</b>.</p>
+        <p>At the end of each round you score the most valuable public objective you meet, once, and your secret, once. Holding the Throne scores 1 a round in the first third of the season, 2 in the second, 3 in the last. First to <b id="objTarget">20</b>.</p>
         <h2>Public</h2>
         <div id="objPublic"></div>
         <h2>Your secret</h2>
@@ -263,13 +263,13 @@
         </div>
         <div class="help">
           <h2>The round</h2>
-          <p><b>Draft</b> a role (fewest points picks first) &rarr; <b>plot</b> orders against a frozen galaxy &rarr; <b>lock</b> &rarr; thirty seconds of war play out with nobody touching anything &rarr; <b>score</b>. First to 15 points, or the most after 18 rounds.</p>
+          <p><b>Draft</b> a role (fewest points picks first) &rarr; <b>plot</b> orders against a frozen galaxy &rarr; <b>lock</b> &rarr; thirty seconds of war play out with nobody touching anything &rarr; <b>score</b>. First to 20 points, or the most after 18 rounds.</p>
           <h2>Orders</h2>
           <p>Each costs one order point (3 a round, +1 per 5 positions). Tap your position, then a target, to <b>send</b> 25&ndash;100% of its ships. <b>Support</b> lends half a position's strength to a neighbour's fight without moving (cut if it is attacked). <b>Hold</b> digs in: 25% harder to take, but it sends nothing. <b>Upgrade</b> builds faster. Fleets only travel through your own ground and fight any rival fleet they meet in a lane.</p>
           <h2>Forecast and replay</h2>
           <p>Drag the slider to watch the round as it would go if no rival did anything. Replay shows the last round again.</p>
           <h2>Points</h2>
-          <p>Holding the <b>Throne</b> at the centre scores 1 a round. Each round you also score your best public <b>objective</b> once and your <b>secret</b> once (&#9678; Objectives). The Throne's <b>Doomstar</b> fires at a rival once its Relays have charged it.</p>
+          <p>Holding the <b>Throne</b> at the centre scores every round: 1 early, 2 mid-season, 3 late. Each round you also score your best public <b>objective</b> once and your <b>secret</b> once (&#9678; Objectives). The Throne's <b>Doomstar</b> fires at a rival once its Relays have charged it.</p>
           <h2>Fog of war</h2>
           <p>You see your positions and one lane out, two from Relays. Dimmed positions with a <b>~</b> show what you saw last.</p>
           <h2>The council</h2>
@@ -1125,7 +1125,7 @@
     let html = "<h2>Your numbers</h2><div class='dl'>";
     if (campaign) html += row("Season", campaign.season + " of " + campaign.seasons, "Campaign points so far: " + campaign.points[ME] + ". Places earn 5, 3, 2, 1.");
     html += row("Round", g.round + " of " + g.roundLimit, "The season ends after round " + g.roundLimit + ", or when someone reaches " + g.pointsToWin + " points.");
-    html += row("Points", g.points[ME] + " of " + g.pointsToWin, "1 a round for holding the Throne, plus objectives (\u25ce).");
+    html += row("Points", g.points[ME] + " of " + g.pointsToWin, "Holding the Throne scores " + S.thronePoints(g) + " this round (1, 2, then 3 as the season goes on), plus objectives (\u25ce).");
     html += row("Orders", S.cpUsed(g, ME) + " used of " + S.commandPoints(g, ME), "One per order this round: " + parts.join(", ") + ".");
     html += row("Role", role ? S.ROLES[role].icon + " " + S.ROLES[role].label : "none yet", role ? S.ROLES[role].text + " This round only." : "Drafted at the start of each round, fewest points first.");
     html += row("Credits", Math.floor(g.credits[ME]) + (spend < g.credits[ME] ? " (" + Math.floor(spend) + " free)" : ""),

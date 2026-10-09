@@ -315,9 +315,9 @@ test("the simulation uses no math that may differ between browsers", () => {
 test("two public objectives show at the start and one more is revealed every round", () => {
   const g = S.createGame({ seed: 4, seats: seats(3) });
   assert.equal(S.publicObjectives(g).length, 2);
-  assert.equal(g.deck.length, 10);
-  assert.ok(g.deck.slice(0, 5).every((id) => S.objectiveById(id).stage === 1), "stage I first");
-  assert.ok(g.deck.slice(5).every((id) => S.objectiveById(id).stage === 2), "then stage II");
+  assert.equal(g.deck.length, 12);
+  assert.ok(g.deck.slice(0, 6).every((id) => S.objectiveById(id).stage === 1), "stage I first");
+  assert.ok(g.deck.slice(6).every((id) => S.objectiveById(id).stage === 2), "then stage II");
   for (const s of g.seats) S.lockOrders(g, s.id);
   S.beginResolve(g); S.runRound(g);
   assert.equal(S.publicObjectives(g).length, 3);
@@ -717,7 +717,7 @@ test("each faction bends one rule", () => {
   assert.equal(S.findPath(plain, 0, 2, 1), null);
   S.addOrder(k, 1, { kind: "send", from: 0, to: 2, frac: 0.5 });
   S.beginResolve(k);
-  assert.equal(k.fleets[0].count, 30 * 0.75, "crossing costs a quarter");
+  assert.equal(k.fleets[0].count, 30 * 0.65, "crossing costs a third");
   // Hold the Line: the Iron Covenant's captures are dug in.
   const c = lineGame();
   c.seatById[1].faction = "shock";
@@ -764,6 +764,6 @@ test("every point scored is logged with its round and reason, and the target is 
   assert.ok(g.points[g.winner] >= 6 || g.round === 9 || S.liveSeats(g).length === 1);
   const d = S.createGame({ seed: 8, seats: seats(2) });
   assert.equal(d.pointsToWin, S.POINTS_TO_WIN);
-  assert.equal(S.POINTS_TO_WIN, 15);
+  assert.equal(S.POINTS_TO_WIN, 20);
   assert.equal(S.ROUND_LIMIT, 18);
 });

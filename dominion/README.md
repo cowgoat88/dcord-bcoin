@@ -4,7 +4,7 @@ A slow, plotted space-empire game built on the OUTPOST engine. A match is a
 season of a galactic war: every round, everyone plots orders against a
 frozen galaxy, then the orders lock and thirty simulated seconds of war play
 out with nobody touching anything. Hold the Throne at the centre when a
-round ends to score. First to 15 points, or the most points after 18
+round ends to score. First to 20 points, or the most points after 18
 rounds, rules the galaxy.
 
 Design document (research, structure, roadmap):
@@ -255,8 +255,8 @@ points and nobody was eliminated. Objectives were built to change that.
 
 ## Season length and the scoreboard
 
-A season is now first to 15 points or the most after 18 rounds (it was 10
-and 12, and seasons ended before the fighting started). Measured over 40
+A season is first to 20 points or the most after 18 rounds (it was 10 and
+12, and seasons ended before the fighting started). Measured over 40
 four-seat all-AI seasons: average end round 11.1 to 15.8, 75% ending on
 points, and positions taken from rivals up from 5 to 19 a season. Both are
 per-game settings (`pointsToWin`, `roundLimit` in `createGame`).
@@ -265,6 +265,27 @@ Every point is logged with its round and reason (`game.scoreLog`). The end
 screen shows the winning point (round, reason, and the total it reached),
 points by round for every seat, and each seat's full list of points
 (secrets revealed once the season is over).
+
+### Contact
+
+Measured over 60 four-seat all-AI seasons, before and after:
+
+| | before | after |
+|---|---|---|
+| first position taken from a rival | round 6.6 | round 5.0 |
+| rounds with no rival position taken | 49% | 32% |
+| points from the Throne | 15% | 24% |
+| lead changes a season | 1.9 | 2.5 |
+| average season | 15.8 rounds | 15.6 rounds |
+
+What changed: the Throne scores 1 a round in the first third of the round
+limit, 2 in the second, 3 in the last; four new objectives need contact
+(take a position from a rival, hold one in a rival's home sector, take one
+from the leader, take three from rivals in a round) and the deck is six
+of each stage; every seat starts with a Mine as well; unclaimed positions
+hold 1.6x the garrison; rivals value a rival's position 2.2x an empty one;
+20 points to win. Faction numbers were retuned after (200 seasons: win
+rates 0.20 to 0.29).
 
 ## Orders on screen
 

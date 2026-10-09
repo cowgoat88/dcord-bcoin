@@ -76,21 +76,21 @@
   // OUTPOST's doctrines are Dominion's factions. Each keeps its modifiers
   // and bends one rule of the game.
   const FACTIONS = {
-    standard:    { label: "Free Worlds",      icon: "◆", up: "Balanced", mods: {},
+    standard:    { label: "Free Worlds",      icon: "◆", up: "Income +15%, build 5% faster", mods: { credits: 1.15, units: 1.05 },
       rule: { label: "Senate", text: "Your vote in the council counts two." } },
     vanguard:    { label: "Kestrel Wings",    icon: "➤", up: "Fleets travel 5% faster; build 5% slower", mods: { speed: 1.05, units: 0.95 },
-      rule: { label: "Deep Strike", text: "Your fleets may fly over one unclaimed position on the way, losing a quarter of their number." } },
+      rule: { label: "Deep Strike", text: "Your fleets may fly over one unclaimed position on the way, losing a third of their number." } },
     logistics:   { label: "Deep Combine",     icon: "●", up: "Cut-off positions keep 90% output and Relays keep charging; income −15%", mods: { cutoff: 0.90, credits: 0.85 },
       rule: { label: "Convoys", text: "Your supply runs through pact partners' positions as if they were yours." } },
-    relays:      { label: "Choir of the Array", icon: "★", up: "Relays out-build Factories and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 2.2, chargeRate: 2, units: 0.85 },
+    relays:      { label: "Choir of the Array", icon: "★", up: "Relays build 80% faster and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 1.8, chargeRate: 2, units: 0.85 },
       rule: { label: "The Array", text: "Your Relays see three lanes out." } },
-    prospectors: { label: "Meridian Guild",   icon: "◈", up: "Income +45%, research 25% cheaper; build 10% slower", mods: { credits: 1.45, research: 0.75, units: 0.90 },
+    prospectors: { label: "Meridian Guild",   icon: "◈", up: "Income +45%, research 25% cheaper; build 4% slower", mods: { credits: 1.45, research: 0.75, units: 0.96 },
       rule: { label: "Trade Pacts", text: "Every round of a pact pays you and your partner 40 credits each." } },
     shock:       { label: "Iron Covenant",    icon: "▲", up: "Assaults land 8% harder; defend 6% worse, build 8% slower", mods: { attack: 1.08, defence: 0.94, units: 0.92 },
       rule: { label: "Hold the Line", text: "Positions you take are dug in for the rest of the round." } }
   };
   const TRADE_PACT_CREDITS = 40;
-  const DEEP_STRIKE_KEEP = 0.75;
+  const DEEP_STRIKE_KEEP = 0.65;
   const FACTION_KEYS = Object.keys(FACTIONS);
 
   const SEAT_COLORS = ["#22d3ee", "#fb7185", "#fbbf24", "#a78bfa", "#a3e635", "#fb923c"];
@@ -99,8 +99,15 @@
   // ---- the round ---------------------------------------------------------
   const ROUND_SECONDS = 30;       // simulated seconds a round runs for
   const ROUND_LIMIT = 18;         // the season ends after this many rounds
-  const THRONE_POINTS = 1;        // scored at status by whoever holds the Throne
-  const POINTS_TO_WIN = 15;
+  const THRONE_POINTS = 1;        // scored at status by whoever holds the Throne, in the first third
+  // The Throne is worth more as the season goes on: 1 a round in the first
+  // third of the round limit, 2 in the second, 3 in the last. It pulls the
+  // fighting to the centre late, when the economy is built.
+  function thronePoints(game) {
+    const third = game.roundLimit / 3;
+    return game.round <= third ? THRONE_POINTS : game.round <= 2 * third ? THRONE_POINTS + 1 : THRONE_POINTS + 2;
+  }
+  const POINTS_TO_WIN = 20;
   const CP_BASE = 3;              // orders a seat may give in a round
   const CP_PER = 5;               // +1 order for every this many positions held
   const CP_MAX = 8;
@@ -229,6 +236,10 @@
   // Gabriel graph of the points: planar (lanes never cross), connected, and
   // symmetric because the points are.
   const GALAXY_R = 1000;
+  // Every seat starts with three positions (Command, Factory, Mine) and the
+  // neutrals at 1.6x: measured, the first fight with a rival came at round
+  // 6.6 before, 5.0 after, and rounds with no fight fell from 49% to 32%.
+  const NEUTRAL_GARRISON = 1.6;
   // Fifteen positions a wedge: 61 in a four-seat galaxy, 91 with six. The
   // radius grows with the seat count so every galaxy has the same density
   // and the same distance between neighbours.
@@ -237,7 +248,7 @@
     { r: 0.86, a: 0.50, type: "command", g: 30, home: true },
     { r: 0.74, a: 0.34, type: "factory", g: 14, homeSide: true },
     { r: 1.00, a: 0.50, type: "factory", g: 8 },
-    { r: 0.74, a: 0.68, type: "mine", g: 8 },
+    { r: 0.74, a: 0.68, type: "mine", g: 8, homeSide: true },
     { r: 0.97, a: 0.20, type: "relay", g: 8 },
     { r: 0.97, a: 0.80, type: "factory", g: 12 },
     { r: 0.62, a: 0.52, type: "relay", g: 12 },
@@ -281,7 +292,9 @@
           id: nodes.length, x: Math.round(cx + Math.cos(ang) * rr), y: Math.round(cy + Math.sin(ang) * rr),
           type: j.p.type, terrain: j.terrain,
           owner: j.p.home || j.p.homeSide ? s + 1 : NEUTRAL,
-          garrison: j.p.g, level: 0, sector: s,
+          // Unclaimed ground is held more stubbornly than it used to be, so
+          // a rival's border becomes the cheaper target sooner.
+          garrison: j.p.home || j.p.homeSide ? j.p.g : Math.round(j.p.g * NEUTRAL_GARRISON), level: 0, sector: s,
           name: j.p.home ? SECTOR_NAMES[s % SECTOR_NAMES.length] : null
         });
       }
@@ -345,17 +358,19 @@
     { id: "relays3", stage: 1, points: 1, text: "Hold 3 Relays", test: (g, s) => owned(g, s, "relay").length >= 3 },
     { id: "mines2", stage: 1, points: 1, text: "Hold 3 Mines", test: (g, s) => owned(g, s, "mine").length >= 3 },
     { id: "spread", stage: 1, points: 1, text: "Hold positions in 2 sectors besides your own", test: (g, s) => [...sectorsHeld(g, s)].filter((x) => x !== homeOf(g, s)).length >= 2 },
-    { id: "factories", stage: 1, points: 1, text: "Have 2 Factories at level 1 or higher", test: (g, s) => owned(g, s, "factory").filter((n) => n.level >= 1).length >= 2 },
+    { id: "raid", stage: 1, points: 1, text: "Take a position from a rival", test: (g, s) => g.flags[s].rivalTaken >= 1 },
     { id: "nine", stage: 1, points: 1, text: "Hold 9 positions", test: (g, s) => owned(g, s).length >= 9 },
     { id: "twoTaken", stage: 1, points: 1, text: "Take 2 positions in one round", test: (g, s) => g.flags[s].captures >= 2 },
     { id: "underdog", stage: 1, points: 1, text: "Win a lane battle against a larger fleet", test: (g, s) => g.flags[s].underdog },
     { id: "research", stage: 1, points: 1, text: "Own 2 technologies", test: (g, s) => techCount(g, s) >= 2 },
+    { id: "border", stage: 1, points: 1, text: "Hold a position in a rival's home sector", test: (g, s) => g.seats.some((r) => r.id !== s && owned(g, s).some((n) => n.sector === r.home)) },
     // Stage II: 2 points.
     { id: "court", stage: 2, points: 2, text: "Hold the Throne and 2 positions next to it", test: (g, s) => { const t = throneNode(g); return !!t && t.owner === s && neighbors(g, t.id).filter((id) => g.nodes[id].owner === s).length >= 2; } },
     { id: "fifteen", stage: 2, points: 2, text: "Hold 15 positions", test: (g, s) => owned(g, s).length >= 15 },
     { id: "everywhere", stage: 2, points: 2, text: "Hold a position in every sector", test: (g, s) => sectorsHeld(g, s).size >= g.seats.length },
     { id: "relays5", stage: 2, points: 2, text: "Hold 5 Relays", test: (g, s) => owned(g, s, "relay").length >= 5 },
-    { id: "levels", stage: 2, points: 2, text: "Have 3 positions at level 2 or higher", test: (g, s) => owned(g, s).filter((n) => n.level >= 2).length >= 3 },
+    { id: "humble", stage: 2, points: 2, text: "Take a position from the seat leading on points", test: (g, s) => g.flags[s].tookFromLeader },
+    { id: "conquest", stage: 2, points: 2, text: "Take 3 positions from rivals in one round", test: (g, s) => g.flags[s].rivalTaken >= 3 },
     { id: "regicide", stage: 2, points: 2, text: "Strike a seat ahead of you on points with the Doomstar", test: (g, s) => g.flags[s].doomOnLeader },
     { id: "doctrine", stage: 2, points: 2, text: "Own technologies in 3 branches", test: (g, s) => new Set(Object.keys(g.tech[s]).map((k) => TECHS[k].branch)).size >= 3 }
   ];
@@ -369,12 +384,13 @@
     { id: "fortress", points: 1, text: "Hold every position in your home sector", test: (g, s) => g.nodes.filter((n) => n.sector === homeOf(g, s)).every((n) => n.owner === s) },
     { id: "kingmaker", points: 1, text: "Win a fight that your support decided", test: (g, s) => g.flags[s].supportDecisive }
   ];
-  const STAGE_ONE_SHOWN = 5, STAGE_TWO_SHOWN = 5;
+  const STAGE_ONE_SHOWN = 6, STAGE_TWO_SHOWN = 6;
   function objectiveById(id) { return OBJECTIVES.find((o) => o.id === id) || SECRETS.find((o) => o.id === id) || null; }
   function blankFlags() {
-    return { upgrades: 0, captures: 0, lost: 0, laneKills: 0, underdog: false, doomOnLeader: false, tookCommand: false, supportDecisive: false };
+    return { upgrades: 0, captures: 0, lost: 0, laneKills: 0, underdog: false, doomOnLeader: false, tookCommand: false, supportDecisive: false,
+      rivalTaken: 0, tookFromLeader: false };
   }
-  // A shuffled deck from the seed: five stage I objectives, then five stage
+  // A shuffled deck from the seed: six stage I objectives, then six stage
   // II, two showing at the start and one more revealed at every status.
   function dealObjectives(game, rng) {
     const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); const t = a[i]; a[i] = a[j]; a[j] = t; } return a; };
@@ -764,7 +780,7 @@
     const count = Math.floor(from.garrison * frac);
     if (count < MIN_SEND) return;
     from.garrison -= count;
-    // Deep Strike: crossing unclaimed ground costs a quarter of the fleet.
+    // Deep Strike: crossing unclaimed ground costs a third of the fleet.
     const crossed = path.slice(1, -1).some((id) => game.nodes[id].owner !== seat);
     game.fleets.push({
       owner: seat, from: fromId, to: toId, count: crossed ? count * DEEP_STRIKE_KEEP : count, path, leg: 0, t: 0,
@@ -878,7 +894,13 @@
       fa.captures += 1;
       if (to.type === "command" && defender !== NEUTRAL) fa.tookCommand = true;
       if (atkSupport > 0 && attack - atkSupport <= defence) fa.supportDecisive = true;
-      if (defender !== NEUTRAL) game.flags[defender].lost += 1;
+      if (defender !== NEUTRAL) {
+        game.flags[defender].lost += 1;
+        fa.rivalTaken += 1;
+        // The leader: strictly ahead of everyone else on points.
+        const others = game.seats.filter((x) => x.id !== defender).map((x) => game.points[x.id]);
+        if (game.points[defender] > Math.max.apply(null, others)) fa.tookFromLeader = true;
+      }
       const survivors = (attack - defence) / am;
       to.owner = a.owner;
       to.level = 0;
@@ -1021,8 +1043,9 @@
     computeSupply(game);
     const throne = throneNode(game);
     if (throne && throne.owner !== NEUTRAL && !lawActive(game, "sanctuary")) {
-      game.points[throne.owner] += THRONE_POINTS;
-      emit(game, { kind: "score", owner: throne.owner, points: THRONE_POINTS, why: "Held the Throne" });
+      const tp = thronePoints(game);
+      game.points[throne.owner] += tp;
+      emit(game, { kind: "score", owner: throne.owner, points: tp, why: "Held the Throne" });
     }
     scoreObjectives(game);
     refreshIntel(game);
@@ -1404,7 +1427,7 @@
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,
     commandPoints, cpUsed, checkOrder, addOrder, removeOrder, lockOrders, allLocked, spendable,
-    beginResolve, step, runRound, STEP, endRound, standing, forecast, snapshotFrame,
+    beginResolve, step, runRound, STEP, thronePoints, endRound, standing, forecast, snapshotFrame,
     ROLES, ROLE_KEYS, MARSHAL_BONUS, roleOf, draftOrder, openDraft, draftTurn, rolesLeft, pickRole, upgradePrice,
     OBJECTIVES, SECRETS, objectiveById, publicObjectives, scoreObjectives,
     sightOf, fleetSeen, refreshIntel, viewFor, SIGHT_RELAY,

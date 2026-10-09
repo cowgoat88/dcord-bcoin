@@ -31,6 +31,10 @@
     zealot: { margin: 1.20, throne: 3.0, hold: 0.9, send: 0.70, label: "Zealot" }
   };
   const PERSONALITY_KEYS = Object.keys(PERSONALITIES);
+  // How much more a rival's position is worth than an empty one of the same
+  // cost. At 1 rivals grabbed every neutral first and half the rounds had no
+  // fight; 2.2 is where contact starts early without anyone running away.
+  const RIVAL_BIAS = 2.2;
   // The branches each personality reaches for first.
   const TECH_LEAN = {
     hawk: ["war", "propulsion"], turtle: ["bulwark", "statecraft"],
@@ -63,6 +67,10 @@
       if (has("court") && (n.type === "doomstar" || court.indexOf(n.id) !== -1)) w *= 2;
       if (has("crown") && n.type === "command" && n.owner !== S.NEUTRAL) w *= 2.5;
       if (has("fortress") && n.sector === home) w *= 2.5;
+      const rival = n.owner !== S.NEUTRAL && n.owner !== seat;
+      if ((has("raid") || has("conquest")) && rival) w *= 1.6;
+      if (has("humble") && rival && game.seats.every((x) => x.id === n.owner || game.points[n.owner] > game.points[x.id])) w *= 2;
+      if (has("border") && n.sector >= 0 && n.sector !== home && game.seats.some((r) => r.home === n.sector)) w *= 1.6;
       return w;
     };
     return {
@@ -190,6 +198,9 @@
           const lead = order[0], second = order[1];
           if (lead && second && lead.id === t.owner && lead.id !== seat &&
               game.points[lead.id] > game.points[second.id]) score *= 1.4;
+          // Rivals' ground is worth more than empty space: taking it scores
+          // twice, what they lose and what you gain.
+          score *= RIVAL_BIAS * (P === PERSONALITIES.hawk ? 1.2 : 1);
           // Vendetta: a seat that has hurt this one is a sweeter target.
           score *= 1 + Math.min(1, 0.12 * ((game.grudge && game.grudge[seat][t.owner]) || 0));
         }
