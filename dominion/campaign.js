@@ -26,7 +26,7 @@
     machine: { label: "Machine of State", text: "Start every skirmish with 3 more influence.", apply: (g, s) => { g.influence[s] += 3; } },
     army: { label: "Standing Army", text: "Your Command starts every skirmish with 25 more ships.",
       apply: (g, s) => { const c = g.nodes.find((n) => n.type === "command" && n.owner === s); if (c) c.garrison += 25; } },
-    claim: { label: "Throne Claim", text: "Start every skirmish with the Doomstar half charged.",
+    claim: { label: "Doomstar Claim", text: "Start every skirmish with the Doomstar half charged.",
       apply: (g, s) => { g.charge[s] = S.DOOM_CHARGE_NEEDED / 2; } }
   };
   const LEGACY_KEYS = Object.keys(LEGACIES);

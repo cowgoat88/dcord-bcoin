@@ -3,7 +3,7 @@
 A slow, plotted space-empire game built on the OUTPOST engine. A match is a
 skirmish of a galactic war: every round, everyone plots orders against a
 frozen galaxy, then the orders lock and thirty simulated seconds of war play
-out with nobody touching anything. Hold the Throne at the centre when a
+out with nobody touching anything. Hold the Doomstar at the centre when a
 round ends to score. First to 20 points, or the most points after 18
 rounds, rules the galaxy.
 
@@ -38,7 +38,7 @@ Open `index.html`. No build step, no server.
 ## What is built (roadmap phases 0 and 1)
 
 - **Any number of seats, 2 to 6.** One generated galaxy per match: a wedge
-  per seat around the Throne, every wedge the same ground turned, lanes
+  per seat around the Doomstar, every wedge the same ground turned, lanes
   from the Gabriel graph of the points, so they never cross. Your home is at
   the bottom of the screen.
 - **The round.** Plot, lock, resolve 30 s, status. Orders are checked
@@ -62,10 +62,10 @@ Ten public objectives are dealt from the seed, five stage I (1 point)
 then five stage II (2 points). Two show at the start and one more is
 revealed at the end of each round. Each seat also holds one secret. At
 the end of a round every seat scores the most valuable public objective
-it meets (each once) and its secret (once); holding the Throne scores 1
+it meets (each once) and its secret (once); holding the Doomstar scores 1
 on top. Objectives point at places and moments: hold 3 Relays, take 2
 positions in one round, win a lane battle against a larger fleet, hold
-the Throne and two positions beside it, strike a leader with the
+the Doomstar and two positions beside it, strike a leader with the
 Doomstar. Secrets include taking a rival's Command and winning a fight
 your support decided. Rivals weigh targets by their open objectives.
 
@@ -99,7 +99,7 @@ apart in every galaxy. Lanes are kept only when every turned copy of them
 exists, so rounding a position never gives one seat a lane another lacks.
 
 Each seat sees its own positions and everything one lane out, two lanes
-out from its Relays, the lanes its fleets are on, and the Throne. The
+out from its Relays, the lanes its fleets are on, and the Doomstar. The
 opening board is public; after that, positions out of sight show what you
 saw last (dimmed, garrison marked `~`), fleets out of sight are not shown,
 and fights out of sight are not reported. The forecast and the rival
@@ -125,7 +125,7 @@ round resolves and everyone's vote is shown.
 | Law | Effect |
 |---|---|
 | Mobilization | every seat plots one more order, from now on |
-| Sanctuary | holding the Throne scores nothing this round |
+| Sanctuary | holding the Doomstar scores nothing this round |
 | Interdiction | nobody may fire the Doomstar this round or the next |
 | Levy | every seat pays a fifth of its credits to the seats with fewest points |
 | Open Skies | every seat sees the whole galaxy this round |
@@ -150,7 +150,7 @@ but plotting one breaks the pact as the orders lock and makes the breaker
 an Oathbreaker for three rounds: its influence is gone, every seat holds a
 grudge, and nobody will make a pact with it. You cannot offer a pact with
 an attack on that seat already plotted. Rivals keep their word, except a
-Hawk taking the Throne from a partner who leads.
+Hawk taking the Doomstar from a partner who leads.
 
 Measured, 100 all-AI skirmishes with draft, council and pacts: wins by seat
 22/20/27/31 with four seats, 16/18/22/19/25 with five; about 7 pacts a
@@ -201,7 +201,7 @@ legacy it keeps for the rest of the campaign, furthest behind first:
 | War Chest | 80 more starting credits |
 | Machine of State | 3 more starting influence |
 | Standing Army | Command starts with 25 more ships |
-| Throne Claim | Doomstar starts half charged |
+| Doomstar Claim | Doomstar starts half charged |
 
 Grudges carry into the next skirmish at half strength; pacts do not. The
 campaign and the skirmish in progress are saved in this browser at the
@@ -280,11 +280,11 @@ Measured over 60 four-seat all-AI skirmishes, before and after:
 |---|---|---|
 | first position taken from a rival | round 6.6 | round 5.0 |
 | rounds with no rival position taken | 49% | 32% |
-| points from the Throne | 15% | 24% |
+| points from the Doomstar | 15% | 24% |
 | lead changes a skirmish | 1.9 | 2.5 |
 | average skirmish | 15.8 rounds | 15.6 rounds |
 
-What changed: the Throne scores 1 a round in the first third of the round
+What changed: the Doomstar scores 1 a round in the first third of the round
 limit, 2 in the second, 3 in the last; four new objectives need contact
 (take a position from a rival, hold one in a rival's home sector, take one
 from the leader, take three from rivals in a round) and the deck is six
@@ -295,8 +295,8 @@ rates 0.20 to 0.29).
 
 ## Skirmish length and rival strength
 
-The start screen offers **Quick** (13 points / 12 rounds, about 11 rounds),
-**Standard** (20 / 18, about 16) and **Epic** (28 / 24, about 22), and
+The start screen offers **Quick** (12 points / 12 rounds, about 11 rounds),
+**Standard** (20 / 18, about 17) and **Epic** (26 / 24, about 23), and
 rivals at **Easy**, **Normal** or **Hard**. Rivals always play by your
 rules: the same orders and command points. Easy rivals play cautiously
 and produce 30% fewer credits and 25% fewer ships; Hard rivals produce
@@ -310,7 +310,7 @@ Campaigns and online matches keep the settings they started with.
 ## First game and colour
 
 **Basic rules** (the default on a first visit) leave out the roles draft,
-the council, pacts and technology: orders, the Throne, objectives and fog
+the council, pacts and technology: orders, the Doomstar, objectives and fog
 only. **Full** turns them all on. Online matches always use the full rules.
 Every seat has a mark as well as a colour (● ▲ ■ ◆ ★ ✚), drawn beside its
 positions and shown in the standings, the details panel, the report and
@@ -346,7 +346,7 @@ node --test dominion/sim.test.js dominion/campaign.test.js dominion/online.test.
 39 cases: galaxy connectivity, no crossing lanes and identical wedges for 2
 to 6 seats; plotting changes nothing; command points; credits promised
 twice; a full round; support turning a fight and being cut; Hold; lane
-combat; Throne scoring; the three ways a skirmish ends; seat order rotation;
+combat; Doomstar scoring; the three ways a skirmish ends; seat order rotation;
 the forecast matching reality to the unit when rivals pass and hiding their
 plans; copies being independent; determinism; AI skirmishes finishing, fighting
 and only ever giving legal orders; objectives dealt, revealed and scored

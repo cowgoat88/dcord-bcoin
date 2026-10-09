@@ -23,7 +23,7 @@
   const VALUE = { command: 3.0, factory: 2.0, mine: 1.4, relay: 1.6, doomstar: 3.2 };
 
   // Personalities nudge the same plan: how much margin before committing,
-  // how much it values the Throne, how readily it digs in.
+  // how much it values the Doomstar, how readily it digs in.
   const PERSONALITIES = {
     hawk:   { margin: 1.10, throne: 2.0, hold: 0.6, send: 0.75, label: "Hawk" },
     turtle: { margin: 1.45, throne: 1.0, hold: 1.4, send: 0.60, label: "Turtle" },
@@ -35,6 +35,46 @@
   // cost. At 1 rivals grabbed every neutral first and half the rounds had no
   // fight; 2.2 is where contact starts early without anyone running away.
   const RIVAL_BIAS = 2.2;
+
+  // Each faction's commanders play to their doctrine. Multipliers on what
+  // they attack and how they use the council and pacts:
+  //   doom      how hard they go for the Doomstar
+  //   rival     how much more a rival's position is worth than an empty one
+  //   types     which kinds of position they prize
+  //   margin    how much spare strength they want before attacking
+  //   behind    bonus for a rival position with none of theirs beside it
+  //             (reached by Deep Strike, behind the front)
+  //   pact, influence, research   council and spending temperament
+  const STRATEGIES = {
+    standard:    { label: "Senator", text: "plays the council: votes hard and contests the Doomstar", doom: 1.3, rival: 1.0, types: {}, margin: 1.0, influence: 1.6 },
+    vanguard:    { label: "Raider", text: "strikes behind the lines at Relays and Mines", doom: 1.1, rival: 1.1, types: { relay: 1.25, mine: 1.25 }, margin: 1.0, behind: 1.15 },
+    logistics:   { label: "Quartermaster", text: "builds Factories, keeps supply and makes pacts", doom: 0.9, rival: 0.9, types: { factory: 1.4 }, margin: 1.05, pact: 0.3 },
+    relays:      { label: "Choir", text: "takes Relays and goes for the Doomstar to fire it", doom: 1.5, rival: 1.0, types: { relay: 2.0 }, margin: 1.0 },
+    prospectors: { label: "Trader", text: "grows rich on Mines, trades in pacts, researches", doom: 0.9, rival: 0.85, types: { mine: 1.5 }, margin: 1.1, pact: 0.35, research: 0.8 },
+    shock:       { label: "Crusader", text: "storms the Doomstar and the leader's Command", doom: 1.6, rival: 1.2, types: { command: 1.3 }, margin: 1.0 }
+  };
+  const strategyOf = (game, seat) => STRATEGIES[S.factionOf(game, seat)] || STRATEGIES.standard;
+  // How many rounds in a row the Doomstar's holder has scored it.
+  function heldFor(game, holder) {
+    let n = 0;
+    for (let r = game.round - 1; r >= 1; r--) {
+      if ((game.scoreLog || []).some((e) => e.round === r && e.owner === holder && e.why === "Held the Doomstar")) n++;
+      else break;
+    }
+    return n;
+  }
+  // What taking the Doomstar is worth to this seat now: more as it scores
+  // more, more the longer one rival has sat on it, more if that rival leads.
+  function doomUrgency(game, seat) {
+    const t = S.throneNode(game);
+    if (!t) return 1;
+    let u = S.thronePoints(game) * strategyOf(game, seat).doom;
+    if (t.owner !== NEUTRAL && t.owner !== seat) {
+      u *= 1 + 0.6 * heldFor(game, t.owner);
+      if (game.seats.every((x) => x.id === t.owner || game.points[t.owner] > game.points[x.id])) u *= 1.5;
+    }
+    return u;
+  }
   // How rivals think at each difficulty. Easy rivals want a bigger margin,
   // attack once a round and defend one position. Normal and hard think the
   // same; hard rivals instead produce more (RIVAL_ECONOMY in sim.js),
@@ -139,10 +179,17 @@
     const ring = game.nodes.slice().sort((a, b) => rel(a) - rel(b) || a.id - b.id);
     const mine = () => ring.filter((n) => n.owner === seat);
     // A rival keeps its pacts, except that a Hawk will break one to take
-    // the Throne from a partner who leads.
+    // the Doomstar from a partner who leads.
     const partners = S.partnersOf(game, seat);
     const keepsFaith = (n) => partners.indexOf(n.owner) !== -1 &&
       !(P === PERSONALITIES.hawk && n.type === "doomstar" && game.points[n.owner] > game.points[seat]);
+    const ST = strategyOf(game, seat);
+    const doomT = S.throneNode(game);
+    const doomRival = !!doomT && doomT.owner !== NEUTRAL && doomT.owner !== seat && !keepsFaith(doomT);
+    // The massing point for the Doomstar: it may strike the Doomstar or a
+    // position next to it, and is not spent on anything else.
+    const reserved = new Set();
+    const forDoom = (t) => !!doomT && (t.id === doomT.id || S.areLinked(game, t.id, doomT.id));
 
     // 1. The weapon.
     if (S.canFire(game, seat)) {
@@ -166,6 +213,35 @@
       if (helper) add({ kind: "support", from: helper.id, to: e.n.id });
     }
 
+    // The Doomstar held against you and too strong to take this round:
+    // mass beside it (or at your nearest position), so a later wave is big
+    // enough. Without this a well-dug-in holder was never attacked at all.
+    function stageForDoom() {
+      if (!(doomRival && cpLeft(game, seat) > 1 && !game.orders[seat].some((o) => o.to === doomT.id) && doomUrgency(game, seat) >= 1)) return;
+      const near = (n) => S.dist(n, doomT);
+      // Fill the positions nearest the Doomstar, each only up to what it can
+      // hold: ships sent into a full position are lost.
+      const room = (n) => S.nodeStats(n, game).cap * 0.9 - n.garrison;
+      const closest = mine().slice().sort((a, b) => near(a) - near(b)).slice(0, 3);
+      for (const n of closest) reserved.add(n.id);
+      const stage = closest.find((n) => room(n) > 8);
+      if (!stage) return;
+      const feeders = mine().filter((n) => n.id !== stage.id && !busy.has(n.id) && n.garrison >= 12 && near(n) > near(stage) && S.findPath(game, n.id, stage.id, seat))
+        .sort((a, b) => S.pathTime(game, S.findPath(game, a.id, stage.id, seat), seat) - S.pathTime(game, S.findPath(game, b.id, stage.id, seat), seat));
+      const urgent = doomUrgency(game, seat) >= 3;
+      for (const f of feeders.slice(0, urgent ? 3 : 2)) if (cpLeft(game, seat) > 1) add({ kind: "send", from: f.id, to: stage.id, frac: urgent ? 0.85 : 0.7 });
+    }
+    // When it matters most (later in the skirmish, a long hold, a leader on
+    // it), massing for the Doomstar comes before other attacks.
+    const stagedEarly = doomRival && doomUrgency(game, seat) >= 2 && !canTakeDoom();
+    if (stagedEarly) stageForDoom();
+    function canTakeDoom() {
+      const st = S.nodeStats(doomT, game);
+      const near = S.neighbors(game, doomT.id).map(N).filter((n) => n.owner === seat);
+      const force = near.reduce((a2, n) => a2 + n.garrison * P.send * S.assaultMult(game, seat), 0);
+      return force > (S.defenceOf(game, doomT) + st.unitRate * 4) * 1.1;
+    }
+
     // 3. Attack: the best target this round, taken by everything that can
     // reach it together, plus support from positions next to it.
     for (let tries = 0; tries < D.attacks && cpLeft(game, seat) > 0; tries++) {
@@ -173,20 +249,38 @@
       for (const t of ring) {
         if (t.owner === seat || keepsFaith(t)) continue;
         const sources = mine()
-          .filter((s) => !busy.has(s.id) && s.garrison >= 8 && S.findPath(game, s.id, t.id, seat))
+          .filter((s) => !busy.has(s.id) && s.garrison >= 8 && (!reserved.has(s.id) || forDoom(t)) && S.findPath(game, s.id, t.id, seat))
           .map((s) => ({ s, path: S.findPath(game, s.id, t.id, seat) }))
-          .map((x) => Object.assign(x, { eta: S.pathTime(game, x.path, seat) }))
+          .map((x) => Object.assign(x, { eta: S.pathTime(game, x.path, seat),
+            // Deep Strike over unclaimed ground arrives a third short.
+            keep: x.path.slice(1, -1).some((id) => N(id).owner !== seat) ? S.DEEP_STRIKE_KEEP : 1 }))
           .sort((a, b) => a.eta - b.eta);
+        // Deep Strike costs a third of the fleet: measured, rivals that used
+        // it for everything won less. They keep it for the Doomstar push.
+        for (let i = sources.length - 1; i >= 0; i--) if (sources[i].keep < 1 && !(doomRival && forDoom(t))) sources.splice(i, 1);
         if (!sources.length) continue;
         // Sources that land within the coalescing window of the first fight
         // as one. Later ones still count, at a discount: damage done to a
         // defender stays done, but the defender grows in between.
-        const first = sources[0].eta;
-        const wave = sources.filter((x) => x.eta <= first + 4).slice(0, Math.max(1, cpLeft(game, seat) - 1));
+        // Against the Doomstar (or the way in), pick the arrival time that
+        // brings the most ships in together, not just the nearest: one
+        // position cannot hold enough to break a dug-in holder.
+        const push = doomRival && forDoom(t);
+        const frac = push ? Math.max(P.send, 0.85) : P.send;
+        const maxWave = Math.max(1, cpLeft(game, seat) - 1);
+        let first = sources[0].eta;
+        if (push) {
+          let bestSum = -1;
+          for (const x of sources) {
+            const sum = sources.filter((y) => y.eta >= x.eta && y.eta <= x.eta + 4).slice(0, maxWave).reduce((a, y) => a + y.s.garrison, 0);
+            if (sum > bestSum) { bestSum = sum; first = x.eta; }
+          }
+        }
+        const wave = sources.filter((x) => x.eta >= first && x.eta <= first + 4).slice(0, maxWave);
         const supporters = S.neighbors(game, t.id).map(N)
-          .filter((h) => h.owner === seat && !busy.has(h.id) && wave.every((w) => w.s.id !== h.id) && h.garrison >= 6);
+          .filter((h) => h.owner === seat && !busy.has(h.id) && (!reserved.has(h.id) || forDoom(t)) && wave.every((w) => w.s.id !== h.id) && h.garrison >= 6);
         const am = S.assaultMult(game, seat);
-        const force = wave.reduce((a, w) => a + Math.floor(w.s.garrison * P.send) * (w.eta <= first + 0.9 ? 1 : 0.8), 0) * am +
+        const force = wave.reduce((a, w) => a + Math.floor(w.s.garrison * frac) * w.keep * (w.eta <= first + 0.9 ? 1 : 0.8), 0) * am +
           supporters.slice(0, 1).reduce((a, h) => a + h.garrison * S.SUPPORT_SHARE * am, 0);
         const st = S.nodeStats(t, game);
         let need = S.defenceOf(game, t);
@@ -198,10 +292,13 @@
             if (h.owner === t.owner) need += h.garrison * S.SUPPORT_SHARE * 0.5 * S.DEFENDER_EDGE;
           }
         }
-        need *= P.margin * D.margin;
+        need *= P.margin * D.margin * ST.margin;
         if (force <= need) continue;
         let score = VALUE[t.type] * W.weight(t) / (need + 6);
-        if (t.type === "doomstar") score *= P.throne;
+        if (t.type === "doomstar") score *= P.throne * doomUrgency(game, seat);
+        score *= ST.types[t.type] || 1;
+        // The Doomstar is held against you: its neighbours are the way in.
+        if (doomRival && S.areLinked(game, t.id, doomT.id)) score *= 1 + 0.4 * doomUrgency(game, seat);
         if (t.owner !== NEUTRAL) {
           // Hitting the leader is worth more; hitting a weak neighbour is cheap.
           // Only a real leader: a tie is nobody, or seat 1 would be "the
@@ -212,18 +309,22 @@
               game.points[lead.id] > game.points[second.id]) score *= 1.4;
           // Rivals' ground is worth more than empty space: taking it scores
           // twice, what they lose and what you gain.
-          score *= RIVAL_BIAS * (P === PERSONALITIES.hawk ? 1.2 : 1);
+          score *= RIVAL_BIAS * ST.rival * (P === PERSONALITIES.hawk ? 1.2 : 1);
+          if (ST.behind && !S.neighbors(game, t.id).some((id) => N(id).owner === seat)) score *= ST.behind;
           if (!game.seatById[t.owner].ai && game.seats.every((x) => x.id === t.owner || game.points[t.owner] > game.points[x.id])) score *= D.onLeader;
           // Vendetta: a seat that has hurt this one is a sweeter target.
           score *= 1 + Math.min(1, 0.12 * ((game.grudge && game.grudge[seat][t.owner]) || 0));
         }
-        if (!best || score > best.score) best = { score, t, wave, supporters };
+        if (!best || score > best.score) best = { score, t, wave, supporters, frac };
       }
       if (!best) break;
-      for (const w of best.wave) add({ kind: "send", from: w.s.id, to: best.t.id, frac: P.send });
+      for (const w of best.wave) add({ kind: "send", from: w.s.id, to: best.t.id, frac: best.frac });
       const h = best.supporters[0];
       if (h) add({ kind: "support", from: h.id, to: best.t.id });
     }
+
+    // 3b. If the Doomstar matters less, mass for it with what is left.
+    if (!stagedEarly) stageForDoom();
 
     // 4. Spend.
     // Technology: each personality leans to a branch, cheapest first; an
@@ -235,7 +336,7 @@
         (W.research && !branches.has(S.TECHS[k].branch) ? 0.7 : 1) }))
       .sort((a, b) => a.cost - b.cost);
     // An objective that pays for spending moves it ahead of the margin.
-    const resMargin = W.research ? 1.0 : 1.1, upMargin = W.upgrade ? 1.0 : 1.3;
+    const resMargin = (W.research ? 1.0 : 1.1) * (ST.research || 1), upMargin = W.upgrade ? 1.0 : 1.3;
     if (!game.noTech && techs.length && S.spendable(game, seat) >= S.techCost(game, seat, techs[0].k) * resMargin) add({ kind: "research", tech: techs[0].k });
     const up = mine().filter((n) => n.level < S.MAX_LEVEL && (n.type === "command" || n.type === "factory"))
       .sort((a, b) => (W.upgrade && a.type === "factory" ? -1 : 0) - (W.upgrade && b.type === "factory" ? -1 : 0) || a.level - b.level)[0];
@@ -243,7 +344,7 @@
 
     // 5. Bring the rear forward.
     const front = (n) => S.neighbors(game, n.id).some((id) => N(id).owner !== seat);
-    const rear = mine().filter((n) => !busy.has(n.id) && !front(n) && n.garrison >= 16)
+    const rear = mine().filter((n) => !busy.has(n.id) && !reserved.has(n.id) && !front(n) && n.garrison >= 16)
       .sort((a, b) => b.garrison - a.garrison);
     for (const r of rear) {
       if (cpLeft(game, seat) <= 0) break;
@@ -292,7 +393,7 @@
       stake = Math.abs(v);
     }
     if (choice === null) return;
-    S.castVote(game, seat, choice, Math.min(game.influence[seat], Math.round(game.influence[seat] * stake * 0.6)));
+    S.castVote(game, seat, choice, Math.min(game.influence[seat], Math.round(game.influence[seat] * stake * 0.6 * (strategyOf(game, seat).influence || 1))));
   }
 
   // Pacts. Would this seat promise peace to that one? Turtles and traders
@@ -305,7 +406,7 @@
       const a = game.nodes[l.a].owner, b = game.nodes[l.b].owner;
       return (a === seat && b === other) || (a === other && b === seat);
     });
-    let v = 0.5 + (P === PERSONALITIES.turtle ? 0.4 : P === PERSONALITIES.trader ? 0.3 : P === PERSONALITIES.hawk ? -0.3 : 0);
+    let v = 0.5 + (P === PERSONALITIES.turtle ? 0.4 : P === PERSONALITIES.trader ? 0.3 : P === PERSONALITIES.hawk ? -0.3 : 0) + (strategyOf(game, seat).pact || 0);
     if (borders) v += 0.3;
     v -= 0.3 * grudge;
     if (game.points[other] - game.points[seat] >= 2) v -= 1;
@@ -388,5 +489,5 @@
     offersToPeople(game);
   }
 
-  return { DIFFICULTY, DIFFICULTY_KEYS, plan, planAll, vote, pactValue, answerPact, diplomacy, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
+  return { STRATEGIES, strategyOf, doomUrgency, heldFor, DIFFICULTY, DIFFICULTY_KEYS, plan, planAll, vote, pactValue, answerPact, diplomacy, wants, roleValue, draftPick, runDraft, PERSONALITIES, PERSONALITY_KEYS, personalityOf, threatTo };
 });

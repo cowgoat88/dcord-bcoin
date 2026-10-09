@@ -50,7 +50,7 @@ test("every galaxy is connected, its lanes never cross, and every seat starts on
       for (let s = 0; s < n; s++) per.push(g.nodes.filter((x) => x.sector === s).map((x) => x.type + S.neighbors(g, x.id).length + x.terrain + x.garrison).join());
       assert.ok(per.every((p) => p === per[0]), n + " seats, seed " + seed + ": wedges differ");
       for (const s of g.seats) assert.equal(S.nodesOf(g, s.id).filter((x) => x.type === "command").length, 1, "one Command each");
-      assert.equal(S.throneNode(g).owner, NEUTRAL, "the Throne starts unclaimed");
+      assert.equal(S.throneNode(g).owner, NEUTRAL, "the Doomstar starts unclaimed");
     }
   }
 });
@@ -169,7 +169,7 @@ test("fleets that meet in a lane still fight there", () => {
   assert.ok(clash, "the two fleets met on the 1-2 lane");
 });
 
-test("the Throne scores a point at the end of every round it is held", () => {
+test("the Doomstar scores a point at the end of every round it is held", () => {
   const g = S.createGame({ seed: 3, seats: seats(3) });
   const t = S.throneNode(g);
   t.owner = 2; t.garrison = 30;
@@ -432,7 +432,7 @@ test("all-AI seasons with the draft run, every seat holding a different role eac
 // ---------------------------------------------------------------------
 // Fog of war
 // ---------------------------------------------------------------------
-test("a seat sees its own ground and one lane out, two from Relays, and always the Throne", () => {
+test("a seat sees its own ground and one lane out, two from Relays, and always the Doomstar", () => {
   const g = S.createGame({ seed: 3, seats: seats(4) });
   const sight = S.sightOf(g, 1);
   for (const n of S.nodesOf(g, 1)) {
@@ -538,7 +538,7 @@ test("laws do what they say", () => {
   S.beginResolve(g); S.runRound(g);
   assert.equal(g.lawLog[0].passed, true);
   assert.ok(!g.history[0] || g.points[1] === g.history[0].points[1]);
-  assert.ok(!S.drainEvents(g).some((e) => e.kind === "score" && e.why === "Held the Throne"), "Sanctuary: no Throne point");
+  assert.ok(!S.drainEvents(g).some((e) => e.kind === "score" && e.why === "Held the Doomstar"), "Sanctuary: no Doomstar point");
   g = pass("sanction", 3);
   const c3 = g.credits[3];
   S.beginResolve(g); S.runRound(g);
@@ -655,7 +655,7 @@ test("rivals keep their pacts", () => {
       for (const s of g.seats) for (const o of g.orders[s.id]) {
         const v = S.orderVictim(g, s.id, o);
         if (v !== NEUTRAL && v !== s.id && S.pactBetween(g, s.id, v)) {
-          assert.ok(o.kind === "send" && g.nodes[o.to].type === "doomstar", "only a Hawk going for the Throne breaks faith");
+          assert.ok(o.kind === "send" && g.nodes[o.to].type === "doomstar", "only a Hawk going for the Doomstar breaks faith");
         }
         checked++;
       }
@@ -778,4 +778,41 @@ test("rival strength: easy and hard rivals produce less and more, people never c
     const g = S.createGame(Object.assign({ seed: 4, seats: seats(2) }, S.LENGTHS[k]));
     assert.equal(g.roundLimit, S.LENGTHS[k].roundLimit);
   }
+});
+
+test("rivals contest a Doomstar that someone sits on", () => {
+  // A person takes the Doomstar at full strength in round 3 and digs in
+  // every round. Before rivals massed for it they kept it to the end in
+  // 21 of 30 skirmishes; it must now fall in most.
+  let lostIt = 0;
+  const N = 8;
+  for (let seed = 1; seed <= N; seed++) {
+    const g = S.createGame({ seed, draft: true, council: true, seats: [{ faction: "standard" }, { ai: true }, { ai: true }, { ai: true }] });
+    let lost = false, guard = 0;
+    while (g.phase !== "over" && guard++ < 40 && !lost) {
+      while (g.phase === "draft") { A.runDraft(g); if (g.phase === "draft") A.draftPick(g, S.draftTurn(g)); }
+      const t = S.throneNode(g);
+      if (g.round === 3) { t.owner = 1; t.garrison = S.nodeStats(t, g).cap; S.computeSupply(g); }
+      if (g.round >= 3 && t.owner === 1) S.addOrder(g, 1, { kind: "hold", at: t.id });
+      A.plan(g, 1); A.planAll(g);
+      S.beginResolve(g); S.runRound(g); S.drainEvents(g);
+      if (g.round > 3 && S.throneNode(g).owner !== 1) lost = true;
+    }
+    if (lost) lostIt++;
+  }
+  assert.ok(lostIt >= 5, "the holder lost it in " + lostIt + " of " + N);
+});
+
+test("each faction's rivals play their own strategy", () => {
+  for (const k of S.FACTION_KEYS) assert.ok(A.STRATEGIES[k] && A.STRATEGIES[k].label && A.STRATEGIES[k].text, k);
+  const g = S.createGame({ seed: 3, seats: [{ faction: "shock", ai: true }, { faction: "prospectors", ai: true }] });
+  assert.ok(A.strategyOf(g, 1).doom > A.strategyOf(g, 2).doom, "Crusaders want the Doomstar more than Traders");
+  // The longer one rival holds it, the more it is worth taking.
+  const t = S.throneNode(g);
+  t.owner = 2;
+  const u0 = A.doomUrgency(g, 1);
+  g.round = 4;
+  for (const r of [1, 2, 3]) g.scoreLog.push({ round: r, owner: 2, points: 1, why: "Held the Doomstar" });
+  assert.equal(A.heldFor(g, 2), 3);
+  assert.ok(A.doomUrgency(g, 1) > u0);
 });

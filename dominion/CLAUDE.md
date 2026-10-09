@@ -50,6 +50,13 @@ code keeps its older names (`seasonGame`, `campaign.season`,
 `endSeason`, `playMode = "season"`): change what players read, not the
 identifiers.
 
+## The Doomstar
+
+Players read **Doomstar** for the centre position (it used to be called the
+Throne). Code names stay `throneNode`, `thronePoints`, `THRONE_POINTS`;
+the score reason string is "Held the Doomstar" and the UI and AI
+(`heldFor`) match on it, so change all three together.
+
 ## Engine notes
 
 - `sim.js` is pure and deterministic. The forecast and the replay are the
@@ -84,7 +91,7 @@ identifiers.
 ## Measuring
 
 `scratchpad/dom/sweep.js <seats> <seeds>` runs all-AI seasons and prints
-wins by seat, how seasons end, Throne holding and captures. Seat fairness
+wins by seat, how seasons end, Doomstar holding and captures. Seat fairness
 is the first number to look at after any rule or AI change: a symmetric
 galaxy with a biased result means a tie-break somewhere is not rotation
 invariant.

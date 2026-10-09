@@ -23,9 +23,9 @@
     factory:  { label: "Factory",  units: 0.40, cap: 45, credits: 0.25, radius: 24 },
     mine:     { label: "Mine",     units: 0.14, cap: 28, credits: 0.90, radius: 22 },
     relay:    { label: "Relay",    units: 0.20, cap: 34, credits: 0.25, radius: 21 },
-    // The Doomstar's node. In Dominion it is the Throne at the centre of the
-    // galaxy: hold it to fire the weapon and to score.
-    doomstar: { label: "Throne",   units: 0.30, cap: 40, credits: 0.30, radius: 27 }
+    // The Doomstar at the centre of the galaxy: hold it to score every round
+    // and, once your Relays have charged it, to fire it at a rival.
+    doomstar: { label: "Doomstar",   units: 0.30, cap: 40, credits: 0.30, radius: 27 }
   };
   const TERRAIN = {
     open:     { label: "Open Space",    defence: 1.00 },
@@ -76,13 +76,13 @@
   // OUTPOST's doctrines are Dominion's factions. Each keeps its modifiers
   // and bends one rule of the game.
   const FACTIONS = {
-    standard:    { label: "Free Worlds",      icon: "◆", up: "Income +15%, build 5% faster", mods: { credits: 1.15, units: 1.05 },
+    standard:    { label: "Free Worlds",      icon: "◆", up: "Income +10%, build 5% faster", mods: { credits: 1.10, units: 1.05 },
       rule: { label: "Senate", text: "Your vote in the council counts two." } },
-    vanguard:    { label: "Kestrel Wings",    icon: "➤", up: "Fleets travel 5% faster; build 5% slower", mods: { speed: 1.05, units: 0.95 },
+    vanguard:    { label: "Kestrel Wings",    icon: "➤", up: "Fleets travel 5% faster, build 10% faster", mods: { speed: 1.05, units: 1.10 },
       rule: { label: "Deep Strike", text: "Your fleets may fly over one unclaimed position on the way, losing a third of their number." } },
-    logistics:   { label: "Deep Combine",     icon: "●", up: "Cut-off positions keep 90% output and Relays keep charging; income −15%", mods: { cutoff: 0.90, credits: 0.85 },
+    logistics:   { label: "Deep Combine",     icon: "●", up: "Cut-off positions keep 90% output and Relays keep charging; income −20%", mods: { cutoff: 0.90, credits: 0.80 },
       rule: { label: "Convoys", text: "Your supply runs through pact partners' positions as if they were yours." } },
-    relays:      { label: "Choir of the Array", icon: "★", up: "Relays build 80% faster and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 1.8, chargeRate: 2, units: 0.85 },
+    relays:      { label: "Choir of the Array", icon: "★", up: "Relays build 60% faster and charge twice as fast; elsewhere 15% slower", mods: { relayUnits: 1.6, chargeRate: 2, units: 0.85 },
       rule: { label: "The Array", text: "Your Relays see three lanes out." } },
     prospectors: { label: "Meridian Guild",   icon: "◈", up: "Income +45%, research 25% cheaper; build 4% slower", mods: { credits: 1.45, research: 0.75, units: 0.96 },
       rule: { label: "Trade Pacts", text: "Every round of a pact pays you and your partner 40 credits each." } },
@@ -91,6 +91,7 @@
   };
   const TRADE_PACT_CREDITS = 40;
   const DEEP_STRIKE_KEEP = 0.65;
+  const DEEP_STRIKE_DETOUR = 2.5;   // a crossing lane counts this much longer when choosing a route
   const FACTION_KEYS = Object.keys(FACTIONS);
 
   const SEAT_COLORS = ["#22d3ee", "#fb7185", "#fbbf24", "#a78bfa", "#a3e635", "#fb923c"];
@@ -99,8 +100,8 @@
   // ---- the round ---------------------------------------------------------
   const ROUND_SECONDS = 30;       // simulated seconds a round runs for
   const ROUND_LIMIT = 18;         // the season ends after this many rounds
-  const THRONE_POINTS = 1;        // scored at status by whoever holds the Throne, in the first third
-  // The Throne is worth more as the season goes on: 1 a round in the first
+  const THRONE_POINTS = 1;        // scored at status by whoever holds the Doomstar, in the first third
+  // The Doomstar is worth more as the season goes on: 1 a round in the first
   // third of the round limit, 2 in the second, 3 in the last. It pulls the
   // fighting to the centre late, when the economy is built.
   function thronePoints(game) {
@@ -110,9 +111,9 @@
   const POINTS_TO_WIN = 20;
   // Season lengths offered on the start screen. Standard is the default.
   const LENGTHS = {
-    quick:    { label: "Quick", pointsToWin: 13, roundLimit: 12 },
+    quick:    { label: "Quick", pointsToWin: 12, roundLimit: 12 },
     standard: { label: "Standard", pointsToWin: 20, roundLimit: 18 },
-    epic:     { label: "Epic", pointsToWin: 28, roundLimit: 24 }
+    epic:     { label: "Epic", pointsToWin: 26, roundLimit: 24 }
   };
   const CP_BASE = 3;              // orders a seat may give in a round
   const CP_PER = 5;               // +1 order for every this many positions held
@@ -245,7 +246,7 @@
   function liveSeats(game) { return game.seats.filter((s) => alive(game, s.id)).map((s) => s.id); }
 
   // ---- galaxy generation ---------------------------------------------------
-  // One wedge per seat around the Throne, every wedge the same ground turned
+  // One wedge per seat around the Doomstar, every wedge the same ground turned
   // by 360/N degrees, so no seat starts with a better hand. Lanes are the
   // Gabriel graph of the points: planar (lanes never cross), connected, and
   // symmetric because the points are.
@@ -293,7 +294,7 @@
     }));
     const span = (Math.PI * 2) / N;
     const nodes = [];
-    nodes.push({ id: 0, x: cx, y: cy, type: "doomstar", terrain: "open", owner: NEUTRAL, garrison: 30, level: 0, sector: -1, name: "The Throne" });
+    nodes.push({ id: 0, x: cx, y: cy, type: "doomstar", terrain: "open", owner: NEUTRAL, garrison: 30, level: 0, sector: -1, name: "The Doomstar" });
     for (let s = 0; s < N; s++) {
       // Seat 1's wedge points down: your home is at the bottom of the screen,
       // as it is in OUTPOST, and the other seats follow clockwise.
@@ -379,7 +380,7 @@
     { id: "research", stage: 1, points: 1, text: "Own 2 technologies", test: (g, s) => techCount(g, s) >= 2 },
     { id: "border", stage: 1, points: 1, text: "Hold a position in a rival's home sector", test: (g, s) => g.seats.some((r) => r.id !== s && owned(g, s).some((n) => n.sector === r.home)) },
     // Stage II: 2 points.
-    { id: "court", stage: 2, points: 2, text: "Hold the Throne and 2 positions next to it", test: (g, s) => { const t = throneNode(g); return !!t && t.owner === s && neighbors(g, t.id).filter((id) => g.nodes[id].owner === s).length >= 2; } },
+    { id: "court", stage: 2, points: 2, text: "Hold the Doomstar and 2 positions next to it", test: (g, s) => { const t = throneNode(g); return !!t && t.owner === s && neighbors(g, t.id).filter((id) => g.nodes[id].owner === s).length >= 2; } },
     { id: "fifteen", stage: 2, points: 2, text: "Hold 15 positions", test: (g, s) => owned(g, s).length >= 15 },
     { id: "everywhere", stage: 2, points: 2, text: "Hold a position in every sector", test: (g, s) => sectorsHeld(g, s).size >= g.seats.length },
     { id: "relays5", stage: 2, points: 2, text: "Hold 5 Relays", test: (g, s) => owned(g, s, "relay").length >= 5 },
@@ -589,13 +590,16 @@
       if (done.has(key)) continue;
       done.add(key);
       for (const nx of neighbors(game, cur)) {
-        let nkey = used ? nx + N : nx;
+        let nkey = used ? nx + N : nx, cost = 1;
         if (nx !== toId && seat !== undefined && game.nodes[nx].owner !== seat) {
           if (!deep || used || game.nodes[nx].owner !== NEUTRAL) continue;
           nkey = nx + N;
+          // Crossing costs a third of the fleet: take it only when it saves
+          // real distance over a route on your own ground.
+          cost = DEEP_STRIKE_DETOUR;
         }
         if (done.has(nkey)) continue;
-        const d = distTo[key] + dist(game.nodes[cur], game.nodes[nx]);
+        const d = distTo[key] + dist(game.nodes[cur], game.nodes[nx]) * cost;
         if (distTo[nkey] === undefined || d < distTo[nkey]) {
           distTo[nkey] = d; prev[nkey] = key;
           if (queue.indexOf(nkey) === -1) queue.push(nkey);
@@ -681,7 +685,7 @@
       return undefined;
     }
     if (order.kind === "fire") {
-      if (!canFire(game, seat)) return "Hold the Throne with a full charge to fire.";
+      if (!canFire(game, seat)) return "Hold the Doomstar with a full charge to fire.";
       const t = N(order.target);
       if (!t || t.owner === seat || t.owner === NEUTRAL) return "Pick a rival's position.";
       if (mine.some((o) => o.kind === "fire")) return "One strike a round.";
@@ -1062,7 +1066,7 @@
     if (throne && throne.owner !== NEUTRAL && !lawActive(game, "sanctuary")) {
       const tp = thronePoints(game);
       game.points[throne.owner] += tp;
-      emit(game, { kind: "score", owner: throne.owner, points: tp, why: "Held the Throne" });
+      emit(game, { kind: "score", owner: throne.owner, points: tp, why: "Held the Doomstar" });
     }
     scoreObjectives(game);
     refreshIntel(game);
@@ -1112,7 +1116,7 @@
   const PERMANENT = 9999;
   const LAWS = {
     mobilize: { kind: "law", label: "Mobilization", text: "Every seat plots one more order, from now on." },
-    sanctuary: { kind: "law", label: "Sanctuary", text: "Holding the Throne scores nothing this round." },
+    sanctuary: { kind: "law", label: "Sanctuary", text: "Holding the Doomstar scores nothing this round." },
     interdict: { kind: "law", label: "Interdiction", text: "Nobody may fire the Doomstar this round or the next." },
     tariff: { kind: "law", label: "Levy", text: "Every seat pays a fifth of its credits; the seats with fewest points share it." },
     openSkies: { kind: "law", label: "Open Skies", text: "Every seat sees the whole galaxy this round." },
@@ -1337,7 +1341,7 @@
 
   // ---- fog of war ------------------------------------------------------
   // A seat sees its own positions and everything one lane from them, two
-  // lanes from its Relays, the lanes its fleets are on, and the Throne,
+  // lanes from its Relays, the lanes its fleets are on, and the Doomstar,
   // which everyone can always see. The Spymaster sees the whole galaxy for
   // its round. Everywhere else a seat knows only what it saw last.
   const SIGHT_RELAY = 2;
@@ -1440,7 +1444,7 @@
   return {
     NEUTRAL, NODE_TYPES, TERRAIN, BRANCHES, TECHS, TECH_KEYS, TECH_COSTS, MAX_LEVEL, FACTIONS, FACTION_KEYS, SEAT_COLORS,
     DEFENDER_EDGE, COALESCE_WINDOW, FLEET_SPEED, MIN_SEND, DOOM_CHARGE_NEEDED, DOOM_CHARGE_INTERVAL, DOOM_DAMAGE, DOOM_LOCK_S,
-    ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, LENGTHS, RIVAL_ECONOMY, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
+    ROUND_SECONDS, ROUND_LIMIT, POINTS_TO_WIN, LENGTHS, RIVAL_ECONOMY, DEEP_STRIKE_KEEP, CP_BASE, CP_PER, CP_MAX, SUPPORT_SHARE, HOLD_BONUS, GALAXY_R,
     seatOrder, makeRng, dist, clamp, nodeStats, hasTech, techCount, techPrereq, techCost, assaultMult, fortifyMult, terrainDefence, upgradeCost,
     generateGalaxy, gabrielLanes, createGame, cloneGame, computeSupply, relayCharge, throneNode, canFire,
     neighbors, areLinked, nodesOf, alive, liveSeats, findPath, pathTime, factionOf, mod,

@@ -190,7 +190,7 @@
     <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
     <span id="tRole" class="v" style="color:var(--gold)"></span>
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
-    <span><span class="k">Doomstar</span><span class="v" id="tCh">0/20</span></span>
+    <span title="Doomstar charge"><span class="k">Charge</span><span class="v" id="tCh">0/20</span></span>
     <span class="caret" aria-hidden="true">&#9662;</span>
     </div>
     <div id="standings" role="button" tabindex="0" title="Tap for details"></div>
@@ -209,7 +209,7 @@
       <div class="card">
         <h1>DOOMSTAR</h1>
         <p style="margin-top:0;color:var(--text)">DOMINION &middot; the galactic war, one skirmish at a time</p>
-        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre and meet objectives to score.</p>
+        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Doomstar at the centre and meet objectives to score.</p>
         <h2>Play</h2>
         <div class="seg" id="modeSeg">
           <button data-m="season" class="on">Skirmish</button><button data-m="campaign">Campaign &middot; 4 skirmishes</button><button data-m="online">Online</button>
@@ -274,7 +274,7 @@
     <div class="overlay" id="objOv" hidden>
       <div class="card">
         <h1 style="font-size:16px;letter-spacing:2px">OBJECTIVES</h1>
-        <p>At the end of each round you score the most valuable public objective you meet, once, and your secret, once. Holding the Throne scores 1 a round in the first third of the skirmish, 2 in the second, 3 in the last. First to <b id="objTarget">20</b>.</p>
+        <p>At the end of each round you score the most valuable public objective you meet, once, and your secret, once. Holding the Doomstar scores 1 a round in the first third of the skirmish, 2 in the second, 3 in the last. First to <b id="objTarget">20</b>.</p>
         <h2>Public</h2>
         <div id="objPublic"></div>
         <h2>Your secret</h2>
@@ -297,7 +297,7 @@
           <h2>Forecast and replay</h2>
           <p>Drag the slider to watch the round as it would go if no rival did anything. Replay shows the last round again.</p>
           <h2>Points</h2>
-          <p>Holding the <b>Throne</b> at the centre scores every round: 1 early, 2 mid-skirmish, 3 late. Each round you also score your best public <b>objective</b> once and your <b>secret</b> once (&#9678; Objectives). The Throne's <b>Doomstar</b> fires at a rival once its Relays have charged it.</p>
+          <p>Holding the <b>Doomstar</b> at the centre scores every round: 1 early, 2 mid-skirmish, 3 late. Each round you also score your best public <b>objective</b> once and your <b>secret</b> once (&#9678; Objectives). Whoever holds the <b>Doomstar</b> can also fire it at a rival's position once their Relays have charged it.</p>
           <h2>Fog of war</h2>
           <p>You see your positions and one lane out, two from Relays. Dimmed positions with a <b>~</b> show what you saw last.</p>
           <h2>The council</h2>
@@ -504,7 +504,9 @@
       grid.appendChild(b);
     }
     const f = S.FACTIONS[faction];
-    $("facUp").innerHTML = f.up + "<br><b style='color:var(--gold)'>" + f.rule.label + ":</b> " + f.rule.text;
+    const st = A.STRATEGIES[faction];
+    $("facUp").innerHTML = f.up + "<br><b style='color:var(--gold)'>" + f.rule.label + ":</b> " + f.rule.text +
+      (st ? "<br><span class='muted'>As a rival it plays the <b>" + st.label + "</b>: " + st.text + ".</span>" : "");
   }
   $("facGrid").addEventListener("click", (e) => {
     const b = e.target.closest("button"); if (!b) return;
@@ -515,8 +517,8 @@
       [...$(seg).children].forEach((c) => c.classList.toggle("on", c.dataset[key] === val));
     const L = S.LENGTHS[length];
     const eco = S.RIVAL_ECONOMY[difficulty];
-    $("setNote").textContent = (rules === "basic" ? "Basic rules: orders, the Throne, objectives and fog only; no roles, council, pacts or technology. " : "") + "First to " + L.pointsToWin + " points or the most after " + L.roundLimit + " rounds (about " +
-      ({ quick: 11, standard: 16, epic: 22 })[length] + " rounds). " +
+    $("setNote").textContent = (rules === "basic" ? "Basic rules: orders, the Doomstar, objectives and fog only; no roles, council, pacts or technology. " : "") + "First to " + L.pointsToWin + " points or the most after " + L.roundLimit + " rounds (about " +
+      ({ quick: 11, standard: 17, epic: 23 })[length] + " rounds). " +
       (difficulty === "easy" ? "Easy rivals play cautiously and produce " + Math.round(100 - eco.credits * 100) + "% fewer credits." :
         difficulty === "hard" ? "Hard rivals produce " + Math.round(eco.credits * 100 - 100) + "% more credits and " + Math.round(eco.units * 100 - 100) + "% more ships, and pile onto a person in the lead." :
           "Rivals play by exactly your rules.");
@@ -733,7 +735,7 @@
     };
     const all = box(game.nodes);
     // On a narrow screen the whole galaxy is too small to tap, so start on
-    // what you can see and the Throne; pinch out for the rest.
+    // what you can see and the Doomstar; pinch out for the rest.
     const sight = S.sightOf(game, ME);
     const b = cssW < 600 ? box(game.nodes.filter((n) => sight.has(n.id))) : all;
     cam.s = b.s;
@@ -887,7 +889,7 @@
   });
   $("btnTech").addEventListener("click", () => { buildTech(); $("techOv").hidden = false; });
   $("btnFire").addEventListener("click", () => {
-    if (!S.canFire(game, ME)) { say("Hold the Throne with a full charge to fire."); return; }
+    if (!S.canFire(game, ME)) { say("Hold the Doomstar with a full charge to fire."); return; }
     mode = mode === "fire" ? "send" : "fire";
     if (mode === "fire") say("Tap a rival's position to strike.");
     refresh();
@@ -1240,14 +1242,14 @@
     let html = "<h2>Your numbers</h2><div class='dl'>";
     if (campaign) html += row("Skirmish", campaign.season + " of " + campaign.seasons, "Campaign points so far: " + campaign.points[ME] + ". Places earn 5, 3, 2, 1.");
     html += row("Round", g.round + " of " + g.roundLimit, "The skirmish ends after round " + g.roundLimit + ", or when someone reaches " + g.pointsToWin + " points.");
-    html += row("Points", g.points[ME] + " of " + g.pointsToWin, "Holding the Throne scores " + S.thronePoints(g) + " this round (1, 2, then 3 as the skirmish goes on), plus objectives (\u25ce).");
+    html += row("Points", g.points[ME] + " of " + g.pointsToWin, "Holding the Doomstar scores " + S.thronePoints(g) + " this round (1, 2, then 3 as the skirmish goes on), plus objectives (\u25ce).");
     html += row("Orders", S.cpUsed(g, ME) + " used of " + S.commandPoints(g, ME), "One per order this round: " + parts.join(", ") + ".");
     html += row("Role", role ? S.ROLES[role].icon + " " + S.ROLES[role].label : "none yet", role ? S.ROLES[role].text + " This round only." : "Drafted at the start of each round, fewest points first.");
     html += row("Credits", Math.floor(g.credits[ME]) + (spend < g.credits[ME] ? " (" + Math.floor(spend) + " free)" : ""),
       "About +" + Math.round(perRound) + " a round from your positions. Pays for upgrades and technology" + (spend < g.credits[ME] ? "; the figure in brackets is what your plotted orders leave." : "."));
-    html += row("Doomstar", Math.floor(g.charge[ME]) + " of " + S.DOOM_CHARGE_NEEDED,
+    html += row("Doomstar charge", Math.floor(g.charge[ME]) + " of " + S.DOOM_CHARGE_NEEDED,
       "Charge, about +" + Math.round(charge) + " a round from your " + relays.length + " Relay" + (relays.length === 1 ? "" : "s") + ". " +
-      (holds ? "You hold the Throne: at full charge you may fire it at a rival's position (\u2212" + S.DOOM_DAMAGE + " ships)." : "Firing needs the Throne at the centre as well as a full charge."));
+      (holds ? "You hold the Doomstar: at full charge you may fire it at a rival's position (\u2212" + S.DOOM_DAMAGE + " ships)." : "To fire it you must hold the Doomstar at the centre, with a full charge."));
     html += row("Influence", g.influence[ME], "+" + infl + " a round (1, plus 1 per Relay" + (S.hasTech(g, ME, "envoys") ? ", plus Envoys" : "") + "). Spent on council votes (\u2696).");
     html += row("Technology", S.techCount(g, ME) + " of " + S.TECH_KEYS.length, S.TECH_KEYS.filter((k) => S.hasTech(g, ME, k)).map((k) => S.TECHS[k].label).join(", ") || "None yet. \u2699 Tech to research.");
     html += row("Galaxy", galaxyCode(g), "Share this code: whoever enters it on the start screen plays this galaxy, with these objectives and secrets.");
@@ -1258,7 +1260,8 @@
       const tags = [];
       if (s.id !== ME && S.pactBetween(g, ME, s.id)) tags.push("\ud83e\udd1d pact");
       if (S.oathbroken(g, s.id)) tags.push("\u2717 Oathbreaker");
-      if (throne && throne.owner === s.id) tags.push("holds the Throne");
+      if (throne && throne.owner === s.id) tags.push("holds the Doomstar");
+      if (s.ai && A.STRATEGIES[s.faction]) tags.push(A.STRATEGIES[s.faction].label + ": " + A.STRATEGIES[s.faction].text);
       if (!S.alive(g, s.id)) tags.push("out");
       html += "<div>" + seatDot(s.id) + "<b>" + (s.id === ME ? "You" : s.name) + "</b><span class='muted'>" + f.icon + (s.name !== f.label ? " " + f.label : "") +
         (r ? " \u00b7 " + S.ROLES[r].icon + " " + S.ROLES[r].label : "") + (tags.length ? " \u00b7 " + tags.join(" \u00b7 ") : "") + "</span><b style='margin-left:auto'>" + g.points[s.id] + " pts</b></div>";
@@ -1314,7 +1317,7 @@
     const mine = S.nodesOf(g, ME).length;
     $("reportTitle").textContent = "Round " + round + " report";
     $("reportSum").innerHTML = "You hold " + mine + " position" + (mine === 1 ? "" : "s") + " and " + g.points[ME] + " of " + g.pointsToWin + " points." +
-      " Next: round " + g.round + " of " + g.roundLimit + ", the Throne scores " + S.thronePoints(g) + ".";
+      " Next: round " + g.round + " of " + g.roundLimit + ", the Doomstar scores " + S.thronePoints(g) + ".";
     $("reportBody").innerHTML = html;
     $("reportAuto").checked = reportOn;
     $("btnReport").disabled = false;
@@ -1524,7 +1527,7 @@
     for (const s of order) {
       const mine = log.filter((e) => e.owner === s.id);
       const kinds = {};
-      for (const e of mine) { const k = e.why === "Held the Throne" ? "Throne" : e.secret ? "Secret" : e.objective ? "Objectives" : "Council and other"; kinds[k] = (kinds[k] || 0) + e.points; }
+      for (const e of mine) { const k = e.why === "Held the Doomstar" ? "Doomstar" : e.secret ? "Secret" : e.objective ? "Objectives" : "Council and other"; kinds[k] = (kinds[k] || 0) + e.points; }
       html += "<details" + (s.id === w ? " open" : "") + "><summary>" + dot(s.id) + "<b>" + nm(s.id) + "</b> " + g.points[s.id] + " pts" +
         (mine.length ? " <span class='muted'>\u00b7 " + Object.keys(kinds).map((k) => k + " " + kinds[k]).join(", ") + "</span>" : "") + "</summary>";
       html += mine.length ? "<ol class='plog'>" + mine.map((e) => "<li><span class='r'>R" + e.round + "</span> +" + e.points + " " + e.why +
@@ -1678,7 +1681,7 @@
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (const n of g.nodes) {
       if (n.type !== "command" || !n.name) continue;
-      // Outward from the Throne, past the home, so the name sits in open space.
+      // Outward from the Doomstar, past the home, so the name sits in open space.
       const t = S.throneNode(g), dx = n.x - t.x, dy = n.y - t.y, d = Math.hypot(dx, dy) || 1;
       const p = toScreen(n.x + dx / d * 290, n.y + dy / d * 290);
       ctx.font = "600 " + Math.max(10, Math.min(13, 26 * scale)) + "px ui-monospace, monospace";
