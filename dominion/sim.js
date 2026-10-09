@@ -98,9 +98,9 @@
 
   // ---- the round ---------------------------------------------------------
   const ROUND_SECONDS = 30;       // simulated seconds a round runs for
-  const ROUND_LIMIT = 12;         // the season ends after this many rounds
+  const ROUND_LIMIT = 18;         // the season ends after this many rounds
   const THRONE_POINTS = 1;        // scored at status by whoever holds the Throne
-  const POINTS_TO_WIN = 10;
+  const POINTS_TO_WIN = 15;
   const CP_BASE = 3;              // orders a seat may give in a round
   const CP_PER = 5;               // +1 order for every this many positions held
   const CP_MAX = 8;
@@ -142,7 +142,13 @@
   // bit between engines. So the simulation uses only the former.
   function dist(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.sqrt(dx * dx + dy * dy); }
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-  function emit(game, ev) { game.events.push(ev); }
+  function emit(game, ev) {
+    game.events.push(ev);
+    // Every point is logged with its round and reason, for the scoreboard.
+    if (ev.kind === "score" && game.scoreLog) {
+      game.scoreLog.push({ round: game.round, owner: ev.owner, points: ev.points, why: ev.why, objective: ev.objective || null, secret: !!ev.secret });
+    }
+  }
 
   function factionOf(game, seat) {
     const s = game.seatById[seat];
@@ -465,6 +471,9 @@
       oathbreaker: perSeat(0),  // last round a seat is an Oathbreaker
       winner: null,
       events: [],
+      pointsToWin: o.pointsToWin || POINTS_TO_WIN,
+      roundLimit: o.roundLimit || ROUND_LIMIT,
+      scoreLog: [],           // { round, owner, points, why, objective, secret }, in order
       history: []             // one entry per finished round: { round, orders, points }
     };
     for (const s of seats) {
@@ -1034,8 +1043,8 @@
     const leader = game.seats.slice().sort((a, b) => standing(game, b.id) - standing(game, a.id))[0];
     if (live.length === 1) game.winner = live[0];
     else if (live.length === 0) game.winner = NEUTRAL;
-    else if (game.points[leader.id] >= POINTS_TO_WIN) game.winner = leader.id;
-    else if (game.round >= ROUND_LIMIT) game.winner = leader.id;
+    else if (game.points[leader.id] >= game.pointsToWin) game.winner = leader.id;
+    else if (game.round >= game.roundLimit) game.winner = leader.id;
     if (game.winner !== null) {
       game.phase = "over";
       emit(game, { kind: "over", winner: game.winner });

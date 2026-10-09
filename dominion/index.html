@@ -72,6 +72,9 @@
   #orders { display: flex; gap: 5px; flex-wrap: wrap; min-height: 26px; }
   .ord { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 9px; border-radius: 12px;
     background: var(--panel2); border: 1px solid var(--line); font-size: 11px; }
+  .ord .num { display: inline-grid; place-items: center; min-width: 17px; height: 17px; border-radius: 9px; background: #22d3ee; color: #04121a; font-size: 10px; margin-left: -5px; }
+  .ord.undo { padding: 3px 9px; cursor: pointer; color: var(--text); }
+  .resolveNote { flex: 1 1 100%; font-size: 10.5px; }
   .ord button { padding: 0 6px; border: none; background: none; color: var(--muted); font-size: 13px; }
   #fcRow input { flex: 1 1 140px; accent-color: #ffd166; }
   #fcLabel { min-width: 92px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -132,6 +135,19 @@
   .tree button.own em { color: var(--good); }
   .tree button.plotted { border-color: var(--gold); }
   @media (max-width: 620px) { .tree { grid-template-columns: repeat(2, 1fr); } }
+  .winline { color: var(--text) !important; }
+  .bh { margin: 14px 0 6px !important; }
+  .boardwrap { overflow-x: auto; margin: 0 -4px; }
+  table.board { border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+  table.board th, table.board td { padding: 4px 6px; text-align: center; border-bottom: 1px solid var(--line); color: var(--muted); }
+  table.board td.who { text-align: left; white-space: nowrap; color: var(--text); position: sticky; left: 0; background: var(--panel); }
+  table.board td.hit { color: var(--gold); font-weight: 700; }
+  table.board td.tot { color: var(--text); font-weight: 700; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  #endBoard details { border-bottom: 1px solid var(--line); padding: 6px 0; font-size: 12px; }
+  #endBoard summary { cursor: pointer; }
+  .plog { margin: 6px 0 2px; padding-left: 4px; list-style: none; color: var(--muted); }
+  .plog .r { display: inline-block; min-width: 30px; color: var(--text); }
   .scores { width: 100%; border-collapse: collapse; margin: 10px 0 14px; }
   .scores td { padding: 5px 4px; border-bottom: 1px solid var(--line); }
   .scores td:last-child { text-align: right; font-weight: 700; }
@@ -160,7 +176,7 @@
     <span class="brand">DOMINION</span>
     <div id="stats" role="button" tabindex="0" aria-expanded="false" title="Tap for details">
     <span id="tSeasonW" hidden><span class="k">Season</span><span class="v" id="tSeason">1/4</span></span>
-    <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted">/12</span></span>
+    <span><span class="k">Round</span><span class="v" id="tRound">1</span><span class="muted" id="tRoundOf">/18</span></span>
     <span><span class="k">Orders</span><span class="v" id="tCp">0/3</span></span>
     <span id="tRole" class="v" style="color:var(--gold)"></span>
     <span><span class="k">Credits</span><span class="v" id="tCr" style="color:var(--gold)">0</span></span>
@@ -183,7 +199,7 @@
       <div class="card">
         <h1>DOOMSTAR</h1>
         <p style="margin-top:0;color:var(--text)">DOMINION &middot; a season of the galactic war</p>
-        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 10, or the most points after 12 rounds, rules.</p>
+        <p>Every round, everyone plots orders against a frozen galaxy. Then the orders lock and thirty seconds of war play out with no one touching it. Hold the Throne at the centre at the end of a round to score. First to 15, or the most points after 18 rounds, rules.</p>
         <h2>Play</h2>
         <div class="seg" id="modeSeg">
           <button data-m="season" class="on">One season</button><button data-m="campaign">Campaign &middot; 4 seasons</button><button data-m="online">Online</button>
@@ -247,7 +263,7 @@
         </div>
         <div class="help">
           <h2>The round</h2>
-          <p><b>Draft</b> a role (fewest points picks first) &rarr; <b>plot</b> orders against a frozen galaxy &rarr; <b>lock</b> &rarr; thirty seconds of war play out with nobody touching anything &rarr; <b>score</b>. First to 10 points, or the most after 12 rounds.</p>
+          <p><b>Draft</b> a role (fewest points picks first) &rarr; <b>plot</b> orders against a frozen galaxy &rarr; <b>lock</b> &rarr; thirty seconds of war play out with nobody touching anything &rarr; <b>score</b>. First to 15 points, or the most after 18 rounds.</p>
           <h2>Orders</h2>
           <p>Each costs one order point (3 a round, +1 per 5 positions). Tap your position, then a target, to <b>send</b> 25&ndash;100% of its ships. <b>Support</b> lends half a position's strength to a neighbour's fight without moving (cut if it is attacked). <b>Hold</b> digs in: 25% harder to take, but it sends nothing. <b>Upgrade</b> builds faster. Fleets only travel through your own ground and fight any rival fleet they meet in a lane.</p>
           <h2>Forecast and replay</h2>
@@ -314,6 +330,7 @@
         <h1 id="endTitle">Season over</h1>
         <p id="endText"></p>
         <table class="scores" id="endScores"></table>
+        <div id="endBoard"></div>
         <div id="endCampaign"></div>
         <div class="row" style="justify-content:flex-end">
           <button id="btnAgain">New game</button>
@@ -451,7 +468,7 @@
       ? "Four seasons against the same rivals on new galaxies. Places earn campaign points (5, 3, 2, 1); between seasons everyone drafts a lasting legacy, the trailing seat first."
       : playMode === "online"
         ? "Two people and your chosen number of rivals, one season. Only orders travel; every screen plays the round itself. \u201cThis browser\u201d plays between two tabs here, no server. \u201cNeon server\u201d needs a Neon project with the Data API, Neon Auth and schema.sql."
-        : "One season: first to 10 points, or the most after 12 rounds.";
+        : "One season: first to " + S.POINTS_TO_WIN + " points, or the most after " + S.ROUND_LIMIT + " rounds.";
     $("onlineBox").hidden = playMode !== "online";
     $("btnBegin").hidden = playMode === "online";
     $("btnBegin").textContent = playMode === "campaign" ? "Begin the campaign" : "Begin the season";
@@ -604,6 +621,7 @@
     $("startOv").hidden = true; $("endOv").hidden = true; $("legacyOv").hidden = true;
     $("tSeasonW").hidden = !campaign;
     if (campaign) $("tSeason").textContent = campaign.season + "/" + campaign.seasons;
+    refresh();                 // fill the top bar first: it may wrap and shrink the board
     fitCamera();
     startPlot();
   }
@@ -651,7 +669,19 @@
     cam.s = S.clamp(cam.s * f, camMin, camMin * 6);
     cam.x = w.x - px / cam.s; cam.y = w.y - py / cam.s;
   }
-  window.addEventListener("resize", () => { const s = cam.s; resize(); if (!s) fitCamera(); });
+  // The board's box changes size without a window resize (the top bar
+  // wraps to two rows on a phone once the standings fill in). The canvas
+  // must follow it exactly, or the picture is stretched and taps land off
+  // the positions you see. Keep the same point of the galaxy centred.
+  function refit() {
+    const r = $("boardWrap").getBoundingClientRect();
+    if (Math.abs(r.width - cssW) < 0.5 && Math.abs(r.height - cssH) < 0.5) return;
+    const c = cssW && cam.s ? toWorld(cssW / 2, cssH / 2) : null;
+    resize();
+    if (c) { cam.x = c.x - cssW / 2 / cam.s; cam.y = c.y - cssH / 2 / cam.s; }
+  }
+  window.addEventListener("resize", () => { const s = cam.s; refit(); if (!s) fitCamera(); });
+  if (window.ResizeObserver) new ResizeObserver(refit).observe($("boardWrap"));
 
   // ---------------------------------------------------------------
   // Input: tap to select and order, drag to pan, pinch or wheel to zoom
@@ -780,9 +810,24 @@
     if (mode === "fire") say("Tap a rival's position to strike.");
     refresh();
   });
+  // Taking an order back can cancel others that depended on it (a send
+  // from a position that is no longer free, credits now short): say so.
+  function takeBack(i) {
+    if (!game || game.phase !== "plot" || game.locked[ME] || !game.orders[ME][i]) return;
+    const before = game.orders[ME].slice(), gone = before[i];
+    S.removeOrder(game, ME, i);
+    const after = game.orders[ME];
+    const dropped = before.filter((o, k) => k !== i && after.indexOf(o) === -1);
+    say("Removed " + (i + 1) + ": " + orderText(gone) + (dropped.length ? ". Also cancelled: " + dropped.map(orderText).join("; ") : "") + ".");
+    replot();
+  }
   $("orders").addEventListener("click", (e) => {
+    if (e.target.closest("#btnUndo")) { takeBack(game.orders[ME].length - 1); return; }
     const b = e.target.closest("button[data-i]"); if (!b) return;
-    S.removeOrder(game, ME, +b.dataset.i); replot();
+    takeBack(+b.dataset.i);
+  });
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z") && game && game.orders[ME] && game.orders[ME].length) { e.preventDefault(); takeBack(game.orders[ME].length - 1); }
   });
   $("fc").addEventListener("input", (e) => { fcAt = +e.target.value; refresh(); });
   $("btnLock").addEventListener("click", lockIn);
@@ -928,6 +973,8 @@
       (n.terrain !== "open" ? " · " + S.TERRAIN[n.terrain].label : "") +
       (k.seen ? "" : " · out of sight, " + (k.round ? "seen round " + k.round : "not seen since the start"));
   }
+  // Which of the resolve's four steps each kind of order happens in.
+  const PHASE = { upgrade: 1, research: 1, hold: 2, support: 2, send: 3, fire: 4 };
   function orderText(o) {
     const N = (id) => label(game.nodes[id]);
     if (o.kind === "send") return N(o.from) + " → " + N(o.to) + " " + Math.round(o.frac * 100) + "%";
@@ -942,6 +989,7 @@
     if (!game) return;
     if (!$("details").hidden) buildDetails();
     $("tRound").textContent = game.round;
+    $("tRoundOf").textContent = "/" + game.roundLimit;
     const myRole = S.roleOf(game, ME);
     $("tRole").innerHTML = myRole ? S.ROLES[myRole].icon + "<span class='lbl'> " + S.ROLES[myRole].label + "</span>" : "";
     $("tRole").title = myRole ? S.ROLES[myRole].text : "";
@@ -979,14 +1027,26 @@
     // Order list.
     const ol = $("orders");
     ol.innerHTML = "";
+    // Numbered in the order you gave them, the same numbers as on the map.
     game.orders[ME].forEach((o, i) => {
       const el = document.createElement("span");
       el.className = "ord";
-      el.innerHTML = "<span></span><button data-i='" + i + "' aria-label='Remove'>×</button>";
-      el.firstChild.textContent = orderText(o);
+      el.innerHTML = "<b class='num'>" + (i + 1) + "</b><span></span><button data-i='" + i + "' aria-label='Remove order " + (i + 1) + "'>×</button>";
+      el.children[1].textContent = orderText(o);
+      el.title = "Resolves in step " + PHASE[o.kind] + " of 4";
       ol.appendChild(el);
     });
     if (!game.orders[ME].length) ol.innerHTML = "<span class='muted'>No orders yet. Every position you leave alone keeps building.</span>";
+    else if (game.phase === "plot" && !game.locked[ME]) {
+      const u = document.createElement("button");
+      u.id = "btnUndo"; u.className = "ord undo"; u.textContent = "\u21b6 Undo " + game.orders[ME].length;
+      u.title = "Take back your last order (Ctrl+Z)";
+      ol.appendChild(u);
+      const n = document.createElement("span");
+      n.className = "muted resolveNote";
+      n.textContent = "On lock, all happen at once in steps: 1 upgrades and research, 2 holds and supports, 3 sends, 4 Doomstar.";
+      ol.appendChild(n);
+    }
     if (game.agenda && game.phase === "plot") {
       const v = game.votes[ME], el = document.createElement("span");
       el.className = "ord"; el.style.cursor = "pointer";
@@ -1013,7 +1073,7 @@
 
   function buildObjectives() {
     if (!game) return;
-    $("objTarget").textContent = S.POINTS_TO_WIN;
+    $("objTarget").textContent = game.pointsToWin;
     const row = (o, scoredBy, done) => {
       const met = !done && game.phase !== "over" && o.test(game, ME);
       const who = (scoredBy || []).map((id) => "<i title='" + game.seatById[id].name + "' style='background:" + game.seatById[id].color + "'></i>").join("");
@@ -1064,8 +1124,8 @@
     const spend = S.spendable(g, ME);
     let html = "<h2>Your numbers</h2><div class='dl'>";
     if (campaign) html += row("Season", campaign.season + " of " + campaign.seasons, "Campaign points so far: " + campaign.points[ME] + ". Places earn 5, 3, 2, 1.");
-    html += row("Round", g.round + " of " + S.ROUND_LIMIT, "The season ends after round " + S.ROUND_LIMIT + ", or when someone reaches " + S.POINTS_TO_WIN + " points.");
-    html += row("Points", g.points[ME] + " of " + S.POINTS_TO_WIN, "1 a round for holding the Throne, plus objectives (\u25ce).");
+    html += row("Round", g.round + " of " + g.roundLimit, "The season ends after round " + g.roundLimit + ", or when someone reaches " + g.pointsToWin + " points.");
+    html += row("Points", g.points[ME] + " of " + g.pointsToWin, "1 a round for holding the Throne, plus objectives (\u25ce).");
     html += row("Orders", S.cpUsed(g, ME) + " used of " + S.commandPoints(g, ME), "One per order this round: " + parts.join(", ") + ".");
     html += row("Role", role ? S.ROLES[role].icon + " " + S.ROLES[role].label : "none yet", role ? S.ROLES[role].text + " This round only." : "Drafted at the start of each round, fewest points first.");
     html += row("Credits", Math.floor(g.credits[ME]) + (spend < g.credits[ME] ? " (" + Math.floor(spend) + " free)" : ""),
@@ -1242,6 +1302,7 @@
       .map((x) => "<tr><td><span style='color:" + x.color + "'>●</span> " + x.name + (x.name !== S.FACTIONS[x.faction].label ? " · " + S.FACTIONS[x.faction].label : "") +
         "</td><td class='muted'>" + S.nodesOf(game, x.id).length + " positions</td><td>" + game.points[x.id] + "</td></tr>");
     $("endScores").innerHTML = rows.join("");
+    $("endBoard").innerHTML = scoreboard();
     // The campaign: count the season once, then the table and what next.
     $("btnLegacy").hidden = true;
     $("endCampaign").innerHTML = "";
@@ -1263,6 +1324,53 @@
     $("endOv").hidden = false;
   }
 
+  // The season's scoreboard: points by round, how the winning point came,
+  // and every point each seat scored. Secrets are shown now: it is over.
+  function scoreboard() {
+    const g = game, log = g.scoreLog || [], last = g.round;
+    const order = g.seats.slice().sort((a, b) => S.standing(g, b.id) - S.standing(g, a.id));
+    const nm = (id) => (id === ME ? "You" : g.seatById[id].name);
+    const dot = (id) => "<i class='dot' style='background:" + g.seatById[id].color + "'></i>";
+    let html = "";
+    // The winning point.
+    const w = g.winner;
+    if (w) {
+      let run = 0, deciding = null;
+      for (const e of log) if (e.owner === w) { run += e.points; if (!deciding && run >= g.pointsToWin) deciding = e; }
+      html += "<p class='winline'>" + (deciding
+        ? "<b>The winning point:</b> round " + deciding.round + ", " + deciding.why + " (+" + deciding.points + "), taking " + nm(w) + " to " + g.pointsToWin + "."
+        : S.liveSeats(g).length === 1 ? "<b>Last seat standing</b> after round " + last + "."
+          : "<b>Most points</b> when round " + g.roundLimit + " ended.") + "</p>";
+    }
+    // Points by round.
+    html += "<h2 class='bh'>Points by round</h2><div class='boardwrap'><table class='board'><tr><th></th>";
+    for (let r = 1; r <= last; r++) html += "<th>" + r + "</th>";
+    html += "<th>Total</th></tr>";
+    for (const s of order) {
+      html += "<tr><td class='who'>" + dot(s.id) + nm(s.id) + "</td>";
+      for (let r = 1; r <= last; r++) {
+        const pts = log.filter((e) => e.owner === s.id && e.round === r).reduce((a, e) => a + e.points, 0);
+        html += "<td" + (pts ? " class='hit'" : "") + ">" + (pts || "\u00b7") + "</td>";
+      }
+      html += "<td class='tot'>" + g.points[s.id] + "</td></tr>";
+    }
+    html += "</table></div>";
+    // Every point, seat by seat, the winner's open.
+    html += "<h2 class='bh'>Every point</h2>";
+    for (const s of order) {
+      const mine = log.filter((e) => e.owner === s.id);
+      const kinds = {};
+      for (const e of mine) { const k = e.why === "Held the Throne" ? "Throne" : e.secret ? "Secret" : e.objective ? "Objectives" : "Council and other"; kinds[k] = (kinds[k] || 0) + e.points; }
+      html += "<details" + (s.id === w ? " open" : "") + "><summary>" + dot(s.id) + "<b>" + nm(s.id) + "</b> " + g.points[s.id] + " pts" +
+        (mine.length ? " <span class='muted'>\u00b7 " + Object.keys(kinds).map((k) => k + " " + kinds[k]).join(", ") + "</span>" : "") + "</summary>";
+      html += mine.length ? "<ol class='plog'>" + mine.map((e) => "<li><span class='r'>R" + e.round + "</span> +" + e.points + " " + e.why +
+        (e.secret ? " <span class='muted'>(secret)</span>" : "") + "</li>").join("") + "</ol>" : "<p class='muted'>No points.</p>";
+      html += "</details>";
+    }
+    return html;
+  }
+
+  window.DominionUI.showEnd = showEnd;     // for the pointer tests
   // ---- the legacy draft between seasons ----
   function showLegacy() {
     C.runLegacyDraft(campaign);
@@ -1377,6 +1485,7 @@
   }
 
   function draw(now) {
+    refit();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#070b14"; ctx.fillRect(0, 0, cssW, cssH);
     for (const s of stars) {
@@ -1419,7 +1528,13 @@
     ctx.globalAlpha = 1;
 
     // Your plotted orders (plot phase only).
+    const badges = [];
     if (game.phase === "plot" && !replay && !frame) {
+      game.orders[ME].forEach((o, i) => {
+        const at = o.kind === "send" || o.kind === "support" ? (() => { const a = P(game.nodes[o.from]), b = P(game.nodes[o.to]); return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; })()
+          : o.kind === "fire" ? P(game.nodes[o.target]) : o.at !== undefined ? P(game.nodes[o.at]) : null;
+        if (at) badges.push({ at, n: i + 1, k: o.kind });
+      });
       for (const o of game.orders[ME]) {
         if (o.kind === "send") {
           const path = S.findPath(game, o.from, o.to, ME);
@@ -1506,6 +1621,14 @@
       ctx.strokeText(txt, p.x, p.y); ctx.fillText(txt, p.x, p.y);
     }
 
+    // Order numbers, matching the list under the map.
+    for (const bd of badges) {
+      const x = bd.at.x + (bd.k === "send" || bd.k === "support" ? 0 : 16), y = bd.at.y - (bd.k === "send" || bd.k === "support" ? 0 : 16);
+      ctx.beginPath(); ctx.arc(x, y, 8.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#22d3ee"; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = "#04121a"; ctx.stroke();
+      ctx.fillStyle = "#04121a"; ctx.font = "700 10px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(String(bd.n), x, y + 0.5);
+    }
     // Support links live during the round.
     if (g.phase === "resolve") {
       for (const sp of g.support) {

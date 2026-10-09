@@ -39,7 +39,7 @@ test("two people and two rivals play a season online and every client holds the 
   const [mb] = await bo.select("matches", { id: m.id });
   const clients = [new O.Client(ana, m, 1), new O.Client(bo, mb, 3)];
   let rounds = 0;
-  while (clients[0].game.phase !== "over" && rounds < 14) {
+  while (clients[0].game.phase !== "over" && rounds < 20) {
     await draftUntilDone(clients);
     for (const c of clients) { assert.equal(c.game.phase, "plot"); c.planRivals(); }
     plotLikeAPerson(clients[0]);

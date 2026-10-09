@@ -750,3 +750,20 @@ test("each faction bends one rule", () => {
   S.computeSupply(d);
   assert.equal(d.nodes[1].inSupply, true);
 });
+
+test("every point scored is logged with its round and reason, and the target is set per game", () => {
+  const g = S.createGame({ seed: 8, seats: seats(4), draft: true, council: true, pointsToWin: 6, roundLimit: 9 });
+  assert.equal(g.pointsToWin, 6);
+  while (g.phase !== "over") { A.runDraft(g); A.planAll(g); S.beginResolve(g); S.runRound(g); S.drainEvents(g); }
+  for (const s of g.seats) {
+    const logged = g.scoreLog.filter((e) => e.owner === s.id).reduce((a, e) => a + e.points, 0);
+    assert.equal(logged, g.points[s.id], "seat " + s.id);
+  }
+  assert.ok(g.scoreLog.every((e) => e.round >= 1 && e.round <= g.round && e.why));
+  assert.ok(g.round <= 9);
+  assert.ok(g.points[g.winner] >= 6 || g.round === 9 || S.liveSeats(g).length === 1);
+  const d = S.createGame({ seed: 8, seats: seats(2) });
+  assert.equal(d.pointsToWin, S.POINTS_TO_WIN);
+  assert.equal(S.POINTS_TO_WIN, 15);
+  assert.equal(S.ROUND_LIMIT, 18);
+});

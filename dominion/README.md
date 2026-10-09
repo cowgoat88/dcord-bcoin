@@ -4,7 +4,7 @@ A slow, plotted space-empire game built on the OUTPOST engine. A match is a
 season of a galactic war: every round, everyone plots orders against a
 frozen galaxy, then the orders lock and thirty simulated seconds of war play
 out with nobody touching anything. Hold the Throne at the centre when a
-round ends to score. First to 10 points, or the most points after 12
+round ends to score. First to 15 points, or the most points after 18
 rounds, rules the galaxy.
 
 Design document (research, structure, roadmap):
@@ -252,6 +252,27 @@ symmetric for all 12 rounds.
 
 Before objectives, every season ran to the round limit: nobody reached 10
 points and nobody was eliminated. Objectives were built to change that.
+
+## Season length and the scoreboard
+
+A season is now first to 15 points or the most after 18 rounds (it was 10
+and 12, and seasons ended before the fighting started). Measured over 40
+four-seat all-AI seasons: average end round 11.1 to 15.8, 75% ending on
+points, and positions taken from rivals up from 5 to 19 a season. Both are
+per-game settings (`pointsToWin`, `roundLimit` in `createGame`).
+
+Every point is logged with its round and reason (`game.scoreLog`). The end
+screen shows the winning point (round, reason, and the total it reached),
+points by round for every seat, and each seat's full list of points
+(secrets revealed once the season is over).
+
+## Orders on screen
+
+Orders are numbered in the order given, with the same numbers drawn on the
+map; Undo (or Ctrl+Z) takes back the last one, × any one, and the message
+names anything else it cancelled. A line under the list says when they
+happen: on lock, all at once, in four steps (upgrades and research, holds
+and supports, sends, the Doomstar).
 
 ## Tests
 
