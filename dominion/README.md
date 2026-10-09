@@ -301,6 +301,15 @@ screen says. Measured, a seat playing at Normal strength against three
 rivals wins 33% at Easy, 26% at Normal, 13% at Hard (80 seasons each).
 Campaigns and online matches keep the settings they started with.
 
+## First game and colour
+
+**Basic rules** (the default on a first visit) leave out the roles draft,
+the council, pacts and technology: orders, the Throne, objectives and fog
+only. **Full** turns them all on. Online matches always use the full rules.
+Every seat has a mark as well as a colour (● ▲ ■ ◆ ★ ✚), drawn beside its
+positions and shown in the standings, the details panel, the report and
+the scoreboard, so ownership never depends on telling colours apart.
+
 ## Orders on screen
 
 Orders are numbered in the order given, with the same numbers drawn on the

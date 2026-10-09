@@ -46,6 +46,7 @@
   .seat { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 10px;
     border: 1px solid var(--line); font-size: 11px; }
   .seat i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  i.sd, .seat i.sd, #details .rivals i.sd { width: auto; height: auto; border-radius: 0; background: none !important; font-style: normal; font-size: 11px; line-height: 1; }
   .seat.out { opacity: .35; text-decoration: line-through; }
   .seat.me { border-color: rgba(255,255,255,.4); }
 
@@ -220,6 +221,10 @@
             <button id="btnJoin">Join</button>
           </div>
           <p id="onlineStatus" style="font-size:12px"></p>
+        </div>
+        <h2>Rules</h2>
+        <div class="seg" id="rulesSeg">
+          <button data-r="basic">Basic (first game)</button><button data-r="full" class="on">Full</button>
         </div>
         <h2>Length</h2>
         <div class="seg" id="lenSeg">
@@ -413,7 +418,11 @@
   let rivals = 2, faction = "standard", playMode = "season", length = "standard", difficulty = "normal";
   try { length = localStorage.getItem("dominion.length") || length; difficulty = localStorage.getItem("dominion.difficulty") || difficulty; } catch (e) { /* no storage */ }
   // The season settings, as createGame takes them.
-  const settings = () => ({ pointsToWin: S.LENGTHS[length].pointsToWin, roundLimit: S.LENGTHS[length].roundLimit, difficulty });
+  // First visit: the basic rules, until a season has been played.
+  let rules = "full";
+  try { rules = localStorage.getItem("dominion.rules") || "basic"; } catch (e) { /* no storage */ }
+  const settings = () => Object.assign({ pointsToWin: S.LENGTHS[length].pointsToWin, roundLimit: S.LENGTHS[length].roundLimit, difficulty },
+    rules === "basic" ? { draft: false, council: false, tech: false } : {});
   let campaign = null;          // the campaign record, when playing one
   const C = window.DominionCampaign;
   // Saved in this browser only, so a season or campaign can be continued
@@ -491,16 +500,17 @@
     faction = b.dataset.k; buildFactions();
   });
   function showSettings() {
-    for (const [seg, key, val] of [["lenSeg", "l", length], ["diffSeg", "d", difficulty]])
+    for (const [seg, key, val] of [["lenSeg", "l", length], ["diffSeg", "d", difficulty], ["rulesSeg", "r", rules]])
       [...$(seg).children].forEach((c) => c.classList.toggle("on", c.dataset[key] === val));
     const L = S.LENGTHS[length];
     const eco = S.RIVAL_ECONOMY[difficulty];
-    $("setNote").textContent = "First to " + L.pointsToWin + " points or the most after " + L.roundLimit + " rounds (about " +
+    $("setNote").textContent = (rules === "basic" ? "Basic rules: orders, the Throne, objectives and fog only; no roles, council, pacts or technology. " : "") + "First to " + L.pointsToWin + " points or the most after " + L.roundLimit + " rounds (about " +
       ({ quick: 11, standard: 16, epic: 22 })[length] + " rounds). " +
       (difficulty === "easy" ? "Easy rivals play cautiously and produce " + Math.round(100 - eco.credits * 100) + "% fewer credits." :
         difficulty === "hard" ? "Hard rivals produce " + Math.round(eco.credits * 100 - 100) + "% more credits and " + Math.round(eco.units * 100 - 100) + "% more ships, and pile onto a person in the lead." :
           "Rivals play by exactly your rules.");
   }
+  $("rulesSeg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; rules = b.dataset.r; try { localStorage.setItem("dominion.rules", rules); } catch (e2) { /* no storage */ } showSettings(); });
   $("lenSeg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; length = b.dataset.l; try { localStorage.setItem("dominion.length", length); } catch (e2) { /* no storage */ } showSettings(); });
   $("diffSeg").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; difficulty = b.dataset.d; try { localStorage.setItem("dominion.difficulty", difficulty); } catch (e2) { /* no storage */ } showSettings(); });
   function showMode() {
@@ -590,7 +600,9 @@
         else if (i === other) seats.push({ faction: pool[(seed + i) % pool.length], name: "Seat " + (i + 1) });
         else { const f = pool[(seed + i) % pool.length]; seats.push({ faction: f, ai: true, name: S.FACTIONS[f].label }); }
       }
-      const m = await O.createMatch(store, Object.assign({ seed, seats }, settings()));
+      // Online always plays the full rules.
+      const set = settings(); delete set.draft; delete set.council; delete set.tech;
+      const m = await O.createMatch(store, Object.assign({ seed, seats }, set));
       $("joinCode").value = m.id;
       status("Match code " + m.id + " \u2014 send it to the other player. Waiting for them to join\u2026");
       const wait = async () => {
@@ -924,7 +936,7 @@
     $("draftTitle").textContent = "Round " + game.round + " \u00b7 choose your role";
     const order = game.draft.order.map((id) => {
       const s = game.seatById[id], pick = game.draft.picks[id];
-      return "<span class='seat" + (id === ME ? " me" : "") + "'><i style='background:" + s.color + "'></i>" +
+      return "<span class='seat" + (id === ME ? " me" : "") + "'>" + seatDot(id) +
         (id === ME ? "You" : s.name) + (pick ? " \u00b7 " + S.ROLES[pick].icon + " " + S.ROLES[pick].label : id === S.draftTurn(game) ? " \u00b7 picking" : "") + "</span>";
     }).join(" ");
     $("draftOrder").innerHTML = "Pick order, fewest points first: " + order;
@@ -1075,7 +1087,7 @@
       el.className = "seat" + (S.alive(game, s.id) ? "" : " out") + (s.id === ME ? " me" : "");
       el.title = s.name + " · " + S.FACTIONS[s.faction].label + " · " + S.FACTIONS[s.faction].rule.label + ": " + S.FACTIONS[s.faction].rule.text;
       const tag = s.id !== ME && S.pactBetween(game, ME, s.id) ? " \ud83e\udd1d" : S.oathbroken(game, s.id) ? " \u2717" : "";
-      el.innerHTML = "<i style='background:" + s.color + "'></i><span class='n'>" + (s.id === ME ? "You" : S.FACTIONS[s.faction].icon + " " + s.name) +
+      el.innerHTML = seatDot(s.id) + "<span class='n'>" + (s.id === ME ? "You" : S.FACTIONS[s.faction].icon + " " + s.name) +
         "</span> <b>" + game.points[s.id] + "</b>" + tag;
       st.appendChild(el);
     }
@@ -1133,6 +1145,8 @@
     $("btnLock").textContent = "Lock orders (" + S.cpUsed(game, ME) + ")";
     const metNow = S.publicObjectives(game).filter((o) => !(game.scored[o.id] || []).includes(ME) && o.test(game, ME)).length;
     $("btnObj").innerHTML = "&#9678;<span class='lbl'> Objectives</span>" + (metNow ? " <b style='color:var(--good)'>" + metNow + "</b>" : "");
+    $("btnCouncil").hidden = !game.useCouncil;
+    $("btnTech").hidden = !!game.noTech;
     $("btnCouncil").innerHTML = "&#9878;<span class='lbl'> Council</span> <b>" + game.influence[ME] + "</b>";
     $("btnCouncil").classList.toggle("unvoted", game.phase === "plot" && ((!!game.agenda && !game.votes[ME]) || game.offers.some((x) => x.to === ME)));
   }
@@ -1217,7 +1231,7 @@
       if (S.oathbroken(g, s.id)) tags.push("\u2717 Oathbreaker");
       if (throne && throne.owner === s.id) tags.push("holds the Throne");
       if (!S.alive(g, s.id)) tags.push("out");
-      html += "<div><i style='background:" + s.color + "'></i><b>" + (s.id === ME ? "You" : s.name) + "</b><span class='muted'>" + f.icon + (s.name !== f.label ? " " + f.label : "") +
+      html += "<div>" + seatDot(s.id) + "<b>" + (s.id === ME ? "You" : s.name) + "</b><span class='muted'>" + f.icon + (s.name !== f.label ? " " + f.label : "") +
         (r ? " \u00b7 " + S.ROLES[r].icon + " " + S.ROLES[r].label : "") + (tags.length ? " \u00b7 " + tags.join(" \u00b7 ") : "") + "</span><b style='margin-left:auto'>" + g.points[s.id] + " pts</b></div>";
     }
     html += "</div>";
@@ -1323,7 +1337,7 @@
 
   // ---- the council ----
   let myInf = 0;
-  const seatChip = (id) => "<i style='background:" + game.seatById[id].color + "'></i>" + (id === ME ? "You" : game.seatById[id].name);
+  const seatChip = (id) => seatDot(id) + " " + (id === ME ? "You" : game.seatById[id].name);
   function lawResult(e) {
     const law = S.LAWS[e.law];
     const res = law.kind === "elect" ? (e.elected ? "elects " + (e.elected === ME ? "you" : game.seatById[e.elected].name) : "elects nobody")
@@ -1451,7 +1465,7 @@
     const g = game, log = g.scoreLog || [], last = g.round;
     const order = g.seats.slice().sort((a, b) => S.standing(g, b.id) - S.standing(g, a.id));
     const nm = (id) => (id === ME ? "You" : g.seatById[id].name);
-    const dot = (id) => "<i class='dot' style='background:" + g.seatById[id].color + "'></i>";
+    const dot = (id) => seatDot(id) + " ";
     let html = "";
     // The winning point.
     const w = g.winner;
@@ -1532,6 +1546,10 @@
   // ---------------------------------------------------------------
   // Events into effects
   // ---------------------------------------------------------------
+  const SEAT_MARKS = ["\u25cf", "\u25b2", "\u25a0", "\u25c6", "\u2605", "\u271a"];
+  function markOf(owner) { return SEAT_MARKS[(owner - 1) % SEAT_MARKS.length] || ""; }
+  // A seat's colour dot carrying its mark, for every list of seats.
+  function seatDot(id) { return "<i class='sd' style='color:" + colorOf(id) + "'>" + markOf(id) + "</i>"; }
   function colorOf(owner) { return owner && game.seatById[owner] ? game.seatById[owner].color : "#64748b"; }
   function burst(x, y, color, n, speedPx, life) {
     for (let i = 0; i < n; i++) {
@@ -1715,6 +1733,16 @@
         ctx.fillStyle = own ? col : "#1e293b"; ctx.globalAlpha = (own ? 0.22 : 0.9) * base; ctx.fill();
         ctx.globalAlpha = base; if (dark) ctx.setLineDash([3, 3]); ctx.lineWidth = selected === n.id ? 3.5 : 2; ctx.strokeStyle = selected === n.id ? "#ffffff" : own ? col : "#64748b";
         ctx.stroke(); ctx.setLineDash([]);
+      }
+      // Each seat's mark beside its positions, so ownership never rests on
+      // colour alone (red-green and yellow-orange pairs are hard to tell).
+      if (own && own !== S.NEUTRAL && n.type !== "doomstar" || (n.type === "doomstar" && own)) {
+        const mx = r * 0.78, my = -r * 0.78;
+        ctx.globalAlpha = dark ? 0.5 : 1;
+        ctx.font = "700 " + Math.max(11, Math.min(15, r * 0.55)) + "px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.lineWidth = 3; ctx.strokeStyle = "rgba(5,9,18,.9)"; ctx.strokeText(markOf(own), mx, my);
+        ctx.fillStyle = col; ctx.fillText(markOf(own), mx, my);
+        ctx.globalAlpha = 1;
       }
       if (n.terrain === "asteroid" || n.terrain === "well") {
         ctx.strokeStyle = n.terrain === "asteroid" ? "rgba(176,137,95,.6)" : "rgba(155,127,212,.6)";

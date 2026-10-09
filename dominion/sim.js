@@ -501,6 +501,7 @@
       oathbreaker: perSeat(0),  // last round a seat is an Oathbreaker
       winner: null,
       events: [],
+      noTech: o.tech === false,              // the first-game rules leave technology out
       difficulty: o.difficulty || "normal",   // how rivals think: easy | normal | hard (ai.js)
       pointsToWin: o.pointsToWin || POINTS_TO_WIN,
       roundLimit: o.roundLimit || ROUND_LIMIT,
@@ -669,6 +670,7 @@
       return undefined;
     }
     if (order.kind === "research") {
+      if (game.noTech) return "Technology is off in these rules.";
       const t = TECHS[order.tech];
       if (!t) return "No such technology.";
       if (mine.some((o) => o.kind === "research")) return "One technology a round.";

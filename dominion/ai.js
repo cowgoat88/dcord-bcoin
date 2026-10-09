@@ -236,7 +236,7 @@
       .sort((a, b) => a.cost - b.cost);
     // An objective that pays for spending moves it ahead of the margin.
     const resMargin = W.research ? 1.0 : 1.1, upMargin = W.upgrade ? 1.0 : 1.3;
-    if (techs.length && S.spendable(game, seat) >= S.techCost(game, seat, techs[0].k) * resMargin) add({ kind: "research", tech: techs[0].k });
+    if (!game.noTech && techs.length && S.spendable(game, seat) >= S.techCost(game, seat, techs[0].k) * resMargin) add({ kind: "research", tech: techs[0].k });
     const up = mine().filter((n) => n.level < S.MAX_LEVEL && (n.type === "command" || n.type === "factory"))
       .sort((a, b) => (W.upgrade && a.type === "factory" ? -1 : 0) - (W.upgrade && b.type === "factory" ? -1 : 0) || a.level - b.level)[0];
     if (up && S.spendable(game, seat) >= S.upgradeCost(up.level) * upMargin) add({ kind: "upgrade", at: up.id });

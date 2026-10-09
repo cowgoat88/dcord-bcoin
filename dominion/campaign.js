@@ -53,7 +53,7 @@
       results: [], draft: null, phase: "season", winner: null,
       // Season length and rival strength, the same every season. Only the
       // ones given, so the record stays plain JSON.
-      rules: JSON.parse(JSON.stringify({ pointsToWin: o.pointsToWin, roundLimit: o.roundLimit, difficulty: o.difficulty }))
+      rules: JSON.parse(JSON.stringify({ pointsToWin: o.pointsToWin, roundLimit: o.roundLimit, difficulty: o.difficulty, draft: o.draft, council: o.council, tech: o.tech }))
     };
   }
 
