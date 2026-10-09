@@ -202,8 +202,17 @@ campaign and the season in progress are saved in this browser at the
 start of every round, so **Continue** on the start screen picks up where
 you left off (a single season too). The game works without storage.
 
-Not built yet: online play (Neon, once a Data API URL is provided) and
-sound.
+## Sound
+
+Howler.js 2.2.4 (`vendor/howler.core.min.js`, MIT) plays eleven effects:
+order clicks, locking in, launches, captures, repulses, lane battles, the
+Doomstar's lock-on and blast, scoring, the council's gavel and the round
+bell. The effects are made by code (`tools/sfx.js`) and stored as data
+URIs in `sounds.js`, so they play from a `file://` page too. **Sound
+on/off** on the start screen, or press M; the choice is remembered in this
+browser.
+
+Not built yet: online play (Neon, once a Data API URL is provided).
 
 ## Measured
 

@@ -68,6 +68,8 @@
   .overlay { position: absolute; inset: 0; background: rgba(4,7,14,.86); display: flex; align-items: center;
     justify-content: center; z-index: 10; padding: 16px; }
   .overlay[hidden] { display: none; }
+  /* The screens between games cover the whole page, panel included. */
+  #startOv, #endOv, #legacyOv { position: fixed; z-index: 30; }
   .card { width: min(520px, 100%); max-height: 100%; overflow-y: auto; background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; padding: 22px; }
   .card h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: 4px; color: var(--gold); }
@@ -167,6 +169,7 @@
         <div class="grid" id="facGrid"></div>
         <div id="facUp"></div>
         <div class="row" style="margin-top:16px;justify-content:flex-end">
+          <button id="btnSound" title="Sound on or off (M)">Sound on</button>
           <button id="btnContinue" hidden>Continue</button>
           <button class="primary" id="btnBegin">Begin the season</button>
         </div>
@@ -283,6 +286,8 @@
 <script src="sim.js"></script>
 <script src="ai.js"></script>
 <script src="campaign.js"></script>
+<script src="vendor/howler.core.min.js"></script>
+<script src="sounds.js" defer></script>
 <script src="holo.js"></script>
 <script>
 (function () {
@@ -305,6 +310,34 @@
   function loadSave() {
     try { const r = JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); return r && (r.game || (r.campaign && r.campaign.phase !== "over")) ? r : null; } catch (e) { return null; }
   }
+  // Sound: Howler playing the generated effects in sounds.js. Each effect
+  // plays at most once every 90 ms, so a round of launches is one whoosh.
+  const Sound = (() => {
+    let on = true;
+    try { on = localStorage.getItem("dominion.sound") !== "off"; } catch (e) { /* no storage */ }
+    const VOL = { click: 0.35, launch: 0.25, clash: 0.45, repulsed: 0.5, capture: 0.5, doomlock: 0.5, doomstar: 0.8, score: 0.55, law: 0.5, lock: 0.45, round: 0.35 };
+    const howls = {}, last = {};
+    const get = (k) => howls[k] || (window.Howl && window.DominionSounds && window.DominionSounds[k]
+      ? (howls[k] = new window.Howl({ src: [window.DominionSounds[k]], format: ["wav"], volume: VOL[k] || 0.5 })) : null);
+    return {
+      play(k) {
+        if (!on) return;
+        const now = performance.now();
+        if (last[k] && now - last[k] < 90) return;
+        last[k] = now;
+        const h = get(k); if (h) h.play();
+      },
+      toggle() {
+        on = !on;
+        try { localStorage.setItem("dominion.sound", on ? "on" : "off"); } catch (e) { /* no storage */ }
+        return on;
+      },
+      get on() { return on; }
+    };
+  })();
+  const showSound = () => { $("btnSound").textContent = Sound.on ? "Sound on" : "Sound off"; };
+  $("btnSound").addEventListener("click", () => { Sound.toggle(); showSound(); Sound.play("click"); });
+  window.addEventListener("keydown", (e) => { if (e.key === "m" || e.key === "M") { Sound.toggle(); showSound(); } });
   function clearSave() { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* no storage */ } }
   let selected = null;          // node id
   let mode = "send";            // send | support | fire
@@ -625,6 +658,7 @@
   function lockIn() {
     if (!game || game.phase !== "plot") return;
     S.lockOrders(game, ME);
+    Sound.play("lock");
     lastRoundStart = S.cloneGame(game);    // replay starts from here, with everyone's orders
     S.beginResolve(game);
     handleEvents(S.drainEvents(game));
@@ -632,7 +666,8 @@
     showResolveUI(true);
   }
   function afterRound() {
-    if (game.phase === "over") { showEnd(); return; }
+    if (game.phase === "over") { Sound.play("score"); showEnd(); return; }
+    Sound.play("round");
     // The round's scoring, one line after another, then the prompt.
     const lines = scoreLog.splice(0);
     lines.push("Round " + game.round + " \u2014 plot your orders.");
@@ -663,6 +698,7 @@
     refresh();
   }
   function replot() {
+    Sound.play("click");
     frames = S.forecast(game, ME, 1);
     refresh();
   }
@@ -1012,6 +1048,11 @@
     const fog = fogOf(replay ? replay.game : game);
     if (fog) evs = evs.filter((e) => !((e.kind === "capture" || e.kind === "repulsed") && !fog.sight.has(e.nodeId) && e.owner !== ME && e.from !== ME && e.attacker !== ME) &&
       !(e.kind === "clash" && e.lane && !fog.sight.has(e.lane[0]) && !fog.sight.has(e.lane[1]) && e.sides.every((sd) => sd.owner !== ME)));
+    if (!quiet) for (const e of evs) {
+      const snd = { capture: "capture", repulsed: "repulsed", clash: "clash", doomlock: "doomlock", doomstar: "doomstar", law: "law" }[e.kind] ||
+        (e.kind === "launch" && e.owner === ME ? "launch" : e.kind === "score" ? "score" : null);
+      if (snd) Sound.play(snd);
+    }
     for (const e of evs) {
       if (e.kind === "capture") { burst(e.x, e.y, colorOf(e.owner), 22, 160, 0.8); floatText(e.x, e.y, "TAKEN", colorOf(e.owner)); }
       else if (e.kind === "repulsed") { burst(e.x, e.y, "#94a3b8", 12, 110, 0.6); floatText(e.x, e.y, "HELD", "#cbd5e1"); }
@@ -1245,6 +1286,7 @@
   resize();
   buildFactions();
   showMode();
+  showSound();
   requestAnimationFrame(loop);
 })();
 </script>

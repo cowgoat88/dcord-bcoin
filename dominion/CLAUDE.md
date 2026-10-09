@@ -36,6 +36,9 @@ plans, not reflexes; points, not annihilation; politics is a second board.
 
 - `sim.js` the rules, `ai.js` the rival commanders, `campaign.js` seasons
   and legacies, `index.html` the page. All UMD, no build step.
+- `sounds.js` is generated: edit `tools/sfx.js` and run
+  `node dominion/tools/sfx.js`. Howler (vendored) plays the data URIs; a
+  file fetch would fail from `file://`.
 
 ## Engine notes
 
@@ -86,4 +89,4 @@ the game a static page, but it only works if the simulation is
 bit-identical in every browser, so `sim.js` uses only exactly specified
 math (`+ - * /`, `Math.sqrt`, `Math.round`); a test enforces it. Orders
 stay hidden by RLS until every live seat has locked the round.
-Sound: Howler.js (vendored, not from a CDN), when sound arrives.
+Sound: Howler.js, vendored in `vendor/`, never from a CDN.
