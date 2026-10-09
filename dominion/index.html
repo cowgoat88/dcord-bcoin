@@ -634,11 +634,12 @@
   // Input: tap to select and order, drag to pan, pinch or wheel to zoom
   // ---------------------------------------------------------------
   const pointers = new Map();
+  const TAP_SLOP_MOUSE = 8, TAP_SLOP_TOUCH = 18, TAP_SLOP_QUICK = 28;
   let dragFrom = null, moved = false, pinch = null;
   canvas.addEventListener("pointerdown", (e) => {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
-    if (pointers.size === 1) { dragFrom = { x: e.offsetX, y: e.offsetY, cx: cam.x, cy: cam.y }; moved = false; }
+    if (pointers.size === 1) { dragFrom = { x: e.offsetX, y: e.offsetY, cx: cam.x, cy: cam.y, t: performance.now(), touch: e.pointerType !== "mouse" }; moved = false; }
     if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), s: cam.s, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
@@ -658,7 +659,11 @@
     }
     if (dragFrom) {
       const dx = e.offsetX - dragFrom.x, dy = e.offsetY - dragFrom.y;
-      if (Math.hypot(dx, dy) > 8) moved = true;
+      // A finger wanders while it taps: up to 18 px is still a tap (8 for
+      // a mouse), and a quick press up to 28 px, so taps are not lost as
+      // tiny pans.
+      const d = Math.hypot(dx, dy), quick = performance.now() - dragFrom.t < 250;
+      if (d > (dragFrom.touch ? (quick ? TAP_SLOP_QUICK : TAP_SLOP_TOUCH) : TAP_SLOP_MOUSE)) moved = true;
       if (moved) { cam.x = dragFrom.cx - dx / cam.s; cam.y = dragFrom.cy - dy / cam.s; }
     }
   });
@@ -666,7 +671,8 @@
     const wasTap = pointers.size === 1 && !moved;
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
-    if (pointers.size === 0) { if (wasTap) tap(e.offsetX, e.offsetY, e.pointerType === "touch"); dragFrom = null; }
+    // Hit-test where the finger came down, not where it lifted.
+    if (pointers.size === 0) { if (wasTap && dragFrom) tap(dragFrom.x, dragFrom.y, dragFrom.touch); dragFrom = null; }
   };
   canvas.addEventListener("pointerup", endPointer);
   canvas.addEventListener("pointercancel", (e) => { pointers.delete(e.pointerId); pinch = null; dragFrom = null; });
@@ -677,7 +683,7 @@
     let best = null, bd = Infinity;
     for (const n of game.nodes) {
       const p = toScreen(n.x, n.y);
-      const r = Math.max(14, S.NODE_TYPES[n.type].radius * cam.s) + (touch ? 12 : 4);
+      const r = Math.max(14, S.NODE_TYPES[n.type].radius * cam.s * 1.6) + (touch ? 16 : 4);
       const d = Math.hypot(p.x - px, p.y - py);
       if (d < r && d < bd) { bd = d; best = n; }
     }
