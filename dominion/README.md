@@ -223,8 +223,16 @@ browser.
 Choose **Online → Two phones** (the default). One phone taps **Create
 match**, gets a five-letter room code and taps **Share invite link** (the
 iPhone share sheet: Messages, AirDrop, anything). The other phone taps the
-link, or enters the code and taps **Join**. Works over Wi-Fi or mobile
-data, no accounts, nothing to set up.
+link, or enters the code and taps **Join**. Both phones show a lobby (who
+is connected, which seat); when the other phone is in, the host taps
+**Start the skirmish**. Works over Wi-Fi or mobile data, no accounts,
+nothing to set up.
+
+Joining is one request that the host answers by seating the guest; the
+guest resends any unanswered request every few seconds, and asks whether
+the game has started in case the host's Start message is lost. Before the
+lobby, the game was meant to start on its own after several round trips,
+and one lost message left both phones waiting with nothing to tap.
 
 How: the creating phone is the server. It keeps the match database (the
 same rules as `schema.sql`: own seat only, one move a round, orders hidden

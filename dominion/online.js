@@ -120,13 +120,29 @@
   //
   // Hidden orders are hidden from the guest by those rules; the host's
   // phone holds everything, so between friends this trusts the host.
-  function hostStore(db, hostUser, transport) {
+  //
+  // Joining is one request ("join"): the host seats the guest itself and
+  // answers with the match and the seat, so there is a single message to
+  // lose, and the guest keeps resending it until it is answered. The game
+  // starts when the host taps Start: a "start" message, and the guest also
+  // asks ("status") in case that message is lost.
+  function hostStore(db, hostUser, transport, hooks) {
+    const h = hooks || {};
     transport.onMessage(async (m) => {
       if (!m || m.t !== "rpc") return;
-      const st = db.storeFor(String(m.user || "guest"));
+      const user = String(m.user || "guest");
+      const st = db.storeFor(user);
       let reply;
       try {
         if (m.op === "hello") reply = { ok: true, result: transport.matchId || null };
+        else if (m.op === "join") {
+          if (!transport.matchId) throw new Error("The match is still being set up. Try again in a moment.");
+          const seat = await joinMatch(st, transport.matchId, user);
+          const [match] = await st.select("matches", { id: transport.matchId });
+          if (h.onJoin) h.onJoin(seat, user);
+          reply = { ok: true, result: { match, seat, started: !!transport.started } };
+        }
+        else if (m.op === "status") reply = { ok: true, result: { started: !!transport.started } };
         else if (m.op === "insert") reply = { ok: true, result: await st.insert(m.table, m.row) };
         else if (m.op === "select") reply = { ok: true, result: await st.select(m.table, m.eq) };
         else reply = { ok: false, error: "Unknown request." };
@@ -146,21 +162,28 @@
       if (m.ok) p.resolve(m.result);
       else p.reject(Object.assign(new Error(m.error || "Request failed."), { duplicate: !!m.duplicate }));
     });
-    // A request lost while the connection dropped is sent again when it
-    // comes back; the host answers a repeat insert with a duplicate, which
-    // the client already treats as done.
-    if (transport.onOpen) transport.onOpen(() => { for (const id in pending) transport.send(pending[id].msg); });
+    // A request that has not been answered is sent again every few seconds
+    // and whenever the connection comes back: a message can be lost while
+    // a phone is busy or the link is re-forming. Every request is safe to
+    // repeat: reads and join are idempotent, and a repeated insert comes
+    // back as a duplicate, which the client treats as done.
+    const resend = () => { for (const id in pending) transport.send(pending[id].msg); };
+    if (transport.onOpen) transport.onOpen(resend);
+    let ticker = null;
     function call(op, extra) {
       return new Promise((resolve, reject) => {
         const id = ++n;
         const msg = Object.assign({ t: "rpc", id, op, user }, extra);
-        const timer = setTimeout(() => { if (pending[id]) { delete pending[id]; reject(new Error("The other phone did not answer.")); } }, timeoutMs || 15000);
+        const timer = setTimeout(() => { if (pending[id]) { delete pending[id]; reject(new Error("The other phone did not answer.")); } }, timeoutMs || 30000);
         pending[id] = { resolve, reject, timer, msg };
         transport.send(msg);
+        if (!ticker) ticker = setInterval(() => { if (Object.keys(pending).length) resend(); else { clearInterval(ticker); ticker = null; } }, 2500);
       });
     }
     return {
       hello: () => call("hello", {}),
+      join: () => call("join", {}),
+      status: () => call("status", {}),
       insert: (table, row) => call("insert", { table, row }),
       select: (table, eq) => call("select", { table, eq })
     };
@@ -185,7 +208,12 @@
       const taken = await store.select("seats", { match_id: matchId, seat });
       if (taken.length && me && taken[0].user_id === me) return seat;
       if (taken.length) continue;
-      try { await store.insert("seats", { match_id: matchId, seat }); return seat; } catch (e) { if (!e.duplicate) throw e; }
+      try { await store.insert("seats", { match_id: matchId, seat }); return seat; } catch (e) {
+        if (!e.duplicate) throw e;
+        // A repeated request whose first copy already took this seat.
+        const now = await store.select("seats", { match_id: matchId, seat });
+        if (me && now.length && now[0].user_id === me) return seat;
+      }
     }
     throw new Error("The match is full.");
   }
@@ -242,7 +270,8 @@
     const g = this.game;
     if (S.draftTurn(g) !== this.seat) return "It is not your pick.";
     if (S.rolesLeft(g).indexOf(role) === -1) return "That role is taken.";
-    await this.store.insert("moves", { match_id: this.match.id, round: g.round, seat: this.seat, kind: "draft", payload: { role } });
+    try { await this.store.insert("moves", { match_id: this.match.id, round: g.round, seat: this.seat, kind: "draft", payload: { role } }); }
+    catch (e) { if (!e.duplicate) throw e; }   // a resent pick that already landed
     return S.pickRole(g, this.seat, role);
   };
   // Rivals plan once a round, the same way on every client.
@@ -257,10 +286,12 @@
   Client.prototype.lock = async function () {
     const g = this.game;
     this.planRivals();
-    await this.store.insert("moves", {
-      match_id: this.match.id, round: g.round, seat: this.seat, kind: "plot",
-      payload: { orders: g.orders[this.seat], vote: g.votes[this.seat], hash: this.hash }
-    });
+    try {
+      await this.store.insert("moves", {
+        match_id: this.match.id, round: g.round, seat: this.seat, kind: "plot",
+        payload: { orders: g.orders[this.seat], vote: g.votes[this.seat], hash: this.hash }
+      });
+    } catch (e) { if (!e.duplicate) throw e; }   // a resent lock that already landed
     S.lockOrders(g, this.seat);
   };
   // Once every person has posted, apply everyone's orders and start the

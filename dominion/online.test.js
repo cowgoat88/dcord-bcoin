@@ -72,7 +72,8 @@ test("the database refuses a move for someone else's seat, or a second one", asy
   const c = new O.Client(ana, m, 1);
   c.game.phase = "plot";
   await c.lock();
-  await assert.rejects(c.lock(), /already/);
+  await assert.rejects(ana.insert("moves", { match_id: m.id, round: 1, seat: 1, kind: "plot", payload: {} }), /already/);
+  await c.lock();   // the client treats its own resent lock as done
 });
 
 test("online, pacts are only made between rivals", () => {
@@ -139,4 +140,26 @@ test("two phones play a skirmish over a direct connection, the host's phone keep
   }
   assert.equal(clients[0].game.phase, "over");
   await assert.rejects(guestSt.insert("moves", { match_id: m.id, round: 1, seat: 1, kind: "plot", payload: {} }), /not your seat/);
+});
+
+test("joining by phone is one request, survives a lost message, and the host starts the game", async () => {
+  const [hostLink, guestLink] = pipePair();
+  // Lose the guest's first message, as a link re-forming can.
+  let dropped = false;
+  const send = guestLink.send.bind(guestLink);
+  guestLink.send = (m) => { if (!dropped && m.op === "join") { dropped = true; return; } send(m); };
+  let joinedSeat = null;
+  const db = O.memoryDatabase();
+  const hostSt = O.hostStore(db, "phone-a", hostLink, { onJoin: (seat) => { joinedSeat = seat; } });
+  const guestSt = O.guestStore(guestLink, "phone-b");
+  const m = await O.createMatch(hostSt, { seed: 3, seats: [{ faction: "standard" }, { faction: "shock" }] });
+  hostLink.matchId = m.id;
+  const j = await guestSt.join();
+  assert.ok(dropped, "the first join was lost and resent");
+  assert.equal(j.seat, 2); assert.equal(j.match.id, m.id); assert.equal(joinedSeat, 2);
+  const again = await guestSt.join();
+  assert.equal(again.seat, 2, "joining again gives the same seat back");
+  assert.equal((await guestSt.status()).started, false);
+  hostLink.started = true;
+  assert.equal((await guestSt.status()).started, true);
 });

@@ -98,6 +98,9 @@
   #startOv, #endOv, #legacyOv { position: fixed; z-index: 30; }
   #helpOv { position: fixed; z-index: 40; }
   .help p { font-size: 12px; margin: 4px 0 8px; }
+  #lobby { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  #lobby div { display: flex; justify-content: space-between; padding: 3px 0; }
+  #lobby .ok { color: var(--good); } #lobby .wait { color: var(--muted); }
   .field { display: block; width: 100%; margin-top: 6px; padding: 8px; background: rgba(255,255,255,.04); color: var(--text);
     border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 12px; }
   .help h2 { margin-top: 12px; }
@@ -227,6 +230,8 @@
             <button id="btnJoin">Join</button>
           </div>
           <button id="btnShare" class="primary" hidden style="margin-top:8px">Share invite link</button>
+          <div id="lobby" hidden></div>
+          <button id="btnStartMatch" class="primary" hidden style="margin-top:8px;width:100%">Start the skirmish</button>
           <p id="onlineStatus" style="font-size:12px"></p>
         </div>
         <h2>Rules</h2>
@@ -642,54 +647,87 @@
   });
   // Two phones, anywhere: the host's phone keeps the match; the other
   // connects to it directly (net.js), over Wi-Fi or mobile data.
+  // The lobby: who is in the room, and (on the host) the Start button.
+  function showLobby(rows, canStart) {
+    $("lobby").hidden = false;
+    $("lobby").innerHTML = rows.map((r) => "<div><span>" + r[0] + "</span><span class='" + (r[2] ? "ok" : "wait") + "'>" + r[1] + "</span></div>").join("");
+    $("btnStartMatch").hidden = !canStart;
+    // The start card is long on a phone: bring the lobby into view.
+    try { (canStart ? $("btnStartMatch") : $("lobby")).scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) { /* old browser */ }
+  }
+  let lobbyStart = null;
+  $("btnStartMatch").addEventListener("click", () => { if (lobbyStart) lobbyStart(); });
   function createOnPhone(config) {
     closeRoom();
     if (!NET || !NET.available()) { status("Peer-to-peer did not load. Check the connection and reload."); return; }
     const db = O.memoryDatabase();
-    let store = null, match = null;
+    let store = null, match = null, guestSeat = null, started = false;
+    const lobby = () => showLobby([["You (Seat 1)", "host \u2713", true],
+      ["Other phone", guestSeat ? "Seat " + guestSeat + " \u2713" : room.transport.isOpen() ? "connected, taking a seat\u2026" : "not here yet", !!guestSeat]], !!guestSeat && !started);
     const room = NET.host({
       onReady: async (code) => {
-        if (online && online.room === room) return;   // the room came back mid-game
+        if (started) return;   // the room came back mid-game
         $("joinCode").value = code;
         $("btnShare").hidden = false;
         if (!match) {
-          store = O.hostStore(db, deviceUser(), room.transport);
+          store = O.hostStore(db, deviceUser(), room.transport, { onJoin: (seat) => { guestSeat = seat; lobby(); status("The other phone is in. Tap Start when you are both ready."); } });
           match = await O.createMatch(store, config);
           room.transport.matchId = match.id;
         }
-        status("Room code " + code + ". Share the invite, then wait here: keep this page open until the other phone joins.");
-        const wait = async () => {
-          if (await O.seatsFilled(store, match.id)) { pendingRoom = null; startOnline(store, match, 1, room); return; }
-          pollT = setTimeout(wait, 1000);
-        };
-        stopPolling(); wait();
+        status("Room code " + code + ". Share the invite and keep this page open.");
+        lobby();
       },
-      onConnect: () => status("The other phone has connected\u2026"),
+      onConnect: () => { status("The other phone has connected\u2026"); lobby(); },
       onStatus: status,
       onError: status
     });
     pendingRoom = room;
+    // Start: tell the other phone, then begin here.
+    lobbyStart = () => {
+      if (started || !guestSeat) return;
+      started = true;
+      room.transport.started = true;
+      room.transport.send({ t: "start" });
+      $("lobby").hidden = true; $("btnStartMatch").hidden = true;
+      pendingRoom = null;
+      startOnline(store, match, 1, room);
+    };
   }
   function joinOnPhone(code) {
     closeRoom();
     if (!NET || !NET.available()) { status("Peer-to-peer did not load. Check the connection and reload."); return; }
-    let joined = false;
+    let asked = false, started = false, joined = null;
     status("Looking for room " + code.toUpperCase() + "\u2026");
     const room = NET.join({ code, onStatus: status, onError: status });
     if (!room) return;
     pendingRoom = room;
     const store = O.guestStore(room.transport, deviceUser());
+    const begin = () => {
+      if (started || !joined) return;
+      started = true;
+      clearTimeout(pollT);
+      $("lobby").hidden = true;
+      pendingRoom = null;
+      startOnline(store, joined.match, joined.seat, room);
+    };
+    // The host's Start, or (if that message was lost) the answer to asking.
+    room.transport.onMessage((m) => { if (m && m.t === "start") begin(); });
+    const ask = async () => {
+      if (started) return;
+      try { if ((await store.status()).started) { begin(); return; } } catch (e) { /* asked again below */ }
+      pollT = setTimeout(ask, 2000);
+    };
     room.transport.onOpen(async () => {
-      if (joined) return;
-      joined = true;
+      if (asked) return;
+      asked = true;
       try {
         status("Connected. Taking a seat\u2026");
-        const id = await store.hello();
-        const seat = await O.joinMatch(store, id, deviceUser());
-        const [m] = await store.select("matches", { id });
-        pendingRoom = null;
-        startOnline(store, m, seat, room);
-      } catch (e) { joined = false; status(e.message); }
+        showLobby([["Host", "connected \u2713", true], ["You", "taking a seat\u2026", false]], false);
+        joined = await store.join();
+        showLobby([["Host", "connected \u2713", true], ["You (Seat " + joined.seat + ")", "ready \u2713", true]], false);
+        status("You are in. Waiting for the host to tap Start\u2026 (The host's length, rivals and strength are used.)");
+        if (joined.started) begin(); else ask();
+      } catch (e) { asked = false; status(e.message); }
     });
   }
   function onlineSeats(seed) {
