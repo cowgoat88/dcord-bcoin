@@ -241,21 +241,27 @@ and one lost message left both phones waiting with nothing to tap.
 
 How: the creating phone is the server. It keeps the match database (the
 same rules as `schema.sql`: own seat only, one move a round, orders hidden
-until both lock) and answers the other phone's reads and writes over a
-direct peer-to-peer connection (`net.js`, PeerJS, copied from OUTPOST with
-its iPhone fixes: the room code is reclaimed when Safari comes back from
-the background, and TURN relays carry the traffic when two phones on
-mobile data cannot reach each other directly). If the connection drops
-mid-game the joining phone dials back in and keeps its seat.
+until both lock) and answers the other phone's reads and writes. The two
+phones pass those messages through a public MQTT broker over a secure
+WebSocket (`relay.js`, with the vendored MIT-licensed mqtt.js). The first
+version used a direct peer-to-peer link (`net.js`, PeerJS), and two
+iPhones on mobile data could be introduced but never exchange data: that
+needs a TURN relay, and the free one it used no longer accepts its shared
+login. A WebSocket to a broker works on any cellular network.
 
-Limits: the creating phone must keep the game open for the whole match
-(it holds the match; if it closes the page, the match is gone). It holds
-everyone's orders, so between friends it is trusted not to peek. The free
-public PeerJS signalling server and TURN relays are somebody else's
-goodwill; `net.js` lists several. Tested end to end with two phone-sized
-pages and a stand-in for PeerJS (this build environment cannot reach the
-PeerJS servers): invite link, seats, three rounds identical on both,
-including a dropped and restored connection.
+Brokers are tried in order (EMQX, HiveMQ, Mosquitto public brokers); the
+last letter of the room code says which one the host reached, so the other
+phone goes to the same one. Messages through a broker can be lost; the
+protocol resends every request until answered and every request is safe
+to repeat. If a phone loses signal, it reconnects and carries on.
+
+Limits: the creating phone must keep the game open for the whole match.
+It holds everyone's orders, so between friends it is trusted not to peek.
+Public brokers are public: nobody is listening for your room, but it is
+not secret. Tested end to end with two separate browser profiles, the real
+mqtt.js and a local MQTT broker: room code, typed-code join, lobby, Start,
+and three rounds identical on both, including four seconds without signal.
+The public brokers themselves cannot be reached from the build machine.
 
 ## Online
 

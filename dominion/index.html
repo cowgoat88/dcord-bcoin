@@ -425,8 +425,8 @@
 <script src="ai.js"></script>
 <script src="campaign.js"></script>
 <script src="online.js"></script>
-<script src="vendor/peerjs.min.js"></script>
-<script src="net.js"></script>
+<script src="vendor/mqtt.min.js"></script>
+<script src="relay.js"></script>
 <script src="vendor/howler.core.min.js"></script>
 <script src="sounds.js" defer></script>
 <script src="holo.js"></script>
@@ -631,7 +631,10 @@
       return id;
     } catch (e) { return tabUser(); }
   }
-  const NET = window.DominionNet;
+  // Two phones talk through a public message relay over secure WebSockets
+  // (relay.js): unlike a direct peer-to-peer link it works between two
+  // phones on mobile data.
+  const NET = window.DominionRelay;
   function openStore() {
     if (net === "local") return O.browserDatabase().storeFor(tabUser());
     const url = $("neonUrl").value.trim(), token = $("neonToken").value.trim();
@@ -667,7 +670,7 @@
   $("btnStartMatch").addEventListener("touchend", (e) => { e.preventDefault(); if (lobbyStart) lobbyStart(); }, { passive: false });
   function createOnPhone(config) {
     closeRoom();
-    if (!NET || !NET.available()) { status("Peer-to-peer did not load. Check the connection and reload."); return; }
+    if (!NET || !NET.available()) { status("The relay did not load. Check the connection and reload."); return; }
     const db = O.memoryDatabase();
     let store = null, match = null, guestSeat = null, started = false;
     const lobby = () => showLobby([["You (Seat 1)", "host \u2713", true],
@@ -703,7 +706,7 @@
   }
   function joinOnPhone(code) {
     closeRoom();
-    if (!NET || !NET.available()) { status("Peer-to-peer did not load. Check the connection and reload."); return; }
+    if (!NET || !NET.available()) { status("The relay did not load. Check the connection and reload."); return; }
     let asked = false, started = false, joined = null;
     status("Looking for room " + code.toUpperCase() + "\u2026");
     const room = NET.join({ code, onStatus: status, onError: status });

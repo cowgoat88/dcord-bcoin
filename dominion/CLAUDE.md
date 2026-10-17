@@ -5,7 +5,7 @@
 `dominion/` is the new game. `outpost/` is the finished OUTPOST and stays
 as it is: do not change it for Dominion's sake. Dominion copied
 `holo.js`, `holo-gl.js`, `net.js` and `vendor/` from OUTPOST; `holo.js`
-(the Doomstar painters) and `net.js` (two-phone play) are wired in.
+(the Doomstar painters) is wired in. Two-phone play uses `relay.js`.
 
 The owner asked for a fork into a separate repository. This session could
 not create one (GitHub refused repository creation, 403), so Dominion
@@ -114,8 +114,10 @@ frame time; and rivals plan (`Client.planRivals`) at the start of the plot,
 before any person's orders are applied. Never let anything a person does
 reach the game state online except through posted moves.
 Two phones without Neon: `hostStore`/`guestStore` in `online.js` run the
-same protocol over `net.js` (PeerJS). The creating phone holds a
-`memoryDatabase` and answers the guest's numbered requests. `net.js` here
-is a copy of OUTPOST's with the room prefix `dominion-` and a guest redial
-after a mid-game drop; do not change `outpost/net.js` for it.
+same protocol over `relay.js` (MQTT over WebSocket to public brokers,
+vendored mqtt.js). The creating phone holds a `memoryDatabase` and answers
+the guest's numbered requests. `net.js` (PeerJS, direct peer-to-peer) is
+no longer loaded: two phones on mobile data need a TURN relay and the free
+one stopped working. Test relay changes with a local broker: set
+localStorage `dominion.brokers` to `["ws://localhost:PORT"]`.
 Sound: Howler.js, vendored in `vendor/`, never from a CDN.
