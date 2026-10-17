@@ -218,6 +218,32 @@ URIs in `sounds.js`, so they play from a `file://` page too. **Sound
 on/off** on the start screen, or press M; the choice is remembered in this
 browser.
 
+## Two phones
+
+Choose **Online → Two phones** (the default). One phone taps **Create
+match**, gets a five-letter room code and taps **Share invite link** (the
+iPhone share sheet: Messages, AirDrop, anything). The other phone taps the
+link, or enters the code and taps **Join**. Works over Wi-Fi or mobile
+data, no accounts, nothing to set up.
+
+How: the creating phone is the server. It keeps the match database (the
+same rules as `schema.sql`: own seat only, one move a round, orders hidden
+until both lock) and answers the other phone's reads and writes over a
+direct peer-to-peer connection (`net.js`, PeerJS, copied from OUTPOST with
+its iPhone fixes: the room code is reclaimed when Safari comes back from
+the background, and TURN relays carry the traffic when two phones on
+mobile data cannot reach each other directly). If the connection drops
+mid-game the joining phone dials back in and keeps its seat.
+
+Limits: the creating phone must keep the game open for the whole match
+(it holds the match; if it closes the page, the match is gone). It holds
+everyone's orders, so between friends it is trusted not to peek. The free
+public PeerJS signalling server and TURN relays are somebody else's
+goodwill; `net.js` lists several. Tested end to end with two phone-sized
+pages and a stand-in for PeerJS (this build environment cannot reach the
+PeerJS servers): invite link, seats, three rounds identical on both,
+including a dropped and restored connection.
+
 ## Online
 
 Choose **Online** on the start screen: two people plus your chosen number

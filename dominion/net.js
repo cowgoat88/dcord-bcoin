@@ -1,4 +1,5 @@
-// OUTPOST — PeerJS transport for online.js.
+// DOOMSTAR: DOMINION — PeerJS transport, copied from OUTPOST (room names
+// changed so the two games never meet). Used for phone-to-phone matches.
 //
 // Wraps the vendored PeerJS as the { send, onMessage, onOpen, onClose }
 // shape the session protocol expects. A room code is a short id the host
@@ -25,7 +26,7 @@
 (function (root) {
   "use strict";
 
-  const PREFIX = "outpost-";
+  const PREFIX = "dominion-";
   const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";  // no I/L/O/0/1
   const CODE_LEN = 5;
 
@@ -134,6 +135,7 @@
     // a dial is retried, so the caller sees one outcome rather than a
     // failure for every attempt.
     t._abandon = function () { generation++; conn = null; open = false; };
+    t._current = function () { return conn; };
     return t;
   }
 
@@ -357,6 +359,17 @@
         if (timer) { clearTimeout(timer); timer = null; }
         if (o.onConnect) o.onConnect();
       });
+      // Dominion: a match lasts long enough for a phone to lose the
+      // connection mid-game (a call, the screen locking, a tunnel). Dial
+      // the same room again instead of leaving the guest stranded.
+      const lost = () => {
+        if (destroyed || !connected || transport._current() !== c) return;
+        connected = false; givenUp = false; tries = 0;
+        status("Lost the other phone \u2014 reconnecting\u2026");
+        later(dial, 1500);
+      };
+      c.on("close", lost);
+      c.on("error", lost);
       // Signalling can succeed and the media path still never form --
       // that is the two-phones-on-mobile-data case, and without this it
       // just hangs on "Connecting" forever.
@@ -463,7 +476,7 @@
     }
     const code = (o.code || "LOCAL").toUpperCase();
     const role = o.role === "guest" ? "guest" : "host";
-    const ch = new root.BroadcastChannel("outpost-local-" + code);
+    const ch = new root.BroadcastChannel("dominion-local-" + code);
     const transport = makeTransport();
     // Stand in for a PeerJS DataConnection.
     const fake = {
@@ -488,7 +501,7 @@
     };
   }
 
-  root.OutpostNet = {
+  root.DominionNet = root.OutpostNet = {
     host, join, localPair, makeCode, available, PREFIX,
     ICE_SERVERS, setIceServers, _makeTransport: makeTransport
   };

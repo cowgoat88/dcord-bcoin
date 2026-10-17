@@ -4,8 +4,8 @@
 
 `dominion/` is the new game. `outpost/` is the finished OUTPOST and stays
 as it is: do not change it for Dominion's sake. Dominion copied
-`holo.js`, `holo-gl.js`, `net.js` and `vendor/` from OUTPOST; only
-`holo.js` (the Doomstar orb and lock-on painters) is wired in so far.
+`holo.js`, `holo-gl.js`, `net.js` and `vendor/` from OUTPOST; `holo.js`
+(the Doomstar painters) and `net.js` (two-phone play) are wired in.
 
 The owner asked for a fork into a separate repository. This session could
 not create one (GitHub refused repository creation, 403), so Dominion
@@ -113,4 +113,9 @@ the resolve on screen steps by `S.STEP` through an accumulator, never by
 frame time; and rivals plan (`Client.planRivals`) at the start of the plot,
 before any person's orders are applied. Never let anything a person does
 reach the game state online except through posted moves.
+Two phones without Neon: `hostStore`/`guestStore` in `online.js` run the
+same protocol over `net.js` (PeerJS). The creating phone holds a
+`memoryDatabase` and answers the guest's numbered requests. `net.js` here
+is a copy of OUTPOST's with the room prefix `dominion-` and a guest redial
+after a mid-game drop; do not change `outpost/net.js` for it.
 Sound: Howler.js, vendored in `vendor/`, never from a CDN.

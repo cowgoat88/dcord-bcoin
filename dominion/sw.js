@@ -1,9 +1,9 @@
 // DOOMSTAR: DOMINION — offline cache. Every file the game needs is cached
 // on install; requests are answered from the cache first and refreshed
 // from the network behind it. Bump VERSION when files are added or renamed.
-const VERSION = "dominion-v1";
+const VERSION = "dominion-v2";
 const FILES = ["./", "index.html", "sim.js", "ai.js", "campaign.js", "online.js", "holo.js", "sounds.js",
-  "vendor/howler.core.min.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
+  "vendor/howler.core.min.js", "vendor/peerjs.min.js", "net.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
 });

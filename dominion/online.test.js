@@ -99,3 +99,44 @@ test("neonStore speaks PostgREST with a bearer token", async () => {
   const dup = O.neonStore("https://e.test", () => "t", async () => ({ ok: false, status: 409, statusText: "Conflict", json: async () => ({ code: "23505", message: "duplicate key" }) }));
   await assert.rejects(dup.insert("seats", {}), (e) => e.duplicate === true);
 });
+
+// Two phones: the host keeps the database and answers the guest's calls
+// over a connection. Here the connection is a pair of in-memory pipes that
+// deliver asynchronously and serialise messages, as a data channel does.
+function pipePair() {
+  const mk = () => ({ handlers: [], open: [], peer: null,
+    send(m) { const p = this.peer, copy = JSON.parse(JSON.stringify(m)); setTimeout(() => p.handlers.forEach((h) => h(copy)), 1); },
+    onMessage(fn) { this.handlers.push(fn); }, onOpen(fn) { this.open.push(fn); fn(); } });
+  const a = mk(), b = mk(); a.peer = b; b.peer = a;
+  return [a, b];
+}
+test("two phones play a skirmish over a direct connection, the host's phone keeping the match", async () => {
+  const [hostLink, guestLink] = pipePair();
+  const db = O.memoryDatabase();
+  const hostSt = O.hostStore(db, "phone-a", hostLink);
+  const guestSt = O.guestStore(guestLink, "phone-b");
+  const cfg = { seed: 21, seats: [{ faction: "standard", name: "Ana" }, { faction: "shock", name: "Bo" }, { faction: "relays", ai: true, name: "Choir" }], roundLimit: 6 };
+  const m = await O.createMatch(hostSt, cfg);
+  hostLink.matchId = m.id;
+  assert.equal(await guestSt.hello(), m.id, "the guest learns the match from the host");
+  const seat = await O.joinMatch(guestSt, m.id);
+  assert.equal(seat, 2);
+  assert.equal(await O.seatsFilled(hostSt, m.id), true);
+  const [mb] = await guestSt.select("matches", { id: m.id });
+  const clients = [new O.Client(hostSt, m, 1), new O.Client(guestSt, mb, 2)];
+  let rounds = 0;
+  while (clients[0].game.phase !== "over" && rounds < 10) {
+    await draftUntilDone(clients);
+    for (const c of clients) c.planRivals();
+    plotLikeAPerson(clients[1]);
+    await clients[1].lock();
+    assert.equal(await clients[1].tryReveal(), false, "waits for the host");
+    plotLikeAPerson(clients[0]);
+    await clients[0].lock();
+    for (const c of clients) { assert.equal(await c.tryReveal(), true); S.runRound(c.game); S.drainEvents(c.game); }
+    assert.equal(O.stateHash(clients[0].game), O.stateHash(clients[1].game), "same galaxy on both phones");
+    rounds++;
+  }
+  assert.equal(clients[0].game.phase, "over");
+  await assert.rejects(guestSt.insert("moves", { match_id: m.id, round: 1, seat: 1, kind: "plot", payload: {} }), /not your seat/);
+});

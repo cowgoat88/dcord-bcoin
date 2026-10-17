@@ -110,6 +110,62 @@
       (db) => { try { localStorage.setItem(k, JSON.stringify(db)); } catch (e) { /* full or blocked */ } });
   }
 
+  // ---- phone to phone ---------------------------------------------------
+  // With no server of your own, the hosting phone is the server: it keeps
+  // the match database (memoryDatabase, with the same rules as schema.sql)
+  // and answers the other phone's reads and writes over a direct
+  // peer-to-peer connection (net.js: PeerJS, with TURN relays so two
+  // phones on mobile data still find each other). The guest's store sends
+  // each call as a numbered request and waits for the answer.
+  //
+  // Hidden orders are hidden from the guest by those rules; the host's
+  // phone holds everything, so between friends this trusts the host.
+  function hostStore(db, hostUser, transport) {
+    transport.onMessage(async (m) => {
+      if (!m || m.t !== "rpc") return;
+      const st = db.storeFor(String(m.user || "guest"));
+      let reply;
+      try {
+        if (m.op === "hello") reply = { ok: true, result: transport.matchId || null };
+        else if (m.op === "insert") reply = { ok: true, result: await st.insert(m.table, m.row) };
+        else if (m.op === "select") reply = { ok: true, result: await st.select(m.table, m.eq) };
+        else reply = { ok: false, error: "Unknown request." };
+      } catch (e) { reply = { ok: false, error: e.message, duplicate: !!e.duplicate }; }
+      transport.send(Object.assign({ t: "rpc-reply", id: m.id }, reply));
+    });
+    return db.storeFor(hostUser);
+  }
+  function guestStore(transport, user, timeoutMs) {
+    let n = 0;
+    const pending = {};
+    transport.onMessage((m) => {
+      if (!m || m.t !== "rpc-reply" || !pending[m.id]) return;
+      const p = pending[m.id];
+      delete pending[m.id];
+      clearTimeout(p.timer);
+      if (m.ok) p.resolve(m.result);
+      else p.reject(Object.assign(new Error(m.error || "Request failed."), { duplicate: !!m.duplicate }));
+    });
+    // A request lost while the connection dropped is sent again when it
+    // comes back; the host answers a repeat insert with a duplicate, which
+    // the client already treats as done.
+    if (transport.onOpen) transport.onOpen(() => { for (const id in pending) transport.send(pending[id].msg); });
+    function call(op, extra) {
+      return new Promise((resolve, reject) => {
+        const id = ++n;
+        const msg = Object.assign({ t: "rpc", id, op, user }, extra);
+        const timer = setTimeout(() => { if (pending[id]) { delete pending[id]; reject(new Error("The other phone did not answer.")); } }, timeoutMs || 15000);
+        pending[id] = { resolve, reject, timer, msg };
+        transport.send(msg);
+      });
+    }
+    return {
+      hello: () => call("hello", {}),
+      insert: (table, row) => call("insert", { table, row }),
+      select: (table, eq) => call("select", { table, eq })
+    };
+  }
+
   // ---- the match -----------------------------------------------------------
   const people = (config) => config.seats.map((s, i) => (s.ai ? 0 : i + 1)).filter(Boolean);
 
@@ -120,11 +176,14 @@
     return m;
   }
   // Take the first free seat a person may sit in. Returns the seat number.
-  async function joinMatch(store, matchId) {
+  // With me (this device's user id), a seat it already holds is returned,
+  // so a phone that lost the connection can come back to its own seat.
+  async function joinMatch(store, matchId, me) {
     const [m] = await store.select("matches", { id: matchId });
     if (!m) throw new Error("No such match.");
     for (const seat of people(m.config)) {
       const taken = await store.select("seats", { match_id: matchId, seat });
+      if (taken.length && me && taken[0].user_id === me) return seat;
       if (taken.length) continue;
       try { await store.insert("seats", { match_id: matchId, seat }); return seat; } catch (e) { if (!e.duplicate) throw e; }
     }
@@ -228,5 +287,5 @@
     return true;
   };
 
-  return { neonStore, memoryDatabase, browserDatabase, createMatch, joinMatch, seatsFilled, stateHash, Client, people };
+  return { neonStore, memoryDatabase, browserDatabase, hostStore, guestStore, createMatch, joinMatch, seatsFilled, stateHash, Client, people };
 });
