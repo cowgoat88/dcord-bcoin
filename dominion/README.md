@@ -228,6 +228,11 @@ is connected, which seat); when the other phone is in, the host taps
 **Start the skirmish**. Works over Wi-Fi or mobile data, no accounts,
 nothing to set up.
 
+Joining does not depend on a single tap landing (iPhone Safari can drop
+taps in a scrolling full-screen panel, more so with the keyboard open):
+typing the full five-letter code joins by itself, the keyboard's Go key
+joins, and the large Join button answers the touch as well as the click.
+
 Joining is one request that the host answers by seating the guest; the
 guest resends any unanswered request every few seconds, and asks whether
 the game has started in case the host's Start message is lost. Before the

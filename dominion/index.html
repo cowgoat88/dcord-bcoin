@@ -98,6 +98,12 @@
   #startOv, #endOv, #legacyOv { position: fixed; z-index: 30; }
   #helpOv { position: fixed; z-index: 40; }
   .help p { font-size: 12px; margin: 4px 0 8px; }
+  /* Big tap targets for the online buttons (iPhone guidance: 44 points). */
+  button.big { min-height: 46px; font-size: 14px; padding: 10px 16px; }
+  #btnCreate.big { width: 100%; margin-top: 8px; }
+  .joinRow { display: flex; gap: 8px; align-items: stretch; }
+  .joinRow input { flex: 1 1 auto; margin-top: 0; min-height: 46px; font-size: 16px; text-transform: uppercase; letter-spacing: 2px; }
+  .joinRow button { flex: 0 0 auto; min-width: 88px; }
   #lobby { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
   #lobby div { display: flex; justify-content: space-between; padding: 3px 0; }
   #lobby .ok { color: var(--good); } #lobby .wait { color: var(--muted); }
@@ -224,14 +230,15 @@
             <input id="neonUrl" class="field" placeholder="Neon Data API URL" autocomplete="off">
             <input id="neonToken" class="field" placeholder="Neon Auth access token" autocomplete="off">
           </div>
-          <div class="row" style="margin-top:8px">
-            <button id="btnCreate" class="primary">Create match</button>
-            <input id="joinCode" class="field" style="flex:1 1 120px;width:auto" placeholder="Match code" autocomplete="off">
-            <button id="btnJoin">Join</button>
-          </div>
+          <button id="btnCreate" class="primary big" type="button">Create match</button>
+          <p class="muted" style="font-size:11px;margin:10px 0 4px">or join the other phone's room:</p>
+          <form id="joinForm" class="joinRow" autocomplete="off" onsubmit="return false">
+            <input id="joinCode" class="field" placeholder="Room code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="go" maxlength="40">
+            <button id="btnJoin" class="big" type="submit">Join</button>
+          </form>
           <button id="btnShare" class="primary" hidden style="margin-top:8px">Share invite link</button>
           <div id="lobby" hidden></div>
-          <button id="btnStartMatch" class="primary" hidden style="margin-top:8px;width:100%">Start the skirmish</button>
+          <button id="btnStartMatch" class="primary big" type="button" hidden style="margin-top:8px;width:100%">Start the skirmish</button>
           <p id="onlineStatus" style="font-size:12px"></p>
         </div>
         <h2>Rules</h2>
@@ -657,6 +664,7 @@
   }
   let lobbyStart = null;
   $("btnStartMatch").addEventListener("click", () => { if (lobbyStart) lobbyStart(); });
+  $("btnStartMatch").addEventListener("touchend", (e) => { e.preventDefault(); if (lobbyStart) lobbyStart(); }, { passive: false });
   function createOnPhone(config) {
     closeRoom();
     if (!NET || !NET.available()) { status("Peer-to-peer did not load. Check the connection and reload."); return; }
@@ -774,7 +782,29 @@
       wait();
     } catch (e) { status(e.message); }
   });
-  $("btnJoin").addEventListener("click", async () => {
+  // Joining must not hang on one tap landing: iPhone Safari can lose taps
+  // in a scrolling full-screen panel, more so with the keyboard open. So
+  // Join answers the keyboard's Go key, the raw touch as well as the click,
+  // and a complete five-letter room code joins by itself.
+  let lastJoinAt = 0;
+  function joinOnce() {
+    const now = Date.now();
+    if (now - lastJoinAt < 1500) return;
+    lastJoinAt = now;
+    try { document.activeElement && document.activeElement.blur(); } catch (e) { /* nothing focused */ }
+    doJoin();
+  }
+  $("joinForm").addEventListener("submit", (e) => { e.preventDefault(); joinOnce(); });
+  $("btnJoin").addEventListener("touchend", (e) => { e.preventDefault(); joinOnce(); }, { passive: false });
+  $("joinCode").addEventListener("input", () => {
+    const v = $("joinCode").value.replace(/\s+/g, "").toUpperCase();
+    if (net === "phones" && /^[A-HJ-NP-Z2-9]{5}$/.test(v) && !$("btnShare").offsetParent) { status("Joining room " + v + "\u2026"); joinOnce(); }
+  });
+  // Safari leaves the page shifted after the keyboard closes, and taps then
+  // land off target: put it back.
+  $("joinCode").addEventListener("blur", () => { setTimeout(() => { try { window.scrollTo(0, 0); } catch (e) { /* fine */ } }, 50); });
+  $("btnJoin").addEventListener("click", (e) => { e.preventDefault(); joinOnce(); });
+  async function doJoin() {
     stopPolling();
     if (net === "phones") {
       const code = $("joinCode").value.trim();
@@ -789,7 +819,7 @@
       const [m] = await store.select("matches", { id });
       startOnline(store, m, seat);
     } catch (e) { status(e.message); }
-  });
+  }
   function startOnline(store, match, seat, room) {
     stopPolling();
     campaign = null;
